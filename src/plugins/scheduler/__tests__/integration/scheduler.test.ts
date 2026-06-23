@@ -199,7 +199,9 @@ describe("scheduler plugin — integration", () => {
       // Type level: @ts-expect-error confirms "bogus" is not assignable to Stage.
       expect(() => {
         // @ts-expect-error -- "bogus" is not assignable to Stage
-        app.scheduler.addSystem("bogus", () => {});
+        app.scheduler.addSystem("bogus", () => {
+          /* never runs — the unknown stage throws before the system is registered */
+        });
       }).toThrow();
     });
 

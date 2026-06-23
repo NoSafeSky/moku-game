@@ -19,11 +19,13 @@ import type { Config, State } from "./types";
  * @returns An empty state record.
  * @example
  * ```ts
- * const state = createState({ global: {}, config: { strictStages: true } });
- * // => {}
+ * const state = createState(ctx);
+ * // => an empty record (Record<never, never>)
  * ```
  */
 export const createState = (_ctx: {
   readonly global: Readonly<Record<string, unknown>>;
   readonly config: Readonly<Config>;
-}): State => ({});
+}): State => ({
+  /* no scheduler state — the system registry lives in the ecs world */
+});
