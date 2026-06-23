@@ -22,4 +22,4 @@ export type Api = {
   tick(dt: number): void;
 };
 
-export type { Stage, System } from "../ecs/types";
+export type { Stage, System, World } from "../ecs/types";
