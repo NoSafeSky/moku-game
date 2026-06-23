@@ -147,7 +147,9 @@ describe("scheduler plugin — integration", () => {
 
       expect(() => {
         // @ts-expect-error -- "bogus" is not a valid Stage
-        app.scheduler.addSystem("bogus", () => {});
+        app.scheduler.addSystem("bogus", () => {
+          /* never runs — strictStages:false ignores the unknown stage */
+        });
       }).not.toThrow();
     });
 
