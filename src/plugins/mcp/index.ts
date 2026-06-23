@@ -1,0 +1,46 @@
+/**
+ * MCP plugin — Complex tier.
+ *
+ * First-class MCP server exposing the whole runtime to agent clients over stdio +
+ * Streamable HTTP. Mutations route through the ECS command buffer. Emits no events.
+ *
+ * @see README.md
+ */
+import { createPlugin } from "../../config";
+import { assetsPlugin } from "../assets";
+import { ecsPlugin } from "../ecs";
+import { inputPlugin } from "../input";
+import { loopPlugin } from "../loop";
+import { rendererPlugin } from "../renderer";
+import { scenePlugin } from "../scene";
+import { schedulerPlugin } from "../scheduler";
+import { createApi } from "./api";
+import { start, stop } from "./lifecycle";
+import { createState } from "./state";
+import type { Config } from "./types";
+
+const defaultConfig: Config = {
+  transports: ["stdio"],
+  httpHost: "127.0.0.1",
+  httpPort: 3333,
+  httpAuth: "none",
+  bearerToken: "",
+  enableMutations: true
+};
+
+export const mcpPlugin = createPlugin("mcp", {
+  depends: [
+    ecsPlugin,
+    schedulerPlugin,
+    rendererPlugin,
+    assetsPlugin,
+    inputPlugin,
+    loopPlugin,
+    scenePlugin
+  ],
+  config: defaultConfig,
+  createState,
+  api: createApi,
+  onStart: start, // @no-resource-check — connects the MCP server transports (spec/06 §3)
+  onStop: stop // @no-resource-check — closes the server via the ctx.global WeakMap (spec/06 §4)
+});

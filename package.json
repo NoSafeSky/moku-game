@@ -19,13 +19,22 @@
     }
   },
   "files": ["dist", "LICENSE", "README.md"],
-  "repository": { "type": "git", "url": "git+https://github.com/moku-labs/game.git" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/moku-labs/game.git"
+  },
   "homepage": "https://github.com/moku-labs/game#readme",
-  "bugs": { "url": "https://github.com/moku-labs/game/issues" },
-  "engines": { "node": ">=24.0.0", "bun": ">=1.3.14" },
+  "bugs": {
+    "url": "https://github.com/moku-labs/game/issues"
+  },
+  "engines": {
+    "node": ">=24.0.0",
+    "bun": ">=1.3.14"
+  },
   "dependencies": {
     "@moku-labs/common": "0.3.0",
-    "@moku-labs/core": "1.5.0"
+    "@moku-labs/core": "1.5.0",
+    "pixi.js": "^8"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "0.18.3",
