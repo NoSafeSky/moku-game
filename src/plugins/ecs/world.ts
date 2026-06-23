@@ -604,8 +604,13 @@ export function createWorld(config: Config): World {
      * ```
      */
     addSystem(stage: Stage, system: System): () => void {
-      const stageSystems = systems.get(stage);
-      if (!stageSystems) return () => {};
+      // systems is pre-populated for every Stage; create lazily as a defensive fallback
+      // so an unknown stage registers a real array rather than silently dropping the system.
+      let stageSystems = systems.get(stage);
+      if (!stageSystems) {
+        stageSystems = [];
+        systems.set(stage, stageSystems);
+      }
       stageSystems.push(system);
       return (): void => {
         const index = stageSystems.indexOf(system);
