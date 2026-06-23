@@ -8,8 +8,16 @@ export type Entity = number & { readonly __entity: unique symbol };
 /** Per-component storage strategy. */
 export type StorageStrategy = "archetype" | "sparse";
 
-/** Opaque component token from defineComponent. */
-export type Component<T> = { readonly __id: number; readonly __value: T };
+/**
+ * Opaque component token from defineComponent.
+ * Also callable: `Position({ x: 10, y: 5 })` produces a `ComponentInit` for use with `spawn`.
+ */
+export type Component<T> = {
+  readonly __id: number;
+  readonly __value: T;
+  /** Bind a value to this token, producing a spawn payload. */
+  (value: T): ComponentInit;
+};
 
 /** Presence-only marker component. */
 export type Tag = Component<Record<never, never>>;
@@ -20,8 +28,11 @@ export type Stage = "input" | "update" | "physics" | "sync" | "render";
 /** A system run each tick for its stage. */
 export type System = (world: World, dt: number) => void;
 
-/** A component value bound to its token (spawn payload form). */
-export type ComponentInit = { readonly component: Component<unknown>; readonly value: unknown };
+/**
+ * A component value bound to its token (spawn payload form).
+ * `component` is typed as `Component<never>` so any `Component<T>` is assignable here.
+ */
+export type ComponentInit = { readonly component: Component<never>; readonly value: unknown };
 
 /** Query result over a tuple of component value types. */
 export type Query<Values extends readonly object[]> = {
@@ -53,9 +64,9 @@ export type World = {
   /** Add a component to an entity (merges value). */
   add<T extends object>(entity: Entity, component: Component<T>, value?: Partial<T>): void;
   /** Remove a component from an entity. */
-  remove(entity: Entity, component: Component<unknown>): void;
+  remove<T extends object>(entity: Entity, component: Component<T>): void;
   /** True if the entity has the component. */
-  has(entity: Entity, component: Component<unknown>): boolean;
+  has<T extends object>(entity: Entity, component: Component<T>): boolean;
   /** Read a component value (undefined if absent/dead). */
   get<T extends object>(entity: Entity, component: Component<T>): T | undefined;
   /** Shallow-merge a patch into a component value. */
