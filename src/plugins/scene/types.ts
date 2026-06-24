@@ -29,8 +29,8 @@ export type Config = {
 export type State = {
   /** Registered scenes by name. */
   readonly scenes: Map<string, SceneDefinition>;
-  /** Currently loaded scene name, or null. */
-  current: string | null;
+  /** Currently loaded scene name, or undefined. */
+  current: string | undefined;
   /** Entities created by the current scene. */
   readonly owned: Set<Entity>;
 };
@@ -43,6 +43,6 @@ export type Api = {
   load(name: string): Promise<void>;
   /** Unload the current scene. */
   unload(): void;
-  /** The currently loaded scene name, or null. */
-  currentScene(): string | null;
+  /** The currently loaded scene name, or undefined. */
+  currentScene(): string | undefined;
 };
