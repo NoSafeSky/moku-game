@@ -1,13 +1,15 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   createInputSystem,
   createKeydownHandler,
   createKeyupHandler,
-  createPointerHandler
+  createPointerHandler,
+  start,
+  stop
 } from "../../lifecycle";
 import { createState } from "../../state";
-import type { Config, KeyboardEventLike, PointerEventLike } from "../../types";
+import type { Config, InputContext, KeyboardEventLike, PointerEventLike } from "../../types";
 
 // ─── helpers ──────────────────────────────────────────────────
 
@@ -222,5 +224,301 @@ describe("createInputSystem", () => {
     // No new tick — snapshot object should be the same
     const snap2 = state.snapshot;
     expect(snap1).toBe(snap2);
+  });
+});
+
+// ─── start() target resolution + listener wiring ──────────────
+
+/** A spy-backed EventTarget that records add/removeEventListener calls. */
+const makeSpyTarget = () => {
+  const added: Array<{ type: string; fn: EventListener }> = [];
+  const removed: Array<{ type: string; fn: EventListener }> = [];
+  const target: EventTarget = {
+    addEventListener: ((type: string, fn: EventListener) => {
+      added.push({ type, fn });
+    }) as EventTarget["addEventListener"],
+    removeEventListener: ((type: string, fn: EventListener) => {
+      removed.push({ type, fn });
+    }) as EventTarget["removeEventListener"],
+    dispatchEvent: (() => true) as EventTarget["dispatchEvent"]
+  };
+  return { target, added, removed };
+};
+
+/** Builds an InputContext with a no-op scheduler require and a fresh state. */
+const makeStartCtx = (
+  config: Config
+): { ctx: InputContext; addSystem: ReturnType<typeof vi.fn> } => {
+  const global = {} as Readonly<Record<string, unknown>>;
+  const state = createState({ global, config });
+  const addSystem = vi.fn().mockReturnValue(() => {
+    /* no-op unsubscribe */
+  });
+  const ctx: InputContext = {
+    global,
+    config,
+    state,
+    require: (() => ({ addSystem })) as unknown as InputContext["require"]
+  };
+  return { ctx, addSystem };
+};
+
+/**
+ * Installs temporary addEventListener/removeEventListener spies on globalThis so
+ * the `?? globalThis` fallback branch in resolveTarget can actually attach
+ * listeners (Node's bare globalThis has no EventTarget methods). Returns a
+ * restore function.
+ */
+const stubGlobalEventTarget = () => {
+  const g = globalThis as Record<string, unknown>;
+  const hadAdd = "addEventListener" in g;
+  const hadRemove = "removeEventListener" in g;
+  g.addEventListener = vi.fn();
+  g.removeEventListener = vi.fn();
+  return () => {
+    if (!hadAdd) delete g.addEventListener;
+    if (!hadRemove) delete g.removeEventListener;
+  };
+};
+
+describe("start() — target resolution", () => {
+  afterEach(() => {
+    delete (globalThis as Record<string, unknown>).window;
+    delete (globalThis as Record<string, unknown>).document;
+  });
+
+  it('resolves target:"window" to globalThis.window when present', async () => {
+    const { target, added } = makeSpyTarget();
+    (globalThis as Record<string, unknown>).window = target;
+
+    const { ctx } = makeStartCtx({
+      target: "window",
+      keyboard: true,
+      pointer: false,
+      preventDefault: false
+    });
+    await start(ctx);
+
+    // Listeners were attached to the resolved window target, not globalThis.
+    expect(added.length).toBeGreaterThan(0);
+    expect(ctx.state.listeners.every(l => l.target === target)).toBe(true);
+  });
+
+  it('resolves target:"window" to globalThis when window is absent (node fallback)', async () => {
+    delete (globalThis as Record<string, unknown>).window;
+    const restore = stubGlobalEventTarget();
+
+    const { ctx } = makeStartCtx({
+      target: "window",
+      keyboard: true,
+      pointer: false,
+      preventDefault: false
+    });
+    await start(ctx);
+
+    // Falls back to globalThis itself.
+    expect(ctx.state.listeners.length).toBeGreaterThan(0);
+    expect(
+      ctx.state.listeners.every(l => l.target === (globalThis as unknown as EventTarget))
+    ).toBe(true);
+
+    restore();
+  });
+
+  it("resolves a selector via document.querySelector when it matches", async () => {
+    const { target } = makeSpyTarget();
+    const querySelector = vi.fn().mockReturnValue(target);
+    (globalThis as Record<string, unknown>).document = { querySelector };
+
+    const { ctx } = makeStartCtx({
+      target: "#app",
+      keyboard: true,
+      pointer: false,
+      preventDefault: false
+    });
+    await start(ctx);
+
+    expect(querySelector).toHaveBeenCalledWith("#app");
+    expect(ctx.state.listeners.every(l => l.target === target)).toBe(true);
+  });
+
+  it("falls back to globalThis when the selector matches nothing", async () => {
+    const querySelector = vi.fn().mockReturnValue(undefined);
+    (globalThis as Record<string, unknown>).document = { querySelector };
+    const restore = stubGlobalEventTarget();
+
+    const { ctx } = makeStartCtx({
+      target: "#missing",
+      keyboard: true,
+      pointer: false,
+      preventDefault: false
+    });
+    await start(ctx);
+
+    expect(querySelector).toHaveBeenCalledWith("#missing");
+    expect(
+      ctx.state.listeners.every(l => l.target === (globalThis as unknown as EventTarget))
+    ).toBe(true);
+
+    restore();
+  });
+
+  it("falls back to globalThis when no document exists for a selector target", async () => {
+    delete (globalThis as Record<string, unknown>).document;
+    const restore = stubGlobalEventTarget();
+
+    const { ctx } = makeStartCtx({
+      target: "#app",
+      keyboard: true,
+      pointer: false,
+      preventDefault: false
+    });
+    await start(ctx);
+
+    expect(
+      ctx.state.listeners.every(l => l.target === (globalThis as unknown as EventTarget))
+    ).toBe(true);
+
+    restore();
+  });
+});
+
+describe("start() — keyboard/pointer toggles", () => {
+  afterEach(() => {
+    delete (globalThis as Record<string, unknown>).window;
+  });
+
+  it("attaches only keyboard listeners when {keyboard:true, pointer:false}", async () => {
+    const { target } = makeSpyTarget();
+    (globalThis as Record<string, unknown>).window = target;
+
+    const { ctx, addSystem } = makeStartCtx({
+      target: "window",
+      keyboard: true,
+      pointer: false,
+      preventDefault: false
+    });
+    await start(ctx);
+
+    const types = ctx.state.listeners.map(l => l.type).toSorted();
+    expect(types).toEqual(["keydown", "keyup"]);
+    expect(addSystem).toHaveBeenCalledWith("input", expect.any(Function));
+  });
+
+  it("attaches only pointer listeners when {keyboard:false, pointer:true}", async () => {
+    const { target } = makeSpyTarget();
+    (globalThis as Record<string, unknown>).window = target;
+
+    const { ctx } = makeStartCtx({
+      target: "window",
+      keyboard: false,
+      pointer: true,
+      preventDefault: false
+    });
+    await start(ctx);
+
+    const types = ctx.state.listeners.map(l => l.type).toSorted();
+    expect(types).toEqual(["pointerdown", "pointermove", "pointerup"]);
+  });
+
+  it("attaches no DOM listeners when {keyboard:false, pointer:false}", async () => {
+    const { target } = makeSpyTarget();
+    (globalThis as Record<string, unknown>).window = target;
+
+    const { ctx, addSystem } = makeStartCtx({
+      target: "window",
+      keyboard: false,
+      pointer: false,
+      preventDefault: false
+    });
+    await start(ctx);
+
+    expect(ctx.state.listeners).toHaveLength(0);
+    // The input system is still registered regardless of listener config.
+    expect(addSystem).toHaveBeenCalledWith("input", expect.any(Function));
+  });
+
+  it("attached keydown handler calls preventDefault when preventDefault:true", async () => {
+    const { target, added } = makeSpyTarget();
+    (globalThis as Record<string, unknown>).window = target;
+
+    const { ctx } = makeStartCtx({
+      target: "window",
+      keyboard: true,
+      pointer: false,
+      preventDefault: true
+    });
+    await start(ctx);
+
+    const keydown = added.find(l => l.type === "keydown");
+    const preventDefault = vi.fn();
+    keydown?.fn({ key: "Space", preventDefault } as unknown as Event);
+
+    expect(preventDefault).toHaveBeenCalledOnce();
+  });
+
+  it("attached keydown handler does NOT call preventDefault when preventDefault:false", async () => {
+    const { target, added } = makeSpyTarget();
+    (globalThis as Record<string, unknown>).window = target;
+
+    const { ctx } = makeStartCtx({
+      target: "window",
+      keyboard: true,
+      pointer: false,
+      preventDefault: false
+    });
+    await start(ctx);
+
+    const keydown = added.find(l => l.type === "keydown");
+    const preventDefault = vi.fn();
+    keydown?.fn({ key: "Space", preventDefault } as unknown as Event);
+
+    expect(preventDefault).not.toHaveBeenCalled();
+  });
+});
+
+describe("stop() — teardown", () => {
+  afterEach(() => {
+    delete (globalThis as Record<string, unknown>).window;
+  });
+
+  it("removes every listener it attached and empties the array", async () => {
+    const { target, added, removed } = makeSpyTarget();
+    (globalThis as Record<string, unknown>).window = target;
+
+    const { ctx } = makeStartCtx({
+      target: "window",
+      keyboard: true,
+      pointer: true,
+      preventDefault: false
+    });
+    await start(ctx);
+    expect(added.length).toBe(5);
+
+    await stop({ global: ctx.global });
+
+    expect(removed.length).toBe(5);
+    expect(ctx.state.listeners).toHaveLength(0);
+  });
+
+  it("is a no-op when no listeners were ever registered for the global (WeakMap miss)", async () => {
+    // A global that was never passed through start() has no registry entry.
+    await expect(stop({ global: {} })).resolves.toBeUndefined();
+  });
+
+  it("is idempotent — a second stop with the same global does not throw", async () => {
+    const { target } = makeSpyTarget();
+    (globalThis as Record<string, unknown>).window = target;
+
+    const { ctx } = makeStartCtx({
+      target: "window",
+      keyboard: true,
+      pointer: false,
+      preventDefault: false
+    });
+    await start(ctx);
+    await stop({ global: ctx.global });
+
+    await expect(stop({ global: ctx.global })).resolves.toBeUndefined();
   });
 });

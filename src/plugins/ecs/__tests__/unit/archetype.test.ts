@@ -132,4 +132,51 @@ describe("archetype store — swap-remove + bookkeeping", () => {
     expect(store.get(entity, velId)).toBeUndefined();
     expect(store.has(entity, velId)).toBe(false);
   });
+
+  it("addComponent on an entity with no prior archetype inserts a single-component archetype", () => {
+    const table = createEntityTable(1024);
+    const store = createArchetypeStore();
+
+    const velId = 1;
+    const entity = table.alloc();
+    const vel = { dx: 7, dy: 8 };
+
+    // Entity was never inserted, so it has no EntityLocation — addComponent must fall
+    // back to a fresh insert rather than migrating from an existing archetype.
+    store.addComponent(entity, velId, vel);
+    expect(store.has(entity, velId)).toBe(true);
+    expect(store.get(entity, velId)).toBe(vel);
+  });
+
+  it("removeComponent is a no-op when the entity has no archetype location", () => {
+    const table = createEntityTable(1024);
+    const store = createArchetypeStore();
+
+    const entity = table.alloc(); // never inserted
+    expect(() => store.removeComponent(entity, 0)).not.toThrow();
+    expect(store.has(entity, 0)).toBe(false);
+  });
+
+  it("removeComponent is a no-op when the entity lacks the requested component", () => {
+    const table = createEntityTable(1024);
+    const store = createArchetypeStore();
+
+    const posId = 0;
+    const entity = table.alloc();
+    const pos = { x: 1, y: 2 };
+
+    store.insert(entity, [posId], [pos]);
+    // Component 99 is not in this entity's archetype — removal must leave it untouched.
+    store.removeComponent(entity, 99);
+    expect(store.has(entity, posId)).toBe(true);
+    expect(store.get(entity, posId)).toStrictEqual(pos);
+  });
+
+  it("get returns undefined for an entity with no archetype location", () => {
+    const table = createEntityTable(1024);
+    const store = createArchetypeStore();
+
+    const entity = table.alloc(); // never inserted
+    expect(store.get(entity, 0)).toBeUndefined();
+  });
 });

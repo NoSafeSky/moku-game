@@ -2,6 +2,7 @@
   "name": "game",
   "version": "0.0.0",
   "description": "An ECS game framework for Moku (Spark-style public API & memory layout) with PixiJS rendering, built on @moku-labs/core and composable with @moku-labs/web",
+  "license": "MIT",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
@@ -19,6 +20,9 @@
     }
   },
   "files": ["dist", "LICENSE", "README.md"],
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/moku-labs/game.git"
@@ -61,6 +65,7 @@
   },
   "scripts": {
     "build": "tsdown",
+    "typecheck": "tsc --noEmit",
     "validate": "publint && attw --pack . --profile node16",
     "lint": "biome check . && eslint .",
     "lint:fix": "biome check --write . && eslint --fix .",

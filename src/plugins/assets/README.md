@@ -30,11 +30,11 @@ would be a no-op and is intentionally omitted.
 
 | Method | Signature | Description |
 |---|---|---|
-| `load` | `(alias: string) => Promise<Texture>` | Load one asset by alias; emits `assets:loaded` with `kind: "asset"` on success. |
-| `loadBundle` | `(bundle: string, entries: Readonly<Record<string,string>>) => Promise<Record<string,Texture>>` | Register + load a bundle; emits `assets:loaded` once with `kind: "bundle"`. |
-| `get` | `(alias: string) => Texture \| undefined` | Return an already-loaded texture from the Pixi cache, or `undefined`. |
-| `sprite` | `(alias: string) => Promise<Sprite>` | Load (or use cached) texture and return a new Pixi `Sprite`. |
-| `isLoaded` | `(alias: string) => boolean` | Return `true` if the alias has been loaded this session. |
+| `load` | `(alias: string) => Promise<Texture>` | Load one asset by alias; records the alias in `state.loaded` and emits `assets:loaded` with `kind: "asset"` on success. |
+| `loadBundle` | `(bundle: string, entries: Readonly<Record<string, string>>) => Promise<Record<string, Texture>>` | Register (`Assets.addBundle`) + load (`Assets.loadBundle`); records every entry alias and emits `assets:loaded` once with `kind: "bundle"`. |
+| `get` | `(alias: string) => Texture \| undefined` | Return an already-loaded texture from the Pixi cache, or `undefined`. Does NOT trigger a load. |
+| `sprite` | `(alias: string) => Promise<Sprite>` | Return a new Pixi `Sprite` from the texture — reuses the cached texture, loading only on a cache miss. |
+| `isLoaded` | `(alias: string) => boolean` | Return `true` if the alias has been loaded this session (backed by `state.loaded`, not the Pixi cache). |
 
 ### URL resolution
 
@@ -57,16 +57,43 @@ app.assets.load("tank.png"); // → Assets.load("assets/tank.png")
 
 | Event | Payload | When |
 |---|---|---|
-| `assets:loaded` | `{ alias: string; kind: "asset" \| "bundle" }` | After `load()` or `loadBundle()` succeeds. |
+| `assets:loaded` | `{ alias: string; kind: "asset" \| "bundle" }` | After `load()` or `loadBundle()` succeeds. For a bundle, `alias` is the bundle name. |
 
 `assets:loaded` is a coarse milestone event — it is emitted once per call, not
 once per individual texture in a bundle. It is appropriate for the `scene` plugin
 and consumers that need to react when loading completes.
 
+## Usage Example
+
 ```ts
-const { createApp, createPlugin } = coreConfig.createCore(coreConfig, {
-  plugins: [ecsPlugin, schedulerPlugin, rendererPlugin, assetsPlugin]
+import { createApp } from "../../index";
+
+const app = createApp({
+  pluginConfigs: {
+    assets: {
+      basePath: "assets/",
+      manifest: { ship: "sprites/ship.png" }
+    }
+  }
 });
+
+await app.start();
+
+// Load a texture by alias (resolves to "assets/sprites/ship.png").
+const texture = await app.assets.load("ship");
+
+// Build a Sprite — reuses the texture just loaded above (no second load).
+const sprite = await app.assets.sprite("ship");
+app.renderer.getStage()?.addChild(sprite);
+
+console.log(app.assets.isLoaded("ship")); // true
+```
+
+React to load completion from a consumer plugin via the `assets:loaded` hook:
+
+```ts
+import { createPlugin } from "../../index";
+import { assetsPlugin } from "./index";
 
 const myPlugin = createPlugin("myPlugin", {
   depends: [assetsPlugin],
@@ -77,6 +104,26 @@ const myPlugin = createPlugin("myPlugin", {
   })
 });
 ```
+
+## Design Notes
+
+- **No lifecycle (`onStart`/`onStop`):** the plugin borrows the renderer's Pixi
+  `Application` context (which owns the Assets/GPU cache) rather than owning a
+  resource of its own — see [No onStart / onStop](#no-onstart--onstop).
+- **Lazy renderer require:** every method calls `ctx.require(rendererPlugin)`
+  before touching Pixi `Assets`, guaranteeing the `Application` is started first.
+  The return value is unused — the call exists purely for its ordering side-effect.
+- **Cache-hit reuse in `sprite()`:** `sprite()` checks `get(alias)` first and only
+  calls `load()` on a cache miss, so a repeat `sprite()` call does NOT re-trigger a
+  load or re-emit `assets:loaded`.
+- **Coarse `assets:loaded`:** emitted once per `load()`/`loadBundle()` call, never
+  per-texture. A bundle of N textures emits exactly one event keyed on the bundle name.
+- **`throwOnError: false` escape hatch:** on a `load()` failure the error is logged
+  via `ctx.log.error` and the promise resolves `undefined` (typed as `Texture` for
+  ergonomics — do not rely on the value). With `throwOnError: true` (default) the
+  error is rethrown unchanged.
+- **`isLoaded` vs `get`:** `isLoaded()` consults the session `state.loaded` Set,
+  while `get()` reads the Pixi cache — they answer slightly different questions.
 
 ## Dependencies
 

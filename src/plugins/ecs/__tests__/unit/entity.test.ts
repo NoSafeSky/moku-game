@@ -55,4 +55,36 @@ describe("entity table — generational handles", () => {
     const fakeEntity = 0x00_01_00_00 as ReturnType<typeof table.alloc>;
     expect(table.isAlive(fakeEntity)).toBe(false);
   });
+
+  it("grows the slot arrays when allocating beyond initialCapacity", () => {
+    // Capacity 2 → the third allocation must grow generations/alive arrays.
+    const table = createEntityTable(2);
+    const a = table.alloc();
+    const b = table.alloc();
+    const c = table.alloc();
+    expect(table.indexOf(c)).toBe(2);
+    expect(table.isAlive(a)).toBe(true);
+    expect(table.isAlive(b)).toBe(true);
+    expect(table.isAlive(c)).toBe(true);
+  });
+
+  it("free is a no-op on an already-freed slot (generation bumped only once)", () => {
+    const table = createEntityTable(4);
+    const entity = table.alloc();
+    table.free(entity);
+    const genAfterFirstFree = table.generationOf(entity);
+    // Double-free: the slot is not alive, so free returns early without re-bumping.
+    table.free(entity);
+    const recycled = table.alloc();
+    expect(table.indexOf(recycled)).toBe(table.indexOf(entity));
+    // Generation advanced exactly once (the second free did nothing).
+    expect(table.generationOf(recycled)).toBe(genAfterFirstFree + 1);
+  });
+
+  it("isAlive returns false for an index past the table length", () => {
+    const table = createEntityTable(2);
+    // Index 50 is far beyond capacity 2 and was never grown into.
+    const farEntity = 50 as ReturnType<typeof table.alloc>;
+    expect(table.isAlive(farEntity)).toBe(false);
+  });
 });

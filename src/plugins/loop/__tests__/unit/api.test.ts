@@ -303,6 +303,52 @@ describe("loop: step()", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// API: WeakMap-miss guards (no runtime seeded for ctx.global)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("loop: API guards when no runtime is registered", () => {
+  it("start() is a no-op when the WeakMap has no entry for ctx.global", () => {
+    // makeCtx() builds a fresh ctx but never calls lifecycle.start, so the
+    // module WeakMap has no LoopRuntime for this global.
+    const ctx = makeCtx() as unknown as LoopContext;
+    expect(loopRegistry.has(ctx.global)).toBe(false);
+
+    const api = createApi(ctx);
+    api.start();
+
+    // No frame scheduled and state.running stays false (guard hit before mutation).
+    expect(rafCallbacks.length).toBe(0);
+    expect(api.isRunning()).toBe(false);
+  });
+
+  it("stop() is a no-op when running but the WeakMap has no entry for ctx.global", () => {
+    // Force running=true so the first guard (`!state.running`) passes and the
+    // WeakMap-miss guard on the next line is the one that fires.
+    const ctx = makeCtx(undefined, { running: true }) as unknown as LoopContext;
+    expect(loopRegistry.has(ctx.global)).toBe(false);
+
+    const api = createApi(ctx);
+    expect(() => api.stop()).not.toThrow();
+
+    // running is left untouched because stop bailed before clearing it.
+    expect(ctx.state.running).toBe(true);
+  });
+
+  it("step() is a no-op when the WeakMap has no entry for ctx.global", () => {
+    const base = makeCtx();
+    const ctx = base as unknown as LoopContext;
+    expect(loopRegistry.has(ctx.global)).toBe(false);
+
+    const api = createApi(ctx);
+    expect(() => api.step()).not.toThrow();
+
+    // tick/render are never invoked because there is no runtime to drive.
+    expect(base.deps.tick).not.toHaveBeenCalled();
+    expect(base.deps.render).not.toHaveBeenCalled();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Frame driver: accumulator stepping
 // ─────────────────────────────────────────────────────────────────────────────
 
