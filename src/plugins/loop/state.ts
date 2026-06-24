@@ -1,22 +1,30 @@
 /**
- * @file loop plugin — state factory skeleton.
+ * @file loop plugin — state factory.
  */
 import type { Config, State } from "./types";
 
 /**
  * Creates the initial loop plugin state.
  *
- * @param _ctx - Minimal context with global and config.
- * @param _ctx.global - Global plugin registry.
- * @param _ctx.config - Resolved plugin configuration.
+ * The loop starts paused: `running` is false, the accumulator is zero, and
+ * `lastTime` is undefined (seeded on the first rAF callback).
+ *
+ * @param _ctx - Minimal context; config and global are available but unused
+ *   because the initial state is always the same fixed shape.
+ * @param _ctx.global - Global plugin registry (unused for initial state).
+ * @param _ctx.config - Resolved plugin configuration (unused for initial state).
+ * @returns The initial {@link State} object for this plugin instance.
  * @example
  * ```ts
- * const state = createState({ global: {}, config: defaultConfig });
+ * const state = createState({ global: Object.freeze({}), config: defaultConfig });
+ * // → { running: false, accumulator: 0, lastTime: undefined }
  * ```
  */
-export function createState(_ctx: {
-  readonly global: Readonly<Record<string, unknown>>;
+export const createState = (_ctx: {
+  readonly global: object;
   readonly config: Readonly<Config>;
-}): State {
-  throw new Error("not implemented");
-}
+}): State => ({
+  running: false,
+  accumulator: 0,
+  lastTime: undefined
+});

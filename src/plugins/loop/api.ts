@@ -1,17 +1,148 @@
 /**
- * @file loop plugin — API factory skeleton.
+ * @file loop plugin — API factory.
+ *
+ * Exposes the loop public surface: start, stop, isRunning, and step.
+ *
+ * start/stop read the per-instance LoopRuntime from the module-level WeakMap
+ * (exported from lifecycle.ts) via ctx.global so they can schedule/cancel the
+ * rAF loop without needing the full lifecycle context.
+ *
+ * step() performs one deterministic fixed step + render for tests and the
+ * mcp `loop:step` tool, bypassing real-time accumulation entirely.
  */
-import type { Api } from "./types";
+import type { rendererPlugin } from "../renderer";
+import type { schedulerPlugin } from "../scheduler";
+import { loopRegistry } from "./lifecycle";
+import type { Api, Config, State } from "./types";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Context type (structural — only fields actually accessed)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Structural context type required by createApi.
+ *
+ * Only the fields the API factory actually accesses are listed so unit tests
+ * can supply a minimal mock without wiring the full kernel context.
+ */
+export type LoopContext = {
+  /** Resolved loop configuration. */
+  readonly config: Readonly<Config>;
+  /** Loop plugin state (running, accumulator, lastTime). */
+  readonly state: State;
+  /** Global plugin registry — key for the module-level WeakMap. */
+  readonly global: object;
+  /** Require a dependency's API by plugin instance. */
+  require: ((plugin: typeof schedulerPlugin) => { tick(dt: number): void }) &
+    ((plugin: typeof rendererPlugin) => { render(): void });
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// API factory
+// ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * Creates the loop plugin API surface.
  *
- * @param _ctx - Plugin context (unused in skeleton).
+ * The four methods delegate to the LoopRuntime stored in the module WeakMap;
+ * they are safe to call at any time (before onStart or after onStop the WeakMap
+ * has no entry, so start/stop/step are no-ops, and isRunning reflects state).
+ *
+ * @param ctx - Plugin context supplying config, state, global, and require.
+ * @param ctx.config - Resolved loop configuration (fixedDt, autoStart, etc.).
+ * @param ctx.state - Loop plugin state (running, accumulator, lastTime).
+ * @param ctx.global - Global plugin registry (key for the module WeakMap).
+ * @param ctx.require - Kernel function to obtain dependency APIs.
+ * @returns The loop {@link Api} object.
  * @example
  * ```ts
  * const api = createApi(ctx);
+ * api.start();         // begin the rAF loop
+ * api.isRunning();     // → true
+ * api.step();          // advance one deterministic step
+ * api.stop();          // halt the loop
  * ```
  */
-export function createApi(_ctx: unknown): Api {
-  throw new Error("not implemented");
-}
+export const createApi = (ctx: LoopContext): Api => {
+  return {
+    /**
+     * Start the rAF loop. No-op if already running.
+     *
+     * Resets `accumulator` and `lastTime` so a fresh stop → start cycle does
+     * not carry stale time into the first frame.
+     *
+     * @example
+     * ```ts
+     * api.start();
+     * ```
+     */
+    start(): void {
+      if (ctx.state.running) return;
+
+      const runtime = loopRegistry.get(ctx.global);
+      if (!runtime) return;
+
+      ctx.state.running = true;
+      ctx.state.accumulator = 0;
+      ctx.state.lastTime = undefined;
+      runtime.scheduleFrame();
+    },
+
+    /**
+     * Stop the rAF loop and cancel the pending frame. No-op if not running.
+     *
+     * @example
+     * ```ts
+     * api.stop();
+     * ```
+     */
+    stop(): void {
+      if (!ctx.state.running) return;
+
+      const runtime = loopRegistry.get(ctx.global);
+      if (!runtime) return;
+
+      ctx.state.running = false;
+
+      if (runtime.rafId !== undefined) {
+        const caf = (globalThis as { cancelAnimationFrame?: (id: number) => void })
+          .cancelAnimationFrame;
+        caf?.(runtime.rafId);
+        runtime.rafId = undefined;
+      }
+    },
+
+    /**
+     * Returns true while the rAF loop is running, false otherwise.
+     *
+     * @returns Whether the loop is currently running.
+     * @example
+     * ```ts
+     * if (api.isRunning()) api.stop();
+     * ```
+     */
+    isRunning(): boolean {
+      return ctx.state.running;
+    },
+
+    /**
+     * Advance exactly one fixed step and render once.
+     *
+     * Calls `scheduler.tick(fixedDt)` then `renderer.render()` without any
+     * real-time accumulation. Useful for tests, frame-stepping tools, and the
+     * mcp `loop:step` command.
+     *
+     * @example
+     * ```ts
+     * api.step(); // deterministic single-step advance
+     * ```
+     */
+    step(): void {
+      const runtime = loopRegistry.get(ctx.global);
+      if (!runtime) return;
+
+      runtime.tickFunction(ctx.config.fixedDt);
+      runtime.renderFunction();
+    }
+  };
+};

@@ -20,8 +20,8 @@ export type State = {
   running: boolean;
   /** Time accumulator (seconds) for fixed stepping. */
   accumulator: number;
-  /** Timestamp (ms) of the previous frame, or null. */
-  lastTime: number | null;
+  /** Timestamp (ms) of the previous frame, or undefined when not yet set. */
+  lastTime: number | undefined;
 };
 
 /** loop plugin API. */
