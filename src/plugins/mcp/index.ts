@@ -33,6 +33,10 @@ export const mcpPlugin = createPlugin("mcp", {
     ecsPlugin,
     schedulerPlugin,
     rendererPlugin,
+    // assetsPlugin + inputPlugin are hard deps by design (decisions.md): mcp ships as a
+    // framework default alongside all seven and registers/tears down LAST. No v1 tool
+    // requires them yet (reserved for v2 asset/input tools), so they have no ctx.require()
+    // call — they are retained for the whole-runtime contract + registration-order guarantee.
     assetsPlugin,
     inputPlugin,
     loopPlugin,
