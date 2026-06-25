@@ -1,6 +1,6 @@
 {
-  "name": "game",
-  "version": "0.0.0",
+  "name": "@nosafesky/moku-game",
+  "version": "0.1.1",
   "description": "An ECS game framework for Moku (Spark-style public API & memory layout) with PixiJS rendering, built on @moku-labs/core and composable with @moku-labs/web",
   "license": "MIT",
   "type": "module",
@@ -25,11 +25,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/moku-labs/game.git"
+    "url": "git+https://github.com/NoSafeSky/moku-game.git"
   },
-  "homepage": "https://github.com/moku-labs/game#readme",
+  "homepage": "https://github.com/NoSafeSky/moku-game#readme",
   "bugs": {
-    "url": "https://github.com/moku-labs/game/issues"
+    "url": "https://github.com/NoSafeSky/moku-game/issues"
   },
   "engines": {
     "node": ">=24.0.0",
