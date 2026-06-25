@@ -7,6 +7,7 @@
  * @see README.md
  */
 import { createPlugin } from "../../config";
+import { ecsPlugin } from "../ecs";
 import { rendererPlugin } from "../renderer";
 import { schedulerPlugin } from "../scheduler";
 import { createApi } from "./api";
@@ -21,11 +22,18 @@ const defaultConfig: Config = {
   autoStart: true
 };
 
+/**
+ * Loop plugin — drives the fixed-timestep game loop via rAF.
+ *
+ * Depends on `schedulerPlugin`, `rendererPlugin`, and `ecsPlugin`.
+ * On start, binds the `Time` resource onto the ECS world so any system can
+ * read the current `dt`, `elapsed`, and `frame` via `world.resource(app.loop.time)`.
+ */
 export const loopPlugin = createPlugin("loop", {
-  depends: [schedulerPlugin, rendererPlugin],
+  depends: [schedulerPlugin, rendererPlugin, ecsPlugin],
   config: defaultConfig,
   createState,
   api: createApi,
-  onStart: start, // @no-resource-check — schedules the requestAnimationFrame loop (spec/06 §3)
+  onStart: start, // @no-resource-check — schedules the requestAnimationFrame loop + binds the Time resource (spec/06 §3)
   onStop: stop // @no-resource-check — cancels rAF via the ctx.global WeakMap (spec/06 §4)
 });

@@ -80,7 +80,10 @@ vi.mock("pixi.js", () => ({
 
 import { coreConfig } from "../../../../config";
 import { assetsPlugin } from "../../../assets";
+import type { Api as AssetsApi } from "../../../assets/types";
+import { contextPlugin } from "../../../context";
 import { ecsPlugin } from "../../../ecs";
+import type { Resource } from "../../../ecs/types";
 import { rendererPlugin } from "../../../renderer";
 import { schedulerPlugin } from "../../../scheduler";
 import { scenePlugin } from "../../index";
@@ -92,6 +95,14 @@ import { scenePlugin } from "../../index";
 const createTestApp = () => {
   const { createApp } = coreConfig.createCore(coreConfig, {
     plugins: [ecsPlugin, schedulerPlugin, rendererPlugin, assetsPlugin, scenePlugin]
+  });
+  return createApp();
+};
+
+/** Test app that includes the context plugin so Assets + GameContext are bound at start. */
+const createTestAppWithContext = () => {
+  const { createApp } = coreConfig.createCore(coreConfig, {
+    plugins: [ecsPlugin, schedulerPlugin, rendererPlugin, assetsPlugin, contextPlugin, scenePlugin]
   });
   return createApp();
 };
@@ -360,6 +371,137 @@ describe("scene plugin integration", () => {
       const setupIdx = setupOrder.indexOf("setup");
       expect(loadBundleIdx).toBeGreaterThanOrEqual(0);
       expect(setupIdx).toBeGreaterThan(loadBundleIdx);
+
+      await app.stop();
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Resource delegation — Cycle 2 Wave B
+  // ──────────────────────────────────────────────────────────────────────────
+  //
+  // After start, contextPlugin binds Assets onto the ECS world. Scenes that
+  // call world.resource(app.context.assets) inside setup must receive the
+  // real assets API — proving makeTrackingWorld forwards resource() through.
+  // Consumer resources written in setup must also be readable from app.ecs
+  // after the load completes. Ownership tracking must not be affected.
+
+  describe("resource delegation", () => {
+    it("setup receives the Assets resource bound by contextPlugin via world.resource()", async () => {
+      const app = createTestAppWithContext();
+      await app.start();
+
+      let seenAssets: AssetsApi | undefined;
+
+      app.scene.define("level", {
+        setup: world => {
+          seenAssets = world.resource(app.context.assets);
+        }
+      });
+
+      await app.scene.load("level");
+
+      expect(seenAssets).toBeDefined();
+      expect(typeof seenAssets?.get).toBe("function");
+      expect(typeof seenAssets?.load).toBe("function");
+
+      await app.stop();
+    });
+
+    it("consumer resource written in setup is readable from app.ecs after load", async () => {
+      const app = createTestAppWithContext();
+      await app.start();
+
+      // Mint a consumer resource token on the real world before defining the scene
+      const Score: Resource<{ value: number }> = app.ecs.defineResource<{ value: number }>();
+
+      app.scene.define("game", {
+        setup: world => {
+          world.setResource(Score, { value: 55 });
+        }
+      });
+
+      await app.scene.load("game");
+
+      // The write went through the tracking wrapper into the real ECS world
+      expect(app.ecs.getResource(Score)).toStrictEqual({ value: 55 });
+
+      await app.stop();
+    });
+
+    it("hasResource returns true in setup for a resource set on the real world before load", async () => {
+      const app = createTestAppWithContext();
+      await app.start();
+
+      const Flag: Resource<boolean> = app.ecs.defineResource<boolean>();
+      app.ecs.setResource(Flag, true);
+
+      let seenHas: boolean | undefined;
+
+      app.scene.define("level", {
+        setup: world => {
+          seenHas = world.hasResource(Flag);
+        }
+      });
+
+      await app.scene.load("level");
+
+      expect(seenHas).toBe(true);
+
+      await app.stop();
+    });
+
+    it("removeResource in setup clears value readable from app.ecs after load", async () => {
+      const app = createTestAppWithContext();
+      await app.start();
+
+      const Cache: Resource<string> = app.ecs.defineResource<string>();
+      app.ecs.setResource(Cache, "stale");
+
+      app.scene.define("level", {
+        setup: world => {
+          world.removeResource(Cache);
+        }
+      });
+
+      await app.scene.load("level");
+
+      // Value was removed through the tracking wrapper
+      expect(app.ecs.getResource(Cache)).toBeUndefined();
+
+      await app.stop();
+    });
+
+    it("resource delegation does not disturb spawn ownership tracking", async () => {
+      const app = createTestAppWithContext();
+      await app.start();
+
+      const Score: Resource<{ value: number }> = app.ecs.defineResource<{ value: number }>();
+      const spawned: unknown[] = [];
+
+      app.scene.define("level", {
+        setup: world => {
+          world.setResource(Score, { value: 1 });
+          spawned.push(world.spawn(), world.spawn());
+        }
+      });
+
+      await app.scene.load("level");
+
+      // Resource delegation must not interfere with ownership interception
+      expect(spawned).toHaveLength(2);
+      for (const entity of spawned) {
+        expect(app.ecs.isAlive(entity as Parameters<typeof app.ecs.isAlive>[0])).toBe(true);
+      }
+
+      // Unload must despawn the two owned entities
+      app.scene.unload();
+      for (const entity of spawned) {
+        expect(app.ecs.isAlive(entity as Parameters<typeof app.ecs.isAlive>[0])).toBe(false);
+      }
+
+      // Confirm the resource is unaffected by unload
+      expect(app.ecs.getResource(Score)).toStrictEqual({ value: 1 });
 
       await app.stop();
     });

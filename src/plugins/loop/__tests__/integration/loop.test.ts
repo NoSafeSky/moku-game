@@ -60,6 +60,7 @@ import { ecsPlugin } from "../../../ecs";
 import { rendererPlugin } from "../../../renderer";
 import { schedulerPlugin } from "../../../scheduler";
 import { loopPlugin } from "../../index";
+import { Time } from "../../resources";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fake rAF queue
@@ -342,6 +343,88 @@ describe("loop plugin integration", () => {
 
       await expect(app.stop()).resolves.toBeUndefined();
       expect(rafCallbacks.length).toBe(0);
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Time resource
+  // ──────────────────────────────────────────────────────────────────────────
+
+  describe("Time resource", () => {
+    it("app.loop.time resolves via world.resource(Time) after step()", async () => {
+      const app = createTestApp({ autoStart: false });
+      await app.start();
+
+      // Before any step: dt=0, elapsed=0, frame=0
+      const timeBeforeStep = app.ecs.resource(app.loop.time);
+      expect(timeBeforeStep.dt).toBe(0);
+      expect(timeBeforeStep.elapsed).toBe(0);
+      expect(timeBeforeStep.frame).toBe(0);
+
+      app.loop.step();
+
+      const timeAfterStep = app.ecs.resource(app.loop.time);
+      expect(timeAfterStep.dt).toBeGreaterThan(0);
+      expect(timeAfterStep.elapsed).toBeGreaterThan(0);
+      expect(timeAfterStep.frame).toBe(1);
+
+      await app.stop();
+    });
+
+    it("Time advances on each step() call", async () => {
+      const app = createTestApp({ autoStart: false });
+      await app.start();
+
+      app.loop.step();
+      app.loop.step();
+      app.loop.step();
+
+      const time = app.ecs.resource(app.loop.time);
+      expect(time.frame).toBe(3);
+
+      await app.stop();
+    });
+
+    it("world.resource(Time) is the same object reference after multiple step() calls (no realloc)", async () => {
+      const app = createTestApp({ autoStart: false });
+      await app.start();
+
+      const ref1 = app.ecs.resource(app.loop.time);
+      app.loop.step();
+      const ref2 = app.ecs.resource(app.loop.time);
+
+      expect(ref1).toBe(ref2);
+
+      await app.stop();
+    });
+
+    it("a registered system reads the same Time values as world.resource(Time)", async () => {
+      const app = createTestApp({ autoStart: false });
+      await app.start();
+
+      const capturedFrames: number[] = [];
+
+      app.scheduler.addSystem("update", () => {
+        const time = app.ecs.resource(Time);
+        capturedFrames.push(time.frame);
+      });
+
+      app.loop.step();
+      app.loop.step();
+
+      // System ran twice; first step saw frame=1, second saw frame=2
+      expect(capturedFrames).toEqual([1, 2]);
+
+      await app.stop();
+    });
+
+    it("app.loop.time token equals the Time well-known resource", async () => {
+      const app = createTestApp({ autoStart: false });
+      await app.start();
+
+      expect(app.loop.time).toBe(Time);
+
+      await app.stop();
     });
   });
 });

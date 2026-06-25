@@ -13,6 +13,7 @@
 import type { rendererPlugin } from "../renderer";
 import type { schedulerPlugin } from "../scheduler";
 import { loopRegistry } from "./lifecycle";
+import { Time } from "./resources";
 import type { Api, Config, State } from "./types";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -128,8 +129,9 @@ export const createApi = (ctx: LoopContext): Api => {
     /**
      * Advance exactly one fixed step and render once.
      *
-     * Calls `scheduler.tick(fixedDt)` then `renderer.render()` without any
-     * real-time accumulation. Useful for tests, frame-stepping tools, and the
+     * Advances the `Time` resource (`dt = fixedDt`, `elapsed += fixedDt`, `frame += 1`)
+     * immediately before calling `scheduler.tick(fixedDt)`, then calls `renderer.render()`.
+     * Bypasses real-time accumulation — useful for tests, frame-stepping tools, and the
      * mcp `loop:step` command.
      *
      * @example
@@ -141,8 +143,26 @@ export const createApi = (ctx: LoopContext): Api => {
       const runtime = loopRegistry.get(ctx.global);
       if (!runtime) return;
 
+      runtime.time.dt = ctx.config.fixedDt;
+      runtime.time.elapsed += ctx.config.fixedDt;
+      runtime.time.frame += 1;
       runtime.tickFunction(ctx.config.fixedDt);
       runtime.renderFunction();
-    }
+    },
+
+    /**
+     * Well-known `Time` resource token.
+     *
+     * Pass to `world.resource(app.loop.time)` from any system or test to read
+     * the current `dt`, `elapsed`, and `frame` values for the executing step.
+     * The underlying object is mutated in place — no new allocation per step.
+     *
+     * @example
+     * ```ts
+     * const clock = world.resource(app.loop.time);
+     * // → { dt: 0.016, elapsed: 1.23, frame: 74 }
+     * ```
+     */
+    time: Time
   };
 };

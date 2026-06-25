@@ -12,8 +12,11 @@
  *   removes the visibilitychange listener, and deletes the WeakMap entry.
  *   Idempotent: a second call with the same ctx.global is a safe no-op.
  */
+import { ecsPlugin } from "../ecs";
+import type { World } from "../ecs/types";
 import { rendererPlugin } from "../renderer";
 import { schedulerPlugin } from "../scheduler";
+import { Time } from "./resources";
 import type { Config, State } from "./types";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -60,6 +63,13 @@ export type LoopRuntime = {
   state: State;
   /** Schedules the next rAF (shared by lifecycle start and api.start). */
   scheduleFrame: () => void;
+  /**
+   * Mutable frame clock, shared with the ECS world via `world.setResource(Time, time)`.
+   * The loop mutates this object in place each fixed step — the world registry holds
+   * the same reference, so `world.resource(Time)` reflects updates with no realloc.
+   * Typed as a mutable mirror of `TimeState` (`readonly` is the consumer-facing contract).
+   */
+  time: { dt: number; elapsed: number; frame: number };
 };
 
 /**
@@ -93,7 +103,8 @@ type StartContext = {
   };
   /** Require a dependency's API by plugin instance. */
   require: ((plugin: typeof schedulerPlugin) => { tick(dt: number): void }) &
-    ((plugin: typeof rendererPlugin) => { render(): void });
+    ((plugin: typeof rendererPlugin) => { render(): void }) &
+    ((plugin: typeof ecsPlugin) => World);
 };
 
 /** Context available in onStop (TeardownContext — global only). */
@@ -150,6 +161,9 @@ const buildFrameCallback = (runtime: LoopRuntime): ((timestamp: number) => void)
 
     let steps = 0;
     while (state.accumulator >= config.fixedDt && steps < config.maxStepsPerFrame) {
+      runtime.time.dt = config.fixedDt;
+      runtime.time.elapsed += config.fixedDt;
+      runtime.time.frame += 1;
       runtime.tickFunction(config.fixedDt);
       state.accumulator -= config.fixedDt;
       steps += 1;
@@ -185,6 +199,18 @@ const buildFrameCallback = (runtime: LoopRuntime): ((timestamp: number) => void)
 export const start = async (ctx: StartContext): Promise<void> => {
   const scheduler = ctx.require(schedulerPlugin);
   const renderer = ctx.require(rendererPlugin);
+  const world = ctx.require(ecsPlugin);
+
+  // ── Create and bind the Time resource ──────────────────────────────────
+  // The mutable clock object is shared by reference: mutations during each
+  // fixed step are visible via world.resource(Time) with no per-step realloc.
+  const time: { dt: number; elapsed: number; frame: number } = {
+    dt: 0,
+    elapsed: 0,
+    frame: 0
+  };
+  // world.setResource accepts TimeState (readonly); the mutable clock is assignable to it.
+  world.setResource(Time, time);
 
   // ── Build per-instance LoopRuntime ──────────────────────────────────────
 
@@ -220,7 +246,8 @@ export const start = async (ctx: StartContext): Promise<void> => {
     renderFunction,
     config: ctx.config,
     state: ctx.state,
-    scheduleFrame: renderFunction // placeholder — replaced below before first use
+    scheduleFrame: renderFunction, // placeholder — replaced below before first use
+    time
   };
 
   // Build the frame callback (closes over `runtime`)

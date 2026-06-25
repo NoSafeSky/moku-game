@@ -3,9 +3,14 @@
  *
  * All dependencies (ecs World, renderer, assets) are hand-rolled mocks so tests
  * run in node without a real Pixi context.
+ *
+ * The "resource delegation" describe block uses the real `createWorld` so that
+ * resource read/write pass-through is proven against the actual registry (no mock
+ * can accidentally mis-wire delegation methods).
  */
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import type { Entity, World } from "../../../ecs/types";
+import { createWorld } from "../../../ecs/world";
 import type { SceneContext } from "../../api";
 import { createApi } from "../../api";
 import type { Config, SceneDefinition, State } from "../../types";
@@ -91,6 +96,16 @@ const createMockCtx = (overrides?: {
   };
 
   return { ctx, world, detach, loadBundle, emit, state };
+};
+
+/**
+ * Build a ctx whose ecs world is a REAL createWorld instance so resource
+ * operations hit actual registry storage. Moved to module scope per
+ * unicorn/consistent-function-scoping.
+ */
+const createRealWorldCtx = () => {
+  const realWorld = createWorld({ initialCapacity: 64, maxStructuralOpsWarn: 0 });
+  return { ...createMockCtx({ world: realWorld }), realWorld };
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -573,6 +588,190 @@ describe("createApi", () => {
   });
 
   // ──────────────────────────────────────────────────────────────────────────
+  // Resource delegation — Cycle 2 Wave B
+  // ──────────────────────────────────────────────────────────────────────────
+  //
+  // makeTrackingWorld forwards all 6 resource methods straight through to the
+  // real world. Tests use a real `createWorld` instance as the ECS world so
+  // that any mis-wiring (e.g. getResource wired to hasResource) causes a
+  // concrete value mismatch rather than a mock always returning truthy.
+
+  describe("resource delegation", () => {
+    it("setResource via tracked world writes to the real world registry", async () => {
+      const { ctx, realWorld } = createRealWorldCtx();
+      const api = createApi(ctx);
+      const Score = realWorld.defineResource<{ value: number }>();
+
+      api.define("level", {
+        setup: wrappedWorld => {
+          wrappedWorld.setResource(Score, { value: 42 });
+        }
+      });
+
+      await api.load("level");
+
+      // Read directly from the real world — confirms the tracked wrapper forwarded the write
+      expect(realWorld.getResource(Score)).toStrictEqual({ value: 42 });
+    });
+
+    it("getResource via tracked world reads from the real world registry", async () => {
+      const { ctx, realWorld } = createRealWorldCtx();
+      const api = createApi(ctx);
+      const Score = realWorld.defineResource<{ value: number }>();
+      realWorld.setResource(Score, { value: 7 });
+
+      let readValue: { value: number } | undefined;
+
+      api.define("level", {
+        setup: wrappedWorld => {
+          readValue = wrappedWorld.getResource(Score);
+        }
+      });
+
+      await api.load("level");
+
+      expect(readValue).toStrictEqual({ value: 7 });
+    });
+
+    it("resource() via tracked world reads and throws on missing resource", async () => {
+      const { ctx, realWorld } = createRealWorldCtx();
+      const api = createApi(ctx);
+      const Missing = realWorld.defineResource<{ value: number }>();
+
+      let caughtError: unknown;
+
+      api.define("level", {
+        setup: wrappedWorld => {
+          try {
+            wrappedWorld.resource(Missing);
+          } catch (error) {
+            caughtError = error;
+          }
+        }
+      });
+
+      await api.load("level");
+
+      expect(caughtError).toBeInstanceOf(Error);
+      expect((caughtError as Error).message).toMatch(/is not set/);
+    });
+
+    it("resource() via tracked world returns value when set", async () => {
+      const { ctx, realWorld } = createRealWorldCtx();
+      const api = createApi(ctx);
+      const Tag = realWorld.defineResource<{ label: string }>();
+      realWorld.setResource(Tag, { label: "hello" });
+
+      let readValue: { label: string } | undefined;
+
+      api.define("level", {
+        setup: wrappedWorld => {
+          readValue = wrappedWorld.resource(Tag);
+        }
+      });
+
+      await api.load("level");
+
+      expect(readValue).toStrictEqual({ label: "hello" });
+    });
+
+    it("defineResource via tracked world mints a token usable on the real world", async () => {
+      const { ctx, realWorld } = createRealWorldCtx();
+      const api = createApi(ctx);
+      let mintedToken: ReturnType<typeof realWorld.defineResource> | undefined;
+
+      api.define("level", {
+        setup: wrappedWorld => {
+          mintedToken = wrappedWorld.defineResource<{ count: number }>();
+          // Write through the token on the wrapped world itself
+          wrappedWorld.setResource(mintedToken, { count: 10 });
+        }
+      });
+
+      await api.load("level");
+
+      // Token minted inside setup must be readable on the real world
+      if (!mintedToken) throw new Error("mintedToken was not set by setup");
+      expect(realWorld.getResource(mintedToken)).toStrictEqual({ count: 10 });
+    });
+
+    it("hasResource via tracked world returns false before set and true after set", async () => {
+      const { ctx, realWorld } = createRealWorldCtx();
+      const api = createApi(ctx);
+      const Flag = realWorld.defineResource<boolean>();
+      const results: boolean[] = [];
+
+      api.define("level", {
+        setup: wrappedWorld => {
+          results.push(wrappedWorld.hasResource(Flag)); // false — not yet set
+          wrappedWorld.setResource(Flag, true);
+          results.push(wrappedWorld.hasResource(Flag)); // true — just set
+        }
+      });
+
+      await api.load("level");
+
+      expect(results).toStrictEqual([false, true]);
+    });
+
+    it("hasResource via tracked world returns true when the real world has a factory", async () => {
+      const { ctx, realWorld } = createRealWorldCtx();
+      const api = createApi(ctx);
+      // defineResource with a factory — hasResource must be true even without an explicit set
+      const Auto = realWorld.defineResource(() => ({ auto: true }));
+      let seen: boolean | undefined;
+
+      api.define("level", {
+        setup: wrappedWorld => {
+          seen = wrappedWorld.hasResource(Auto);
+        }
+      });
+
+      await api.load("level");
+
+      expect(seen).toBe(true);
+    });
+
+    it("removeResource via tracked world clears the value in the real world registry", async () => {
+      const { ctx, realWorld } = createRealWorldCtx();
+      const api = createApi(ctx);
+      const Cache = realWorld.defineResource<{ data: string }>();
+      realWorld.setResource(Cache, { data: "stale" });
+
+      api.define("level", {
+        setup: wrappedWorld => {
+          wrappedWorld.removeResource(Cache);
+        }
+      });
+
+      await api.load("level");
+
+      // After removal the real world returns undefined (no factory to re-init)
+      expect(realWorld.getResource(Cache)).toBeUndefined();
+    });
+
+    it("resource delegation does NOT disrupt spawn-ownership tracking", async () => {
+      const { ctx, state, realWorld } = createRealWorldCtx();
+      const api = createApi(ctx);
+      const Score = realWorld.defineResource<{ value: number }>();
+
+      api.define("level", {
+        setup: wrappedWorld => {
+          // Mix resource write with a spawn — both must work
+          wrappedWorld.setResource(Score, { value: 99 });
+          wrappedWorld.spawn();
+        }
+      });
+
+      await api.load("level");
+
+      // Spawn must be tracked even when resource methods are also called
+      expect(state.owned.size).toBe(1);
+      expect(realWorld.getResource(Score)).toStrictEqual({ value: 99 });
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
   // Type-level tests
   // ──────────────────────────────────────────────────────────────────────────
 
@@ -621,6 +820,30 @@ describe("createApi", () => {
       ctx.emit("scene:loaded", {});
 
       expect(ctx).toBeDefined();
+    });
+
+    it("SceneDefinition.setup world param exposes resource methods with correct signatures", () => {
+      // Type-level proof: the World passed to setup carries all 6 resource methods.
+      // makeTrackingWorld must return a complete World — any missing delegation would be
+      // a TS compile error here (expectTypeOf checks the exact shape at compile time).
+      const def: SceneDefinition = {
+        setup: world => {
+          expectTypeOf(world.defineResource).toBeFunction();
+          expectTypeOf(world.setResource).toBeFunction();
+          expectTypeOf(world.getResource).toBeFunction();
+          expectTypeOf(world.resource).toBeFunction();
+          expectTypeOf(world.hasResource).toBeFunction();
+          expectTypeOf(world.removeResource).toBeFunction();
+        }
+      };
+
+      expect(def).toBeDefined();
+    });
+
+    it("setup world param is type-assignable to World (complete interface)", () => {
+      // Prove the setup callback's world param satisfies the full World contract.
+      type SetupWorld = Parameters<SceneDefinition["setup"]>[0];
+      expectTypeOf<SetupWorld>().toEqualTypeOf<World>();
     });
   });
 });

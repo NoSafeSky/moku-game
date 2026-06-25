@@ -117,15 +117,17 @@ import { start, stop } from "../../lifecycle";
 const bootCtx = async (configOverrides?: Partial<Config>, stateOverrides?: Partial<State>) => {
   const ctx = makeCtx(configOverrides, stateOverrides);
 
-  // Both requires return an object that satisfies scheduler (tick) and renderer (render).
-  // lifecycle.ts calls require(schedulerPlugin) → uses .tick
-  //                  require(rendererPlugin)  → uses .render
-  // Returning both fields from a single mock satisfies both call sites.
+  // All requires return one depsMock that satisfies:
+  //   scheduler → tick, addSystem, stages
+  //   renderer  → render
+  //   ecs       → setResource (lifecycle binds the Time resource at onStart)
   const depsMock = {
     tick: ctx.deps.tick,
     render: ctx.deps.render,
     addSystem: vi.fn(),
-    stages: [] as readonly string[]
+    stages: [] as readonly string[],
+    // Minimal ECS world stub so lifecycle.start can call world.setResource(Time, ...)
+    setResource: vi.fn()
   };
 
   const typedRequire = (_plugin: unknown) => depsMock;
@@ -135,7 +137,7 @@ const bootCtx = async (configOverrides?: Partial<Config>, stateOverrides?: Parti
     require: typedRequire
   };
 
-  await start(fullCtx as Parameters<typeof start>[0]);
+  await start(fullCtx as unknown as Parameters<typeof start>[0]);
   // Cast at the mock boundary: vi.fn() mocks aren't structurally assignable to
   // LoopContext.require's precise (dt: number) => void overloads. deps is kept
   // on the type so call-order tests can still reach ctx.deps.tick/render.
