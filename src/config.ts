@@ -2,7 +2,7 @@
  * @file Framework configuration — Config + Events types, core plugin registration.
  */
 import { envPlugin, logPlugin } from "@moku-labs/common";
-import { createCoreConfig } from "@moku-labs/core";
+import { createCoreConfig as createCoreConfigFactory } from "@moku-labs/core";
 
 /**
  * Global configuration shape for the game framework. The framework defines no global
@@ -21,13 +21,14 @@ export type Events = {
   "scene:loaded": { name: string };
 };
 
-export const coreConfig = createCoreConfig<Config, Events, [typeof logPlugin, typeof envPlugin]>(
-  "game",
-  {
-    config: {},
-    plugins: [logPlugin, envPlugin] // core plugins → ctx.log + ctx.env on every ctx
-  }
-);
+export const coreConfig = createCoreConfigFactory<
+  Config,
+  Events,
+  [typeof logPlugin, typeof envPlugin]
+>("game", {
+  config: {},
+  plugins: [logPlugin, envPlugin] // core plugins → ctx.log + ctx.env on every ctx
+});
 
 /**
  * Define a plugin for the game framework. Types are inferred from the spec object —
@@ -40,10 +41,26 @@ export const coreConfig = createCoreConfig<Config, Events, [typeof logPlugin, ty
 export const createPlugin = coreConfig.createPlugin;
 
 /**
- * Assemble the game framework core from its built-in plugins. Used by `src/index.ts`.
+ * Assemble a game framework core (Layer 2) from a set of plugins, bound to this framework's
+ * `Config` / `Events`. Used internally by `src/index.ts` to build the default framework, and
+ * re-exported from the framework entry for **advanced / headless** core assembly — e.g. composing
+ * a core from a custom (headless) plugin subset. Most consumers should use `createApp` instead.
  *
- * @param config - The core config from `createCoreConfig`.
- * @param spec - Framework plugins + default `pluginConfigs`.
+ * The first argument carries type information only (unused at runtime); pass an object exposing the
+ * framework's bound `createPlugin` — either `coreConfig` here or the exported `createPlugin`.
+ *
+ * @param coreConfig - Carrier for the bound `createPlugin` type (e.g. `coreConfig` or `{ createPlugin }`).
+ * @param options - Framework plugins plus default `pluginConfigs` / `onReady` / `onError`.
  * @returns The framework factory (`createApp` / `createPlugin`).
+ * @example
+ * ```ts
+ * import { createCore, createPlugin } from "game";
+ * const { createApp } = createCore({ createPlugin }, { plugins: [ecsPlugin, schedulerPlugin] });
+ * ```
  */
 export const createCore = coreConfig.createCore;
+
+// Re-export the raw Moku Core config factory (`@moku-labs/core`) for advanced / headless use:
+// assemble a bespoke core with a different `Config` / `Events` shape or core-plugin set, then call
+// the returned `createCore`. Most consumers use `createApp` (or the re-exported `createCore`) instead.
+export { createCoreConfig } from "@moku-labs/core";

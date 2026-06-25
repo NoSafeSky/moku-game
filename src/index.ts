@@ -54,3 +54,8 @@ export const createApp = framework.createApp;
  * @returns A typed plugin definition.
  */
 export const createPlugin = framework.createPlugin;
+
+// ─── Advanced / Headless Core Assembly ───────────────────────
+// Layer-1/2 escape hatches for composing a custom (e.g. headless) core. `createApp` above
+// remains the default entry point; these are documented at their source in `./config`.
+export { createCore, createCoreConfig } from "./config";
