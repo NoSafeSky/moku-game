@@ -104,6 +104,9 @@ const createTestApp = (loopConfigOverrides?: { autoStart?: boolean }) => {
   });
   return createApp({
     pluginConfigs: {
+      // headless:false → exercise the (mocked) Pixi render path; the node test
+      // runtime has no DOM, so the renderer would otherwise auto-detect headless.
+      renderer: { headless: false },
       loop: { autoStart: loopConfigOverrides?.autoStart ?? false }
     }
   });

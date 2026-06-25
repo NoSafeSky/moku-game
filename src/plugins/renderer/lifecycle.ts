@@ -1,15 +1,20 @@
 /**
- * @file renderer plugin — onStart / onStop lifecycle handlers.
+ * @file renderer plugin — onStart / onStop lifecycle handlers + detectHeadless.
  *
- * onStart: creates the Pixi Application, calls app.init(...), optionally mounts
- *   the canvas to the DOM, registers the sync system via the scheduler, stores
- *   { app, views } in a module-level WeakMap keyed on ctx.global, and writes
- *   app into state so the API methods can reach it.
- *   On any init failure, calls app.destroy(...) and rethrows (no half-open GPU).
+ * onStart: when config.headless is true, logs an info line and skips Pixi
+ *   entirely, but still defines the Transform component and registers the sync
+ *   system so ECS/scene code works identically in both modes. When not headless,
+ *   creates the Pixi Application, calls app.init(...), optionally mounts the
+ *   canvas to the DOM, then stores { app, views } in the WeakMap. On any init
+ *   failure, calls app.destroy(...) and rethrows (no half-open GPU).
  *
  * onStop: reads { app, views } from the WeakMap via ctx.global (TeardownContext
- *   provides ONLY { global } — state is inaccessible), disposes every managed
- *   Container, destroys the Pixi Application, and deletes the WeakMap entry.
+ *   provides ONLY { global } — state is inaccessible). Disposes every managed
+ *   Container. If app is present (non-headless), destroys it with full
+ *   texture/VRAM cleanup. Deletes the WeakMap entry. Idempotent.
+ *
+ * detectHeadless: pure environment probe — returns true when there is no DOM
+ *   (typeof document === "undefined"). Does NOT import or touch Pixi.
  */
 import { Application } from "pixi.js";
 import { ecsPlugin } from "../ecs";
@@ -76,26 +81,104 @@ type StopContext = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// detectHeadless — pure env probe, no Pixi at module load
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Detects whether the current runtime has no DOM (i.e. is headless).
+ *
+ * Returns `true` when `document` is not defined on `globalThis` (Bun/Node
+ * environments without jsdom). Returns `false` in a browser or jsdom context.
+ * This function does NOT import or touch Pixi — it is a pure environment probe
+ * suitable for use as a config default computed at module load time.
+ *
+ * @returns `true` if there is no DOM (`typeof document === "undefined"`), else `false`.
+ * @example
+ * ```ts
+ * const headless = detectHeadless(); // true under Bun/Node, false in browser
+ * ```
+ */
+export const detectHeadless = (): boolean =>
+  typeof (globalThis as GlobalWithDom).document === "undefined";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared helper — define Transform component and register sync system
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Defines the Transform component on the ECS world, stores the token on state,
+ * and registers the sync system via the scheduler. Called in both headless and
+ * non-headless paths so ECS/scene code is identical in both modes.
+ *
+ * @param ctx - Full plugin context providing config, state, global, log, and require.
+ * @example
+ * ```ts
+ * registerTransformAndSync(ctx);
+ * ```
+ */
+const registerTransformAndSync = (ctx: StartContext): void => {
+  const world = ctx.require(ecsPlugin);
+  const transformToken = world.defineComponent<TransformValue>(() => ({
+    x: 0,
+    y: 0,
+    rotation: 0,
+    scaleX: 1,
+    scaleY: 1
+  }));
+  ctx.state.transformToken = transformToken;
+
+  const scheduler = ctx.require(schedulerPlugin);
+  scheduler.addSystem(
+    "sync",
+    createSyncSystem({
+      state: ctx.state,
+      transformToken,
+      world
+    })
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // onStart
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Starts the renderer: initialises a Pixi Application, optionally mounts the
- * canvas, registers the sync system in the scheduler, and stores teardown data
- * in the module WeakMap.
+ * Starts the renderer.
  *
- * On any failure during app.init(), app.destroy() is called and the error is
- * rethrown so no half-open GPU context is left behind.
+ * When `config.headless` is `true`: logs an info line, skips Pixi entirely
+ * (no Application created or initialised), but still defines the Transform
+ * component and registers the sync system. Stores `{ app: undefined, views }`
+ * in the WeakMap so onStop can clear managed views.
+ *
+ * When `config.headless` is `false` (or DOM is present): creates a Pixi
+ * Application, calls `app.init(...)` with `autoStart:false`, optionally mounts
+ * the canvas, then stores `{ app, views }` in the WeakMap. On any init failure,
+ * `app.destroy(...)` is called and the error is rethrown (no half-open GPU).
  *
  * @param ctx - Full plugin context providing config, state, global, log, and require.
- * @returns A Promise that resolves when the Pixi Application is ready.
- * @throws {Error} When Pixi Application initialisation fails.
+ * @returns A Promise that resolves when the renderer is ready.
+ * @throws {Error} When Pixi Application initialisation fails (non-headless path only).
  * @example
  * ```ts
  * await start(ctx);
  * ```
  */
 export const start = async (ctx: StartContext): Promise<void> => {
+  if (ctx.config.headless) {
+    ctx.log.info("[renderer] headless — Pixi not initialised");
+
+    // Define Transform component + register sync system in headless mode too,
+    // so ECS/scene code is identical whether headless or not.
+    registerTransformAndSync(ctx);
+
+    // Store headless teardown entry (app is undefined — onStop skips destroy).
+    teardownMap.set(ctx.global, { app: undefined, views: ctx.state.views });
+
+    return;
+  }
+
+  // ── Non-headless path ─────────────────────────────────────────────────────
+
   const app = new Application();
 
   try {
@@ -123,33 +206,14 @@ export const start = async (ctx: StartContext): Promise<void> => {
     }
   }
 
-  // Store app in state so API methods (render, getView, getStage) can reach it
+  // Store app in state so API methods (render, getView, getStage) can reach it.
   ctx.state.app = app;
 
   // Define the Transform component on the ECS world and store it in state so
   // the API getter and sync system share the exact same token instance.
-  const world = ctx.require(ecsPlugin);
-  const transformToken = world.defineComponent<TransformValue>(() => ({
-    x: 0,
-    y: 0,
-    rotation: 0,
-    scaleX: 1,
-    scaleY: 1
-  }));
-  ctx.state.transformToken = transformToken;
+  registerTransformAndSync(ctx);
 
-  // Register the sync system via the scheduler
-  const scheduler = ctx.require(schedulerPlugin);
-  scheduler.addSystem(
-    "sync",
-    createSyncSystem({
-      state: ctx.state,
-      transformToken,
-      world
-    })
-  );
-
-  // Stash teardown data in the WeakMap (onStop cannot read state)
+  // Stash teardown data in the WeakMap (onStop cannot read state).
   teardownMap.set(ctx.global, { app, views: ctx.state.views });
 };
 
@@ -158,11 +222,12 @@ export const start = async (ctx: StartContext): Promise<void> => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Stops the renderer: disposes every managed Container, destroys the Pixi
- * Application with full texture/VRAM cleanup, and removes the WeakMap entry.
+ * Stops the renderer: disposes every managed Container, and (when not headless)
+ * destroys the Pixi Application with full texture/VRAM cleanup. Removes the
+ * WeakMap entry. Idempotent — a second call with the same global is a safe no-op.
  *
- * Reads teardown data from the module WeakMap via ctx.global because onStop
- * only receives TeardownContext ({ global }) — state is not accessible.
+ * Reads teardown data from the module WeakMap via `ctx.global` because onStop
+ * only receives TeardownContext (`{ global }`) — state is not accessible.
  *
  * @param ctx - Teardown context providing only the global registry.
  * @returns A Promise that resolves when teardown is complete.
@@ -180,7 +245,10 @@ export const stop = async (ctx: StopContext): Promise<void> => {
   }
   entry.views.clear();
 
-  entry.app.destroy(true, { children: true, texture: true, textureSource: true });
+  // Only destroy the Pixi Application when one was actually created.
+  if (entry.app) {
+    entry.app.destroy(true, { children: true, texture: true, textureSource: true });
+  }
 
   teardownMap.delete(ctx.global);
 };

@@ -70,7 +70,9 @@ const createTestApp = () => {
   const { createApp } = coreConfig.createCore(coreConfig, {
     plugins: [ecsPlugin, schedulerPlugin, rendererPlugin]
   });
-  return createApp();
+  // Force headless:false so the mocked Pixi Application is exercised regardless
+  // of whether the test environment has a DOM (Bun auto-detects headless:true).
+  return createApp({ pluginConfigs: { renderer: { headless: false } } });
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

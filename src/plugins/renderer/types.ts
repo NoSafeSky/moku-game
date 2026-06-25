@@ -36,6 +36,15 @@ export type Config = {
   antialias: boolean;
   /** CSS selector for auto-mounting the canvas, or undefined for headless/manual. Default: undefined. */
   mount: string | undefined;
+  /**
+   * Run without Pixi/GPU. When true, onStart skips Application creation/init and
+   * leaves the app undefined; render()/getView()/getStage() become safe no-ops.
+   * Auto-detected when omitted: true if there is no DOM (typeof document === "undefined"),
+   * else false. An explicit value always overrides auto-detection.
+   *
+   * @default auto-detected (no DOM → true)
+   */
+  headless: boolean;
 };
 
 /** renderer plugin mutable state. */
@@ -101,10 +110,11 @@ export type Api = {
 /**
  * Shape stored in the module-level WeakMap keyed on ctx.global.
  * onStop reads this because it only receives TeardownContext ({ global }).
+ * When headless, app is undefined and app.destroy() is skipped.
  */
 export type TeardownEntry = {
-  /** The Pixi Application to destroy. */
-  readonly app: Application;
+  /** The Pixi Application to destroy, or undefined when headless. */
+  readonly app: Application | undefined;
   /** The views map, so onStop can dispose managed containers. */
   readonly views: Map<Entity, Container>;
 };

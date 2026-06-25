@@ -54,7 +54,8 @@ const baseConfig: Config = {
   background: 0x00_00_00,
   resolution: 0,
   antialias: true,
-  mount: undefined
+  mount: undefined,
+  headless: false
 };
 
 /** Minimal stub World — only defineComponent is exercised by start(). */
@@ -135,7 +136,7 @@ describe("renderer onStart — mount branch", () => {
     await stop({ global: ctx.global });
   });
 
-  it("does not touch the DOM when mount is undefined (headless)", async () => {
+  it("does not query the DOM when mount is undefined (non-headless path)", async () => {
     const querySelector = vi.fn();
     (globalThis as Record<string, unknown>).document = { querySelector };
 

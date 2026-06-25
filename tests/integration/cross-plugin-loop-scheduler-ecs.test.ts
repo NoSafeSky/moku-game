@@ -126,7 +126,11 @@ const createLoopApp = () => {
   const { createApp } = coreConfig.createCore(coreConfig, {
     plugins: [ecsPlugin, schedulerPlugin, rendererPlugin, loopPlugin]
   });
-  return createApp({ pluginConfigs: { loop: { autoStart: false } } });
+  // headless:false → exercise the (mocked) Pixi render path; the node test
+  // runtime has no DOM, so the renderer would otherwise auto-detect headless.
+  return createApp({
+    pluginConfigs: { renderer: { headless: false }, loop: { autoStart: false } }
+  });
 };
 
 beforeEach(() => {

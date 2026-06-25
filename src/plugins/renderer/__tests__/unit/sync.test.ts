@@ -44,7 +44,8 @@ const defaultConfig: Config = {
   background: 0x00_00_00,
   resolution: 0,
   antialias: true,
-  mount: undefined
+  mount: undefined,
+  headless: false
 };
 
 /** Branded entity helper. */

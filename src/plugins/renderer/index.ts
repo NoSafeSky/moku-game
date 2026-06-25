@@ -10,7 +10,7 @@ import { createPlugin } from "../../config";
 import { ecsPlugin } from "../ecs";
 import { schedulerPlugin } from "../scheduler";
 import { createApi } from "./api";
-import { start, stop } from "./lifecycle";
+import { detectHeadless, start, stop } from "./lifecycle";
 import { createState } from "./state";
 import type { Config } from "./types";
 
@@ -20,7 +20,8 @@ const defaultConfig: Config = {
   background: 0x00_00_00,
   resolution: 0,
   antialias: true,
-  mount: undefined
+  mount: undefined,
+  headless: detectHeadless()
 };
 
 export const rendererPlugin = createPlugin("renderer", {
