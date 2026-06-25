@@ -427,7 +427,7 @@ describe("loop: Time mutated in place (no realloc)", () => {
 
 describe("loop: Time type-level", () => {
   it("Api.time has the correct Resource<TimeState> type", () => {
-    expectTypeOf<Api["time"]>().toMatchTypeOf<{ readonly __key: string }>();
+    expectTypeOf<Api["time"]>().toEqualTypeOf<Resource<TimeState>>();
   });
 
   it("TimeState.dt is number (readonly)", () => {

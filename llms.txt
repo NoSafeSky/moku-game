@@ -2,20 +2,21 @@
 
 > An ECS game framework for Moku — Spark-style public API and memory layout, PixiJS v8 rendering, built on @moku-labs/core, composable with @moku-labs/web, with a first-class MCP plugin exposing the live runtime to agent clients.
 
-`game` is a typed Entity-Component-System runtime composed of eight plugins. It is unpublished
+`game` is a typed Entity-Component-System runtime composed of nine plugins. It is unpublished
 (version 0.0.0) and not a game engine UI or editor — it owns the data model (archetype object-SoA
 storage), the fixed-timestep frame, and the GPU lifecycle; you write components and systems in
 TypeScript. Hot-path frame work bypasses the Moku kernel for performance and is NOT emitted as
-kernel events.
+kernel events. Systems reach shared services (assets, logging, frame time) through a typed world
+**resource registry** — the system signature stays `(world, dt)`.
 
 ## Core Concepts
 
 - **Three-layer Moku model.** `createCoreConfig` (Layer 1: config + events) → `createCore`
-  (Layer 2: framework + the 8 built-in plugins) → `createApp({ pluginConfigs })` (Layer 3: your
+  (Layer 2: framework + the 9 built-in plugins) → `createApp({ pluginConfigs })` (Layer 3: your
   app). Consumers import `createApp` / `createPlugin` from `game` and never import
   `@moku-labs/core` directly. `createApp(...)` returns an App synchronously; `await app.start()`
   boots the Pixi Application and registers DOM listeners. Each plugin's API is reached as
-  `app.<plugin>.<method>()` (e.g. `app.ecs`, `app.scheduler`, `app.renderer`).
+  `app.<plugin>.<method>()` (e.g. `app.ecs`, `app.scheduler`, `app.renderer`, `app.context`).
 - **Config composition.** The framework defines no global config fields (`Config = {}`). All
   configuration is per-plugin via `createApp({ pluginConfigs: { <plugin>: { ... } } })`. Core
   plugins `logPlugin` + `envPlugin` from `@moku-labs/common` are registered in `config.ts`, so
@@ -27,10 +28,21 @@ kernel events.
   generational handle (`(generation << 16) | index`), so stale handles are detectably dead via
   `isAlive`. Typed variadic `query(...)` covers arities 1–8. Structural mutations during iteration
   go through a deferred command buffer flushed at each stage boundary.
+- **World resources (first-class systems access).** The world owns a typed singleton registry —
+  `Resource<T>` tokens identify shared services/state systems read through the `world` argument
+  with no closure capture. `defineResource(create?)` mints an auto-keyed (`"res:N"`) token and
+  registers an optional lazy factory; `setResource`/`getResource`/`resource`/`hasResource`/
+  `removeResource` read and write. `resource(token)` asserts presence (THROWS an actionable error
+  if unset with no factory); `getResource(token)` returns `T | undefined`. Resource ops are
+  **immediate** — they bypass the command buffer even mid-iteration, and are NOT counted by
+  `maxStructuralOpsWarn`. Framework well-known resources are wired at `app.start()`: `Assets` +
+  `GameContext` (context plugin), `Time` (loop plugin).
 - **Fixed-timestep loop.** The `loop` plugin owns the frame: a `requestAnimationFrame` loop with a
   fixed-timestep accumulator. Each frame it clamps the real delta (`maxFrameDelta`), runs
   `scheduler.tick(fixedDt)` zero-or-more times (capped at `maxStepsPerFrame`), then calls
-  `renderer.render()` once. `step()` advances exactly one deterministic tick + render.
+  `renderer.render()` once. `step()` advances exactly one deterministic tick + render. Each fixed
+  step it updates the `Time` world resource in place (`{ dt, elapsed, frame }`, seconds; no
+  per-step allocation).
 - **Scheduler stages.** Five fixed, ordered stages: `input → update → physics → sync → render`.
   Systems are `(world, dt) => void`. The command buffer is flushed between stages. `scheduler` is a
   thin facade that forwards to `world.addSystem` / `world.tick`.
@@ -51,11 +63,12 @@ const app = createApp({
     input:     { target: "window", keyboard: true, pointer: true, preventDefault: false },
     loop:      { fixedDt: 1 / 60, maxFrameDelta: 0.25, maxStepsPerFrame: 5, autoStart: true },
     assets:    { basePath: "assets/", manifest: { ship: "sprites/ship.png" }, throwOnError: true },
+    context:   { bindGameContext: true },
     scene:     { despawnOnUnload: true },
     mcp:       { transports: ["stdio"], httpPort: 3333, httpAuth: "none", enableMutations: true }
   }
 });
-await app.start();          // async — boots Pixi Application, attaches DOM listeners
+await app.start();          // async — boots Pixi Application, attaches DOM listeners, binds resources
 // ... use the app ...
 await app.stop();           // tears down GPU + listeners
 ```
@@ -78,6 +91,14 @@ query(...components): Query<Values>            // overloads arity 1..8
 //   Query: updateEach(cb), count(), first(), [Symbol.iterator]
 addSystem(stage: Stage, system: System): () => void
 tick(dt: number): void                         // runs all stages in order, flushes buffer between
+// ── World resources (typed singletons) — immediate, never command-buffered ──
+defineResource<T>(create?: () => T): Resource<T>   // mints "res:N" key + optional lazy factory
+setResource<T>(resource: Resource<T>, value: T): void
+getResource<T>(resource: Resource<T>): T | undefined  // lazy-init from factory; undefined if unset+no factory
+resource<T>(resource: Resource<T>): T              // same lazy-init, THROWS if unset + no factory
+hasResource<T>(resource: Resource<T>): boolean     // true if a value is set OR a factory exists
+removeResource<T>(resource: Resource<T>): void     // clears value; factory (if any) re-inits next read
+// Resource<T> = { readonly __key: string; readonly __value?: T }  // __value is phantom (type-level only)
 ```
 
 ### app.scheduler (Standard)
@@ -111,13 +132,19 @@ snapshot(): InputSnapshot
 //   readonly pointer: { x: number; y: number; buttons: number }  // buttons: 1=L 2=R 4=M
 ```
 
-### app.loop (Standard) — fixed-timestep rAF
+### app.loop (Standard) — fixed-timestep rAF + Time resource
 
 ```ts
 start(): void          // begin/resume rAF loop (no-op if running)
 stop(): void           // pause; cancels pending frame
 isRunning(): boolean
 step(): void           // one deterministic fixed tick + render, no real-time accumulation
+readonly time: Resource<TimeState>   // well-known Time token, also exported as Time from loop/resources
+// TimeState (all readonly to consumers; loop mutates in place each step — no allocation):
+//   dt: number        // fixed step length in SECONDS (== config.fixedDt)
+//   elapsed: number   // total simulated time in SECONDS (sum of all fixed steps)
+//   frame: number     // count of fixed steps since start (not seconds)
+// read from a system: world.resource(app.loop.time) → { dt, elapsed, frame }
 ```
 
 ### app.assets (Standard) — Pixi v8 Assets wrapper
@@ -128,6 +155,16 @@ loadBundle(bundle: string, entries: Record<string,string>): Promise<Record<strin
 get(alias: string): Texture | undefined                                 // cache read, no load
 sprite(alias: string): Promise<Sprite>                                  // load-on-miss, build Sprite
 isLoaded(alias: string): boolean                                        // session state, not Pixi cache
+```
+
+### app.context (Standard) — well-known world resources
+
+```ts
+readonly assets: Resource<AssetsApi>           // __key "ctx:assets"; ALWAYS bound at onStart
+readonly game:   Resource<GameContextValue>    // __key "ctx:game"; bound only when bindGameContext (default true)
+// Both tokens are fixed-key module consts (valid before start); onStart binds their VALUES on the world.
+// GameContextValue = { readonly log: LogApi; readonly emit: EmitFn<FrameworkEvents>; readonly env: EnvApi }
+// read from a system: world.resource(app.context.assets) / world.resource(app.context.game)
 ```
 
 ### app.scene (Standard) — named lifecycle + ownership
@@ -163,6 +200,8 @@ The catalog is intentionally tiny — per-frame work is on the hot path, off the
 - `scene:loaded` — `{ name: string }` — after a scene's `setup` completes during `load()`.
 
 Defined in `src/config.ts` (framework `Events` type). Subscribe from a consumer plugin's `hooks`.
+The `context` plugin exposes the framework emitter to systems via `GameContext.emit`, but owns no
+events of its own.
 
 ## File Structure
 
@@ -170,19 +209,20 @@ Defined in `src/config.ts` (framework `Events` type). Subscribe from a consumer 
 game/
 ├── src/
 │   ├── config.ts            # Layer 1: createCoreConfig, Config = {}, Events, createPlugin/createCore
-│   ├── index.ts             # Layer 2: createCore assembles the 8 plugins; exports createApp/createPlugin
+│   ├── index.ts             # Layer 2: createCore assembles the 9 plugins; exports createApp/createPlugin
 │   └── plugins/
 │       ├── index.ts         # plugin barrel (instances + type namespaces)
-│       ├── ecs/             # data/runtime core (api.ts, types.ts, README.md, __tests__/)
+│       ├── ecs/             # data/runtime core + resource registry (world.ts, types.ts, README.md, __tests__/)
 │       ├── scheduler/       # stage contract facade
 │       ├── renderer/        # PixiJS v8 backend (api.ts, lifecycle.ts, sync.ts, types.ts)
 │       ├── input/           # polled keyboard/pointer
-│       ├── loop/            # fixed-timestep rAF loop
+│       ├── loop/            # fixed-timestep rAF loop + Time resource (resources.ts)
 │       ├── assets/          # Pixi Assets wrapper
+│       ├── context/         # binds Assets + GameContext world resources (resources.ts, lifecycle.ts)
 │       ├── scene/           # named scene lifecycle + ownership
 │       └── mcp/             # MCP server (transport.ts, tools.ts, resources.ts)
 ├── tests/                   # framework-level unit + integration tests
-├── .planning/specs/         # 01-ecs.md … 08-mcp.md design specs (intent)
+├── .planning/specs/         # design specs (intent)
 ├── README.md
 ├── llms.txt
 └── llms-full.txt
@@ -193,8 +233,9 @@ game/
 Built/resolved in dependency order. (depends → resolved with `ctx.require`.)
 
 - **ecs** — data/runtime core: generational entities, archetype object-SoA storage, typed queries,
-  deferred command buffer, `world.tick`. | Complex | `defineComponent`/`spawn`/`query`/`addSystem`/
-  `tick` | events: none | depends: none.
+  deferred command buffer, typed world resource registry, `world.tick`. | Complex |
+  `defineComponent`/`spawn`/`query`/`addSystem`/`defineResource`/`setResource`/`getResource`/
+  `resource`/`hasResource`/`removeResource`/`tick` | events: none | depends: none.
 - **scheduler** — ordered stage contract; thin facade over the world. | Standard |
   `addSystem(stage,fn)`/`tick`/`stages` | events: none | depends: ecs.
 - **renderer** — PixiJS v8 backend; owns the GPU `Application`, defines `Transform`, syncs
@@ -203,15 +244,18 @@ Built/resolved in dependency order. (depends → resolved with `ctx.require`.)
 - **input** — polled keyboard/pointer from DOM listeners → per-frame `InputSnapshot` on the `input`
   stage. | Standard | `snapshot()` | events: none | depends: scheduler.
 - **loop** — fixed-timestep rAF loop driving `scheduler.tick` then `renderer.render` each frame
-  (kernel-bypassing hot path). | Standard | `start`/`stop`/`step`/`isRunning` | events: none |
-  depends: scheduler, renderer.
+  (kernel-bypassing hot path); publishes + mutates the `Time` world resource in place each step. |
+  Standard | `start`/`stop`/`step`/`isRunning`/`time` | events: none | depends: scheduler, renderer, ecs.
 - **assets** — Pixi v8 `Assets` wrapper: load/cache textures + bundles, build sprites. | Standard |
   `load`/`loadBundle`/`sprite`/`get`/`isLoaded` | events: `assets:loaded` | depends: renderer.
+- **context** — binds the well-known `Assets` + `GameContext` world resources at start so systems
+  reach framework services via `world.resource(token)`; static API exposes the two tokens. |
+  Standard | `app.context` → `assets`/`game` | events: none | depends: ecs, assets.
 - **scene** — named scene lifecycle with entity-ownership tracking, clean transitions, bundle
   pre-load. | Standard | `define`/`load`/`unload`/`currentScene` | events: `scene:loaded` |
   depends: ecs, renderer, assets.
 - **mcp** — first-class MCP server (stdio + Streamable HTTP) exposing the runtime to agents. |
-  Complex | `isRunning`/`httpEndpoint`/`toolNames` | events: none | depends: all seven above.
+  Complex | `isRunning`/`httpEndpoint`/`toolNames` | events: none | depends: all eight above.
 
 ## Requirements
 

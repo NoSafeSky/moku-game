@@ -109,6 +109,54 @@ const remove = app.ecs.addSystem("update", (w, dt) => {
 app.ecs.tick(1 / 60);
 ```
 
+### Resources (typed singletons)
+
+World resources are first-class, typed singletons attached to the world — shared services and state that systems reach **through the `world` argument** (`(world, dt)`), with no closure capture. Each resource is identified by an opaque, stably-keyed token (a sibling to `Component<T>`):
+
+```ts
+import type { Resource } from "./types";
+// Resource<T> = { readonly __key: string; readonly __value?: T };
+// __value is a phantom (type-level only) — it is never set at runtime.
+```
+
+This is the seam the `context` and `loop` plugins build on: their well-known `Assets` / `GameContext` / `Time` resources are wired at `app.start()` and read by systems the same way as any consumer-defined resource.
+
+Resource ops are **immediate — never command-buffered.** Unlike `spawn` / `despawn` / `add` / `remove` (which defer during iteration), `setResource` / `removeResource` apply synchronously even inside `updateEach` or a system, because they touch only the resource maps, never archetype layout — so they cannot corrupt an in-flight query.
+
+| Method | Signature | Description |
+|---|---|---|
+| `defineResource` | `defineResource<T>(create?: () => T): Resource<T>` | Mint a resource token with an auto-generated stable key (`"res:N"`). An optional `create` factory lazily initializes the value on first read (memoized thereafter). Call once at module/setup scope. |
+| `setResource` | `setResource<T>(resource: Resource<T>, value: T): void` | Store or replace the value. Applies immediately, even during iteration. |
+| `getResource` | `getResource<T>(resource: Resource<T>): T \| undefined` | Read the value. Lazily initializes from the factory if one was registered and the value is unset (memoized); returns `undefined` if neither a value nor a factory exists. |
+| `resource` | `resource<T>(resource: Resource<T>): T` | Read the value, asserting it exists — same lazy-init as `getResource`, but **throws** a clear, actionable error instead of returning `undefined` when the resource is unset and has no factory. Use inside systems where the resource is expected to be present. |
+| `hasResource` | `hasResource<T>(resource: Resource<T>): boolean` | `true` if a read would succeed — a value is set, **or** a default factory exists. |
+| `removeResource` | `removeResource<T>(resource: Resource<T>): void` | Clear the stored value. A factory, if any, re-initializes it on the next read. Immediate, never buffered. |
+
+`getResource` vs `resource`: both perform the same lazy-init, but `getResource` returns `T | undefined` (caller handles absence), whereas `resource` returns `T` and **throws** when the resource is unset and no factory was registered:
+
+```
+[game] world.resource() — resource "<key>" is not set.
+  Set it with world.setResource(token, value), or define it with a factory:
+  world.defineResource(() => …). Framework resources (Assets, GameContext, Time) are wired at app.start().
+```
+
+```ts
+// Define once at setup; an optional factory supplies the default.
+const Score = app.ecs.defineResource(() => ({ value: 0, combo: 1 }));
+
+// Override the value (immediate, anywhere).
+app.ecs.setResource(Score, { value: 100, combo: 3 });
+
+// A system reaches the resource via its `world` argument — no closure capture.
+app.ecs.addSystem("update", (w) => {
+  const score = w.resource(Score); // asserts present → { value, combo }
+  if (score.combo > 5) score.value *= 2;
+
+  const maybe = w.getResource(Score); // { value, combo } | undefined
+  if (maybe) maybe.value += 10;
+});
+```
+
 ## Configuration
 
 | Field | Type | Default | Description |
@@ -155,6 +203,7 @@ console.log(app.ecs.get(e, Position)); // { x: ~0.033, y: ~0.017 }
 - **Archetype object-SoA storage:** entities sharing the same sorted component signature live in one archetype with parallel columns (one `entities` column plus one per component) for cache-friendly iteration. Despawn uses **swap-remove** to keep columns dense (O(1)); `add` / `remove` migrate the entity between archetypes.
 - **Storage seam:** each component picks `"archetype"` (default, cache-coherent) or `"sparse"` (a per-component `Map<Entity, value>`) — ideal for high-churn tags/timers that would otherwise thrash archetypes. Queries return identical results across both strategies.
 - **Deferred command buffer:** while `iterating` is true (inside `updateEach` or any system), `spawn` / `despawn` / `add` / `remove` are enqueued rather than applied mid-iteration. `spawn` still returns a usable `Entity` synchronously (its index/generation are reserved immediately; archetype insertion is deferred). The buffer is drained at each stage boundary inside `tick`. Outside iteration, ops apply immediately. This is the only structural-mutation path safe during iteration — and the path all `mcp` mutating tools use.
+- **Resources (typed singletons):** the world owns a small resource registry — `resourceValues` (set values, keyed by `Resource.__key`) and `resourceFactories` (lazy-init factories from `defineResource(create)`) — co-located in `world.ts`, never public. Resource ops are **immediate and bypass the command buffer** (the `iterating` flag is deliberately ignored): they touch only these maps, never archetype layout, so they are safe mid-iteration and are **not** counted by `maxStructuralOpsWarn`. `defineResource` mints monotonic `"res:N"` keys; framework well-known tokens (the `context` plugin's `Assets` / `GameContext`, the `loop` plugin's `Time`) use reserved fixed-key prefixes and never collide. This is how systems — whose signature is unchanged `(world, dt)` — reach shared services with no closure capture.
 - **Eager world construction:** the single `World` is built in `createState` (not lazily), so `app.ecs` is available synchronously from plugin init. There are no `onStart` / `onStop` lifecycle hooks — there is no resource to open or tear down.
 
 ## Dependencies

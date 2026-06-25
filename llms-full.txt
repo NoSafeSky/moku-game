@@ -48,12 +48,14 @@ logging) and `ctx.env` (validated environment access) are available on every plu
 const framework = createCore(coreConfig, {
   plugins: [
     ecsPlugin, schedulerPlugin, rendererPlugin, inputPlugin,
-    loopPlugin, assetsPlugin, scenePlugin, mcpPlugin
+    loopPlugin, assetsPlugin, contextPlugin, scenePlugin, mcpPlugin
   ],
-  pluginConfigs: {} // framework defaults; consumers override via createApp
+  pluginConfigs: {
+    context: { bindGameContext: true } // framework default; consumers override via createApp
+  }
 });
 
-export * from "./plugins";            // plugin instances + Ecs/Scheduler/... type namespaces
+export * from "./plugins";            // plugin instances + Ecs/Scheduler/Context/... type namespaces
 export const createApp = framework.createApp;
 export const createPlugin = framework.createPlugin;
 ```
@@ -64,14 +66,15 @@ export const createPlugin = framework.createPlugin;
 import { createApp } from "game";
 
 const app = createApp({ pluginConfigs: { /* per-plugin overrides */ } });
-await app.start();   // async — boots Pixi Application, registers DOM listeners + systems
-// app.ecs, app.scheduler, app.renderer, app.input, app.loop, app.assets, app.scene, app.mcp
+await app.start();   // async — boots Pixi Application, registers DOM listeners + systems, binds resources
+// app.ecs, app.scheduler, app.renderer, app.input, app.loop, app.assets, app.context, app.scene, app.mcp
 await app.stop();    // async — destroys GPU Application, removes listeners, closes MCP server
 ```
 
 `createApp(...)` returns the App **synchronously**; `app.start()` is **async** and must be awaited
-before using lifecycle-owning plugin APIs (renderer/input/loop/mcp). `app.ecs` and `app.scheduler`
-are usable immediately after `start()` (the ECS world is built eagerly in `createState`).
+before using lifecycle-owning plugin APIs (renderer/input/loop/context/mcp). `app.ecs` and
+`app.scheduler` are usable immediately after `start()` (the ECS world is built eagerly in
+`createState`).
 
 **Custom plugins** integrate via `createPlugin` from `game`:
 
@@ -113,15 +116,18 @@ ecs            (no deps — foundation, plugin #1)
  └─ scheduler  (depends: ecs)
      ├─ renderer (depends: ecs, scheduler)
      └─ input    (depends: scheduler)
-         ├─ loop    (depends: scheduler, renderer)
+         ├─ loop    (depends: scheduler, renderer, ecs)
          └─ assets  (depends: renderer)
-             └─ scene (depends: ecs, renderer, assets)
-                 └─ mcp (depends: ecs, scheduler, renderer, input, loop, assets, scene — all seven)
+             ├─ context (depends: ecs, assets)
+             └─ scene   (depends: ecs, renderer, assets)
+                 └─ mcp (depends: ecs, scheduler, renderer, input, loop, assets, scene — all build deps)
 ```
 
-Build/resolve order: ecs → scheduler → renderer + input → loop + assets → scene → mcp. Each plugin
-declares `depends: [...]` and resolves the API at runtime with `ctx.require(...)`. There are no
-dependency cycles.
+Build/resolve order: ecs → scheduler → renderer + input → loop + assets → context → scene → mcp.
+Each plugin declares `depends: [...]` and resolves the API at runtime with `ctx.require(...)`.
+There are no dependency cycles. **Cycle 2 changes:** `loop` gained a dependency on `ecs` (to publish
+the `Time` resource), and the new `context` plugin depends on `ecs` + `assets`. `ecs` still depends
+on nothing, so adding it as a `loop`/`context` dependency introduces no cycle.
 
 --------------------------------------------------------------------------------
 ## 3. Framework Config & Events (verbatim public types)
@@ -144,10 +150,11 @@ Event catalog (complete — only two events):
 | `assets:loaded` | `{ alias: string; kind: "asset" \| "bundle" }` | assets | once per `load()` / `loadBundle()` success; for a bundle `alias` is the bundle name |
 | `scene:loaded` | `{ name: string }` | scene | after a scene's `setup` completes during `load()` (not on `unload`, not per entity) |
 
-Design note: per-frame hot-path work (ticks, sync, render, input, structural mutations) is
-**deliberately not emitted** as kernel events — emitting an event per frame would defeat the
-kernel-bypass that keeps the loop fast. ecs, scheduler, renderer, input, loop, and mcp emit no
-events and register no hooks.
+Design note: per-frame hot-path work (ticks, sync, render, input, structural mutations, resource
+ops) is **deliberately not emitted** as kernel events — emitting an event per frame would defeat the
+kernel-bypass that keeps the loop fast. ecs, scheduler, renderer, input, loop, context, and mcp emit
+no events and register no hooks. The `context` plugin hands systems a typed `emit` (the framework
+emitter) inside `GameContext`, but owns no event surface of its own.
 
 --------------------------------------------------------------------------------
 ## 4. ecs — data/runtime core (Complex)
@@ -169,6 +176,10 @@ export type Component<T> = {
   (value: T): ComponentInit;     // tokens are callable: Position({x,y}) => ComponentInit
 };
 export type Tag = Component<Record<never, never>>;        // presence-only marker
+
+// Opaque world-resource token — a typed singleton handle (sibling to Component<T>).
+// Keyed by a stable string. __value is a phantom (type-level only) — NEVER set at runtime.
+export type Resource<T> = { readonly __key: string; readonly __value?: T };
 
 export type Stage = "input" | "update" | "physics" | "sync" | "render";
 export type System = (world: World, dt: number) => void;
@@ -196,6 +207,14 @@ export type World = {
   // ... query(c1..c8) ...
   addSystem(stage: Stage, system: System): () => void;
   tick(dt: number): void;
+
+  // ── Resources (typed singletons) ──
+  defineResource<T>(create?: () => T): Resource<T>;             // mints "res:N" key + optional lazy factory
+  setResource<T>(resource: Resource<T>, value: T): void;        // store/replace immediately
+  getResource<T>(resource: Resource<T>): T | undefined;         // lazy-init from factory; undefined if unset+none
+  resource<T>(resource: Resource<T>): T;                        // same, but THROWS if unset + no factory
+  hasResource<T>(resource: Resource<T>): boolean;               // true if value set OR factory exists
+  removeResource<T>(resource: Resource<T>): void;               // clear value; factory re-inits next read
 };
 
 export type Config = {
@@ -210,7 +229,7 @@ export type Api = World;          // the plugin API contract IS the World facade
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `initialCapacity` | `number` | `1024` | Pre-allocated entity index slots. Slot table and component columns grow automatically; tuning only avoids early reallocations. |
-| `maxStructuralOpsWarn` | `number` | `0` | Warn (via `ctx.log`) past this many structural ops in one flush, to catch runaway spawn storms. `0` disables. |
+| `maxStructuralOpsWarn` | `number` | `0` | Warn (via `ctx.log`) past this many structural ops in one flush, to catch runaway spawn storms. `0` disables. Resource ops are NOT counted. |
 
 ### Semantics & design
 
@@ -232,6 +251,58 @@ export type Api = World;          // the plugin API contract IS the World facade
   uses.
 - **Ticking:** `tick(dt)` runs each stage's systems in fixed order `input → update → physics → sync
   → render`, flushing the command buffer between stages. `dt` is the frame delta in seconds.
+
+### World resources (typed singletons) — first-class systems access
+
+World resources are typed singletons attached to the world: shared services and state that systems
+reach **through the `world` argument** (`(world, dt)`), with no closure capture. Each resource is
+identified by an opaque, stably-keyed `Resource<T>` token (a sibling to `Component<T>`). The system
+signature is unchanged — this is non-breaking.
+
+Internally the world owns two private maps: `resourceValues` (set values, keyed by `Resource.__key`)
+and `resourceFactories` (lazy-init factories registered by `defineResource(create)`). `defineResource`
+mints monotonic `"res:N"` keys. Framework well-known tokens use reserved fixed-key prefixes that
+never collide: the `context` plugin's `Assets` (`"ctx:assets"`) / `GameContext` (`"ctx:game"`) and
+the `loop` plugin's `Time` (`"loop:time"`).
+
+**Resource ops are IMMEDIATE — never command-buffered.** Unlike `spawn`/`despawn`/`add`/`remove`
+(which defer during iteration), all resource methods apply synchronously even inside `updateEach`
+or a system, because they touch only the resource maps, never archetype layout — so they cannot
+corrupt an in-flight query. The world's internal `iterating` flag is deliberately ignored by every
+resource method, and resource ops are **not** counted by `maxStructuralOpsWarn`.
+
+| Method | Signature | Semantics |
+|---|---|---|
+| `defineResource` | `defineResource<T>(create?: () => T): Resource<T>` | Mint a token with an auto-generated stable key (`"res:N"`). An optional `create` factory lazily initializes the value on first read (memoized thereafter); it stores **no** value at define time. Call once at module/setup scope. |
+| `setResource` | `setResource<T>(resource: Resource<T>, value: T): void` | Store or replace the value. Applies immediately, even during iteration. |
+| `getResource` | `getResource<T>(resource: Resource<T>): T \| undefined` | Read the value. Lazily initializes from the factory if one was registered and the value is unset (memoized); returns `undefined` if neither a value nor a factory exists. |
+| `resource` | `resource<T>(resource: Resource<T>): T` | Read the value, asserting presence — same lazy-init as `getResource`, but **throws** an actionable error instead of returning `undefined` when the resource is unset and has no factory. |
+| `hasResource` | `hasResource<T>(resource: Resource<T>): boolean` | `true` if a read would succeed — a value is set, **or** a default factory exists. |
+| `removeResource` | `removeResource<T>(resource: Resource<T>): void` | Clear the stored value. A factory, if any, re-initializes it on the next read. Immediate, never buffered. |
+
+`getResource` vs `resource`: both perform the same lazy-init. `getResource` returns `T | undefined`
+(caller handles absence); `resource` returns `T` and **throws** when the resource is unset and no
+factory was registered. The thrown error is:
+
+```
+[game] world.resource() — resource "<key>" is not set.
+  Set it with world.setResource(token, value), or define it with a factory:
+  world.defineResource(() => …). Framework resources (Assets, GameContext, Time) are wired at app.start().
+```
+
+```ts
+// Define once at setup; an optional factory supplies the default (lazy-init + memoize).
+const Score = app.ecs.defineResource(() => ({ value: 0, combo: 1 }));
+
+app.ecs.setResource(Score, { value: 100, combo: 3 });   // immediate, anywhere
+
+app.ecs.addSystem("update", (w) => {
+  const score = w.resource(Score);     // asserts present → { value, combo }
+  if (score.combo > 5) score.value *= 2;
+  const maybe = w.getResource(Score);  // { value, combo } | undefined
+  if (maybe) maybe.value += 10;
+});
+```
 
 ### Example
 
@@ -418,16 +489,27 @@ app.scheduler.addSystem("update", (world, dt) => {
 ```
 
 --------------------------------------------------------------------------------
-## 8. loop — fixed-timestep rAF loop (Standard)
+## 8. loop — fixed-timestep rAF loop + Time resource (Standard)
 --------------------------------------------------------------------------------
 
 Owns the frame. The framework's **kernel-bypassing hot path**: Moku Core has no built-in per-frame
 tick, so the loop drives `scheduler.tick` → `world.tick` and `renderer.render` directly, with no
-event-bus dispatch on the per-frame path.
+event-bus dispatch on the per-frame path. It also publishes the **`Time`** ECS world resource — the
+canonical frame clock — and is its sole writer.
 
 ### Public types (src/plugins/loop/types.ts)
 
 ```ts
+import type { Resource } from "../ecs/types";
+
+// Frame clock published as the Time world resource. Consumer-facing fields are readonly;
+// the loop mutates the backing object in place each fixed step — no per-step allocation.
+export type TimeState = {
+  readonly dt: number;       // fixed step length, in SECONDS (always == config.fixedDt)
+  readonly elapsed: number;  // total simulated time since start, in SECONDS (sum of all fixed steps)
+  readonly frame: number;    // count of fixed steps simulated since start (a count, not seconds)
+};
+
 export type Config = {
   fixedDt: number;          // @default 1/60
   maxFrameDelta: number;    // @default 0.25
@@ -439,7 +521,8 @@ export type Api = {
   start(): void;        // begin/resume rAF loop (no-op if running); resets accumulator + lastTime
   stop(): void;         // pause; cancelAnimationFrame, running = false (no-op if not running)
   isRunning(): boolean;
-  step(): void;         // exactly one fixed tick + render, NO real-time accumulation (deterministic)
+  step(): void;         // exactly one fixed tick + render, NO real-time accumulation; also advances Time
+  readonly time: Resource<TimeState>;  // well-known Time token; also exported as `Time` from loop/resources
 };
 ```
 
@@ -452,6 +535,46 @@ subtracts `fixedDt`; leftover carries forward); (4) `renderer.render()` once; (5
 `requestAnimationFrame` unless `stop()` cleared `running`. A `visibilitychange` listener resets
 `accumulator` + `lastTime` on tab return so a backgrounded tab does not produce a catch-up burst.
 
+### The `Time` world resource
+
+The loop is the **sole writer of frame time**, so it publishes a first-class `Time` ECS world
+resource. ECS systems have signature `(world, dt)`; the `dt` argument is the fixed step, but a system
+that needs the running total or frame count reads them from `Time` via `world.resource(Time)` rather
+than threading extra arguments. `Time` lives in the loop (not `context`) so a single owner avoids two
+plugins racing on one clock object.
+
+- **Binding:** on `onStart` the loop calls `world.setResource(Time, { dt: 0, elapsed: 0, frame: 0 })`
+  and caches that same object on its per-instance `LoopRuntime`. Each fixed step it mutates the cached
+  object **in place** immediately before `scheduler.tick(fixedDt)` — so a system running that step
+  already sees the updated clock. Because the world's registry holds the same reference,
+  `world.resource(Time)` reflects every update with **no per-frame allocation** and no repeated
+  `setResource`.
+- **Per-step update** (in both the rAF callback and `step()`):
+
+```ts
+runtime.time.dt = config.fixedDt;       // current step length (seconds)
+runtime.time.elapsed += config.fixedDt; // running total (seconds)
+runtime.time.frame += 1;                // step counter
+```
+
+- **Two ways to reach the token** (both the same `Resource<TimeState>`):
+  `import { Time } from "../loop/resources"` (module-level const, `__key: "loop:time"`), or
+  `app.loop.time` (surfaced on the public API for consumer code).
+- **Teardown:** `Time` needs no explicit teardown — its value is released with the ECS world on stop.
+
+```ts
+import { Time } from "../loop/resources";
+import type { World } from "../ecs/types";
+
+app.scheduler.addSystem("update", (world: World, dt: number) => {
+  const t = world.resource(Time);   // → { dt, elapsed, frame }
+  // t.dt === the dt argument === config.fixedDt (seconds)
+  if (t.frame % 60 === 0) console.log(`elapsed ${t.elapsed.toFixed(2)}s (frame ${t.frame})`);
+});
+
+const clock = world.resource(app.loop.time);  // → e.g. { dt: 0.016, elapsed: 1.23, frame: 74 }
+```
+
 ### Config
 
 | Field | Type | Default | Description |
@@ -462,10 +585,13 @@ subtracts `fixedDt`; leftover carries forward); (4) `renderer.render()` once; (5
 | `autoStart` | `boolean` | `true` | Schedule the first frame in `onStart`; `false` → call `app.loop.start()`. |
 
 `start`/`stop` double as resume/pause (mcp `loop:resume`/`loop:pause`). `step()` is what the mcp
-`loop:step` tool drives — deterministic, works whether running or stopped. Lifecycle: rAF id +
-`visibilitychange` listener live in a module-level `WeakMap` keyed on `ctx.global`; `onStop` cancels
-the pending rAF and removes the listener (prevents a zombie rAF). Headless: rAF/`document` read
-structurally; scheduling is a no-op while `step()` still works.
+`loop:step` tool drives — deterministic, works whether running or stopped, and advances `Time`
+exactly as a real frame would. Lifecycle: rAF id + `visibilitychange` listener live in a
+module-level `WeakMap` keyed on `ctx.global`; `onStart` also binds the `Time` resource; `onStop`
+cancels the pending rAF and removes the listener (prevents a zombie rAF). Headless: rAF/`document`
+read structurally; scheduling is a no-op while `step()` still works. **Dependencies: scheduler,
+renderer, ecs** — `ecs` is the Cycle 2 addition (needed to call `world.setResource(Time, …)`); no
+cycle, since `ecs` depends on nothing. No package dependencies beyond `@moku-labs/core`.
 
 --------------------------------------------------------------------------------
 ## 9. assets — Pixi v8 Assets wrapper (Standard)
@@ -516,7 +642,105 @@ bundle of N textures emits exactly one event keyed on the bundle name. `sprite()
 first and only loads on a cache miss (a repeat call does not re-emit).
 
 --------------------------------------------------------------------------------
-## 10. scene — named scene lifecycle + ownership (Standard)
+## 10. context — well-known world resources (Standard)
+--------------------------------------------------------------------------------
+
+ECS systems have signature `(world, dt)` — they never see the plugin `ctx`. The `context` plugin
+closes that gap: at framework start it binds two **well-known world resources** onto the ECS world,
+so any system can reach framework services via `world.resource(token)` with no closure over `app`.
+It owns no per-frame logic and stores no domain data (`State = Record<never, never>`) — it is a thin
+wiring + facade plugin sitting **above** both `ecs` and `assets`.
+
+1. **`Assets`** — the `assets` plugin API (`load`/`loadBundle`/`get`/`sprite`/`isLoaded`). **Always**
+   bound, regardless of config.
+2. **`GameContext`** — a curated, hot-path-safe facade `{ log, emit, env }` built from this plugin's
+   own `ctx`. Bound only when `config.bindGameContext` is `true`.
+
+### Public types (src/plugins/context/types.ts, resources.ts)
+
+```ts
+import type { EnvApi, LogApi } from "@moku-labs/common";
+import type { EmitFn } from "@moku-labs/core";
+import type { Events as FrameworkEvents } from "../../config";
+import type { Api as AssetsApi } from "../assets/types";
+import type { Resource } from "../ecs/types";
+
+export type Config = {
+  bindGameContext: boolean;   // @default true
+};
+
+export type State = Record<never, never>;  // no per-instance state; values live in the ecs world
+
+// Curated, hot-path-safe game context exposed to systems via the GameContext resource.
+export type GameContextValue = {
+  readonly log: LogApi;                      // ctx.log from the common logPlugin
+  readonly emit: EmitFn<FrameworkEvents>;    // emit a coarse framework event (assets:loaded | scene:loaded)
+  readonly env: EnvApi;                      // ctx.env from the common envPlugin
+};
+
+// API — the well-known resource tokens (static; valid before start).
+export type Api = {
+  readonly assets: Resource<AssetsApi>;       // token; read in a system: world.resource(assets)
+  readonly game: Resource<GameContextValue>;  // token; read in a system: world.resource(game)
+};
+
+// resources.ts — fixed-key module consts:
+export const Assets: Resource<AssetsApi> = { __key: "ctx:assets" };
+export const GameContext: Resource<GameContextValue> = { __key: "ctx:game" };
+```
+
+### Config
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `bindGameContext` | `boolean` | `true` | When `true`, bind the curated `GameContext` resource (`{ log, emit, env }`) at start. `Assets` is bound either way. Disable only if a consumer wants to provide its own game-context resource. |
+
+### Lifecycle & design
+
+- **`onStart`-only:** the single managed concern is the world-resource bindings, set up once before
+  the first frame. `start(ctx)` does three things: (1) `const world = ctx.require(ecsPlugin)`;
+  (2) `world.setResource(Assets, ctx.require(assetsPlugin))` — **always**; (3) if
+  `ctx.config.bindGameContext`, `world.setResource(GameContext, { log: ctx.log, emit: ctx.emit, env: ctx.env })`.
+  No `onInit` (binding needs the started `assets` API + world, resolved by `ctx.require` at start)
+  and no `onStop` (the bindings are released with the world). The `onStart` reference carries a
+  `// @no-resource-check` — the world-level binding itself satisfies the "no lifecycle without a
+  resource" rule, mirroring how `renderer.onStart` mints the shared `Transform` token.
+- **Static API, fixed-key tokens:** `createApi` returns the two token consts (`{ assets: Assets,
+  game: GameContext }`). The tokens are plain module consts (fixed keys `"ctx:assets"` /
+  `"ctx:game"`), valid to reference/capture immediately — only their *values* are unset until
+  `start`. This differs from `world.defineResource`, which mints auto-keyed (`"res:N"`) tokens.
+  `app.context.assets` is the same object as the exported `Assets`; `app.context.game` is the same
+  as `GameContext`.
+- **Curated `GameContext`:** exactly `{ log, emit, env }` — `log`/`env` are the *same references* as
+  `ctx.log`/`ctx.env`; `emit` forwards `ctx.emit`. It deliberately **excludes** kernel escape
+  hatches (`require`/`has`/`global`) so systems can't re-enter the kernel mid-frame. Frame time is
+  delivered separately as the loop's `Time` resource, not here.
+- **`depends: [ecs, assets]` only:** the global `Events` declared in `createCoreConfig` are visible
+  to every plugin's `ctx.emit`, so `scene:loaded` is emittable through `GameContext.emit` without
+  depending on `scene` — avoiding a runtime-unused dependency.
+- **Ordering:** `context.onStart` runs after `assets.onStart` (start runs in dependency order), and
+  the loop's first tick fires on the next animation frame — after `app.start()` has awaited every
+  `onStart` — so `Assets`/`GameContext` are always bound before any system runs.
+
+### Example
+
+```ts
+const { assets, game } = app.context;   // capture the well-known tokens once (like component tokens)
+
+app.ecs.addSystem("render", (world, _dt) => {
+  const a = world.resource(assets);   // AssetsApi — first-class, no `app` capture
+  const g = world.resource(game);     // { log, emit, env }
+  const ship = a.get("ship");
+  if (!ship) g.log.warn("ship texture not loaded");
+});
+```
+
+`world.resource(token)` throws the ecs "resource is not set" error if read **before** `start` (the
+tokens are valid immediately, but their values are unset until `onStart` binds them). With
+`bindGameContext: false`, `Assets` is still bound but reading `game` throws.
+
+--------------------------------------------------------------------------------
+## 11. scene — named scene lifecycle + ownership (Standard)
 --------------------------------------------------------------------------------
 
 A scene is a registered `setup(world)` that spawns the entities for one screen/level. The crux is
@@ -524,6 +748,8 @@ A scene is a registered `setup(world)` that spawns the entities for one screen/l
 world whose `spawn` is intercepted — every spawned entity is recorded as owned. Transitioning (or
 `unload`) detaches each owned entity's renderer view and despawns it, so nothing leaks between
 scenes. If a scene declares a `bundle`, it is pre-loaded via the assets plugin before `setup` runs.
+(The tracking wrapper delegates the world resource methods through to the real world, so its public
+API is unchanged.)
 
 ### Public types (src/plugins/scene/types.ts)
 
@@ -569,12 +795,12 @@ part-way still has its spawned entities cleaned up on the next transition. Depen
 `despawn`), renderer (`detach`), assets (`loadBundle`). Lazy `ctx.require` inside methods.
 
 --------------------------------------------------------------------------------
-## 11. mcp — first-class MCP server (Complex)
+## 12. mcp — first-class MCP server (Complex)
 --------------------------------------------------------------------------------
 
 Attaches a Model Context Protocol server to the running framework. Agent clients (Claude, Cursor,
 etc.) query live state, control the loop, spawn/despawn entities, trigger scene loads, and capture
-screenshots — without touching game code. Depends on all seven other plugins.
+screenshots — without touching game code. Depends on all eight other plugins.
 
 ### Public types (src/plugins/mcp/types.ts)
 
@@ -658,26 +884,31 @@ Mutating (registered when `enableMutations: true`):
 Runtime packages: `@modelcontextprotocol/sdk`, `hono` (HTTP transport), `zod` (tool input schemas).
 
 --------------------------------------------------------------------------------
-## 12. End-to-end example (scene → spawn → loop → MCP)
+## 13. End-to-end example (scene → spawn → resources → loop → MCP)
 --------------------------------------------------------------------------------
 
 ```ts
 import { createApp } from "game";
 import { Container } from "pixi.js";
+import { Time } from "game"; // or "../loop/resources" — the well-known Time token
 
 const app = createApp({
   pluginConfigs: {
     renderer: { width: 1280, height: 720, background: 0x1099bb, mount: "#game" },
     loop:     { fixedDt: 1 / 60, maxStepsPerFrame: 5, autoStart: true },
     assets:   { basePath: "assets/", manifest: { hero: "sprites/hero.png" } },
+    context:  { bindGameContext: true },
     mcp:      { transports: ["stdio", "http"], httpPort: 3333, enableMutations: true }
   }
 });
 
-await app.start();   // boots Pixi Application, attaches input listeners, connects MCP
+await app.start();   // boots Pixi Application, attaches input listeners, binds resources, connects MCP
 
 // Components.
 const Velocity = app.ecs.defineComponent(() => ({ dx: 0, dy: 0 }));
+
+// Capture the well-known resource tokens once.
+const { assets, game } = app.context;
 
 // A scene that pre-loads a bundle then spawns a transformed, rendered entity.
 app.scene.define("level1", {
@@ -692,12 +923,14 @@ app.scene.define("level1", {
   }
 });
 
-// Movement system (update stage); polls input each frame.
+// Movement system (update stage); reaches services through `world`, not `app`.
 app.scheduler.addSystem("update", (world, dt) => {
-  const input = app.input.snapshot();
-  world.query(app.renderer.Transform, Velocity).updateEach(([t, v], entity) => {
-    if (input.isDown("ArrowRight")) t.x += v.dx * dt;
-    app.renderer.markDirty(entity);                            // re-sync the view next "sync" tick
+  const a = world.resource(assets);                           // AssetsApi — no closure over `app`
+  const t = world.resource(app.loop.time);                   // { dt, elapsed, frame }
+  void a; void t;
+  world.query(app.renderer.Transform, Velocity).updateEach(([transform, v], entity) => {
+    transform.x += v.dx * dt;
+    app.renderer.markDirty(entity);                           // re-sync the view next "sync" tick
   });
 });
 
@@ -711,13 +944,19 @@ await app.stop();   // destroys the Pixi Application (frees VRAM), removes liste
 ```
 
 --------------------------------------------------------------------------------
-## 13. Error handling & gotchas
+## 14. Error handling & gotchas
 --------------------------------------------------------------------------------
 
 - `createApp(...)` is synchronous; `app.start()` / `app.stop()` are async and must be awaited.
 - `app.renderer.Transform` throws if read **before** `app.start()` — the token is defined in
   `onStart`. Spawn renderable entities only after start (e.g. in a scene `setup`, or after `await
   app.start()`).
+- `world.resource(token)` **throws** an actionable error when the resource is unset and has no
+  factory; `world.getResource(token)` returns `undefined` instead. Framework resources (`Assets`,
+  `GameContext`, `Time`) are unset until `app.start()` binds them — reading them before start throws.
+  With `context: { bindGameContext: false }`, `Assets` is still bound but reading `GameContext`
+  throws. Resource ops are immediate (never command-buffered) and not counted by
+  `maxStructuralOpsWarn`.
 - `app.scheduler.addSystem(stage, …)` with an unknown stage throws by default (`strictStages: true`);
   set `false` to downgrade to a logged warning + no-op.
 - `app.assets.load(...)` rejects on failure by default; set `throwOnError: false` to log and resolve
@@ -727,12 +966,12 @@ await app.stop();   // destroys the Pixi Application (frees VRAM), removes liste
   fails fast.
 - Headless runtime: renderer (`mount: undefined`), input, and loop degrade gracefully when DOM/rAF
   globals are absent — the renderer's `render()` is a safe no-op before start, loop scheduling is a
-  no-op while `step()` still ticks deterministically.
+  no-op while `step()` still ticks deterministically (and still advances `Time`).
 - Structural mutations during iteration (`updateEach` / inside a system) are deferred to the command
   buffer and applied at stage boundaries; outside iteration they apply immediately.
 
 --------------------------------------------------------------------------------
-## 14. Scripts, requirements, layout
+## 15. Scripts, requirements, layout
 --------------------------------------------------------------------------------
 
 Scripts (package.json, run with `bun`):
@@ -757,11 +996,11 @@ Layout:
 
 ```
 src/config.ts              # Layer 1 — createCoreConfig, Config = {}, Events, createPlugin/createCore
-src/index.ts               # Layer 2 — createCore(8 plugins); exports createApp/createPlugin
-src/plugins/index.ts       # plugin barrel (instances + Ecs/Scheduler/... type namespaces)
-src/plugins/<name>/        # api.ts, types.ts, index.ts, lifecycle.ts (where applicable), README.md, __tests__/
+src/index.ts               # Layer 2 — createCore(9 plugins); exports createApp/createPlugin
+src/plugins/index.ts       # plugin barrel (instances + Ecs/Scheduler/Context/... type namespaces)
+src/plugins/<name>/        # api.ts, types.ts, index.ts, lifecycle.ts / resources.ts (where applicable), README.md, __tests__/
 tests/                     # framework-level unit + integration tests
-.planning/specs/01..08.md  # design specs (intent)
+.planning/specs/           # design specs (intent)
 ```
 
 License: MIT © moku-labs.

@@ -15,6 +15,14 @@ import type { Config } from "./types";
 
 const defaultConfig: Config = { initialCapacity: 1024, maxStructuralOpsWarn: 0 };
 
+/**
+ * ECS plugin — the data/runtime core (no dependencies).
+ *
+ * Provides generational entities, archetype object-SoA component storage, typed queries,
+ * a deferred command buffer, `world.tick(dt)`, and a typed world resource registry
+ * (`defineResource`/`setResource`/`getResource`/`resource`/`hasResource`/`removeResource`).
+ * Resource ops apply immediately — never command-buffered. Emits no events.
+ */
 export const ecsPlugin = createPlugin("ecs", {
   config: defaultConfig,
   createState,

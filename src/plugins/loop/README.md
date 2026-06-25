@@ -1,6 +1,6 @@
 # loop
 
-> Standard plugin — the fixed-timestep `requestAnimationFrame` game loop that drives `scheduler.tick(dt)` then `renderer.render()` each frame.
+> Standard plugin — the fixed-timestep `requestAnimationFrame` game loop that drives `scheduler.tick(dt)` then `renderer.render()` each frame, and publishes the `Time` ECS world resource (the canonical frame clock).
 
 The `loop` plugin owns the frame. On start it begins a `requestAnimationFrame` loop built around a **fixed-timestep accumulator**: each frame it measures the real elapsed time, clamps it (spiral-of-death guard), and steps `scheduler.tick(fixedDt)` zero-or-more times — advancing the simulation in fixed increments — then calls `renderer.render()` exactly once.
 
@@ -59,12 +59,76 @@ app.loop.step();   // ...and another
 app.loop.start();  // resume real-time
 ```
 
+### `time: Resource<TimeState>`
+
+The well-known `Time` resource token (see [Time resource](#time-resource) below). Read-only property — pass it to `world.resource(...)` from any ECS system to read the current frame clock.
+
+```ts
+const clock = world.resource(app.loop.time); // → { dt, elapsed, frame }
+```
+
+## Time resource
+
+The loop is the **sole writer of frame time**, so it publishes a first-class **`Time`** ECS world resource — the canonical frame clock. ECS systems have the signature `(world, dt)`; the `dt` argument is the fixed step, but a system that also needs the running total or the frame count reads them from `Time` via `world.resource(Time)` rather than threading extra arguments. Time lives in the loop (not in `context`) precisely because a single owner avoids two plugins mutating one clock object.
+
+On `onStart` the loop calls `world.setResource(Time, { dt: 0, elapsed: 0, frame: 0 })` and caches that same object on its per-instance `LoopRuntime`. Each fixed step it mutates the cached object **in place** immediately before `scheduler.tick(fixedDt)` — so a system running that step already sees the updated clock. Because the world's resource registry holds the same reference, `world.resource(Time)` reflects every update with **no per-frame allocation** and no repeated `setResource` call.
+
+The token is exported two ways — both refer to the same resource:
+
+- `import { Time } from "./resources"` (or `"../loop/resources"` from another plugin) — the module-level token.
+- `app.loop.time` — the same token surfaced on the loop's public API, for app/consumer code.
+
+### `TimeState` fields
+
+`world.resource(Time)` returns a `TimeState`. All fields are `readonly` to consumers — systems should never write the clock; the loop owns it.
+
+| Field | Type | Description |
+|---|---|---|
+| `dt` | `number` | Fixed timestep of the current step, in **seconds**. Always equals `config.fixedDt` — every step advances by the same amount. |
+| `elapsed` | `number` | Total simulated time since the loop started, in **seconds**. The sum of all fixed steps executed so far. |
+| `frame` | `number` | Number of fixed steps simulated since the loop started — a count, not seconds (1-based during a step, incremented once per fixed-step tick). |
+
+Per fixed step the loop applies, immediately before `scheduler.tick(fixedDt)`:
+
+```ts
+runtime.time.dt = config.fixedDt;       // current step length (seconds)
+runtime.time.elapsed += config.fixedDt; // running total (seconds)
+runtime.time.frame += 1;                // step counter
+```
+
+This happens both inside the fixed-step `while` loop of the rAF frame callback (`lifecycle.ts`) and inside `step()` (`api.ts`), so deterministic single-stepping advances `Time` exactly as a real frame would.
+
+### Reading `Time` from a system
+
+```ts
+import { Time } from "./resources";
+import type { World } from "../ecs/types";
+
+// Register an "update"-stage system that reads the frame clock.
+app.scheduler.addSystem("update", (world: World, dt: number) => {
+  const t = world.resource(Time); // → { dt, elapsed, frame }
+
+  // `t.dt` === the `dt` argument === config.fixedDt (seconds).
+  // Use the running total and the frame counter the param alone can't give you.
+  if (t.frame % 60 === 0) {
+    console.log(`elapsed: ${t.elapsed.toFixed(2)}s (frame ${t.frame})`);
+  }
+});
+```
+
+`app.loop.time` resolves to the same token, so consumer code outside a system reads the clock the same way:
+
+```ts
+const clock = world.resource(app.loop.time);
+// → e.g. { dt: 0.016, elapsed: 1.23, frame: 74 }
+```
+
 ## Lifecycle
 
 The loop owns real resources (a pending rAF and a DOM listener), so it uses `onStart` / `onStop`:
 
-- **`onStart`** — captures `scheduler.tick` and `renderer.render` via `ctx.require`, builds the fixed-timestep frame callback, registers the `visibilitychange` reset listener, and stores a `LoopRuntime` in the module `WeakMap` keyed on `ctx.global`. If `config.autoStart` is `true`, it schedules the first frame immediately; otherwise it waits for an explicit `app.loop.start()`.
-- **`onStop`** — reads the runtime from the `WeakMap` via `ctx.global`, cancels the pending rAF, removes the `visibilitychange` listener, sets `running` to `false`, and deletes the `WeakMap` entry. Idempotent: a second call with the same `ctx.global` is a safe no-op. This prevents a **zombie rAF** from continuing to tick after stop.
+- **`onStart`** — captures `scheduler.tick`, `renderer.render`, and the ECS `world` via `ctx.require`, **binds the `Time` resource** onto the world (`world.setResource(Time, { dt: 0, elapsed: 0, frame: 0 })`) and caches that object on the `LoopRuntime` for hot-path mutation, builds the fixed-timestep frame callback, registers the `visibilitychange` reset listener, and stores the `LoopRuntime` in the module `WeakMap` keyed on `ctx.global`. If `config.autoStart` is `true`, it schedules the first frame immediately; otherwise it waits for an explicit `app.loop.start()`.
+- **`onStop`** — reads the runtime from the `WeakMap` via `ctx.global`, cancels the pending rAF, removes the `visibilitychange` listener, sets `running` to `false`, and deletes the `WeakMap` entry. Idempotent: a second call with the same `ctx.global` is a safe no-op. This prevents a **zombie rAF** from continuing to tick after stop. The `Time` resource needs no explicit teardown — its value is released together with the ECS world.
 
 Both hooks are annotated `@no-resource-check` in `index.ts` — the rAF/listener pair is the managed resource, tracked through the WeakMap rather than the kernel's resource ledger.
 
@@ -121,10 +185,12 @@ app.loop.start();
 - **WeakMap per-instance state:** the `rafId`, `visibilitychange` handler, and bound tick/render functions live in `loopRegistry` (a module-level `WeakMap<object, LoopRuntime>`) keyed on the frozen `ctx.global`. This gives `onStop` and `api.ts` a stable, per-instance key without a shared mutable that would break multiple app instances — and lets `start`/`stop`/`step` reach the runtime even though they only receive a partial context.
 - **Graceful headless degradation:** `requestAnimationFrame`, `cancelAnimationFrame`, and `document` are read structurally off `globalThis` as optional. In a non-browser runtime they are simply absent, so scheduling is a no-op while `step()` still works for deterministic ticking.
 - **First-frame seeding:** the first rAF callback only records `lastTime` and re-schedules; ticking begins on the second frame, avoiding a bogus large delta from the initial timestamp.
+- **Single-writer frame clock:** the `Time` resource (`{ dt, elapsed, frame }`) is owned and mutated only by the loop. It is bound once via `world.setResource(Time, …)` and updated in place each fixed step — the same object reference the world's registry holds — so `world.resource(Time)` is allocation-free on the hot path and there is never a second writer to race with.
 
 ## Dependencies
 
 - **`scheduler`** — required via `ctx.require(schedulerPlugin)`. The loop calls `tick(dt)` once per fixed step to advance the staged systems (`world.tick`).
 - **`renderer`** — required via `ctx.require(rendererPlugin)`. The loop calls `render()` once per frame, after all fixed steps for that frame have run.
+- **`ecs`** — required via `ctx.require(ecsPlugin)`. On start the loop calls `world.setResource(Time, …)` to publish the frame clock; thereafter it mutates the cached object in place each fixed step (no further `setResource` calls). This is the only new dependency in Cycle 2; there is no cycle, since `ecs` depends on nothing.
 
 No package dependencies beyond `@moku-labs/core` (rAF / DOM types come from the TS lib).

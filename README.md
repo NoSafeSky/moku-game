@@ -2,7 +2,7 @@
 
 **An ECS game framework for Moku — Spark-style API and memory layout, PixiJS v8 rendering, with the live runtime exposed to agents over MCP.**
 
-`game` is a typed Entity-Component-System runtime you compose into a Moku app: archetype object-SoA component storage, a fixed-timestep loop that bypasses the kernel for the hot path, and eight plugins that wire ECS, scheduling, rendering, input, assets, scenes, and an MCP server together. It is **not** a game engine UI or a level editor — there is no scene graph GUI, no asset pipeline, no runtime of its own beyond `@moku-labs/core`. You define components and systems in TypeScript and drive frames; the framework owns the data layout, the stage order, and the GPU lifecycle.
+`game` is a typed Entity-Component-System runtime you compose into a Moku app: archetype object-SoA component storage, a fixed-timestep loop that bypasses the kernel for the hot path, typed world resources for first-class systems access, and nine plugins that wire ECS, scheduling, rendering, input, assets, scenes, framework context, and an MCP server together. It is **not** a game engine UI or a level editor — there is no scene graph GUI, no asset pipeline, no runtime of its own beyond `@moku-labs/core`. You define components and systems in TypeScript and drive frames; the framework owns the data layout, the stage order, and the GPU lifecycle.
 
 <br/>
 
@@ -23,6 +23,7 @@
 - **A runtime, not an engine.** No editor, no scene-graph GUI, no built-in asset pipeline — you compose plugins into your own Moku app via `createApp` and write systems in TypeScript. Define by negation: it owns the data model and the frame, you own the game.
 - **The hot path bypasses the kernel.** The fixed-timestep loop drives `scheduler.tick(dt)` → `world.tick(dt)` → `renderer.render()` directly, with no event-bus round-trip per frame. Per-frame work is deliberately *not* emitted as kernel events.
 - **Spark-style public API.** `defineComponent`, callable component tokens, typed variadic queries (arities 1–8), a deferred command buffer, and `world.tick(dt)` — the API and memory layout are modeled on [AlexTiTanium/spark](https://github.com/AlexTiTanium/spark).
+- **First-class systems access.** A typed world **resource registry** (`defineResource` / `setResource` / `getResource` / `resource` / `hasResource` / `removeResource`) lets systems reach shared singletons through the `world` they already receive — no closure capture. The `context` plugin binds the well-known `Assets` and `GameContext` resources, and `loop` publishes a `Time` clock — all read the same way as any consumer resource. The system signature stays `(world, dt)`.
 - **First-class MCP.** A Model Context Protocol server exposes the live runtime to agent clients (stdio and/or Streamable HTTP) — query state, step the loop, spawn entities, load scenes, screenshot the frame — without touching game code.
 - **Composable with the Moku family.** Built on `@moku-labs/core`, logs and reads env via `@moku-labs/common`, and mounts its Pixi canvas into a DOM surface from `@moku-labs/web`.
 
@@ -99,21 +100,23 @@ flowchart LR
 - **The ECS is the data core.** `app.ecs` returns the `World` facade directly — no wrapper. `defineComponent(create, opts?)` registers a component (callable token: `Position({ x, y })` produces a spawn payload); `spawn`, `despawn`, `add`/`remove`/`get`/`set`/`has`, and typed `query(...)` over arities 1–8 are the surface. `Entity` is a generational handle, so stale references are detectably dead via `isAlive`.
 - **Stages are the contract.** Systems register into one of five fixed, ordered stages — `input → update → physics → sync → render`. The order is canonical; the `scheduler` validates stage names and forwards to the world.
 - **The command buffer is the only mutation path during iteration.** Inside `updateEach` (or any system), structural ops (`spawn`/`despawn`/`add`/`remove`) are deferred and flushed at each stage boundary inside `tick`. This is the path every `mcp` mutating tool uses.
-- **The loop is fixed-timestep.** Real time is accumulated and consumed in `fixedDt` slices (clamped by `maxFrameDelta`, capped at `maxStepsPerFrame`) so simulation is frame-rate independent; `step()` advances exactly one deterministic tick + render.
-- **Three-layer Moku model.** `createCoreConfig` (config + events) → `createCore` (framework + the eight plugins) → `createApp({ pluginConfigs })` (your app). Consumers use `createApp` / `createPlugin` from `game` and never import `@moku-labs/core` directly.
+- **World resources are first-class systems access.** The world owns a typed singleton registry — `defineResource(create?)` mints a `Resource<T>` token; `setResource`/`getResource`/`resource`/`hasResource`/`removeResource` read and write it. `resource(token)` asserts presence (throws an actionable error if unset with no factory); `getResource` returns `T | undefined`. Resource ops are **immediate** — they bypass the command buffer even mid-iteration, and aren't counted by `maxStructuralOpsWarn`. Systems reach shared services through the `world` argument, with no closure over `app`. The framework's well-known resources — `Assets` + `GameContext` (from `context`) and `Time` (from `loop`) — are wired at `app.start()`.
+- **The loop is fixed-timestep.** Real time is accumulated and consumed in `fixedDt` slices (clamped by `maxFrameDelta`, capped at `maxStepsPerFrame`) so simulation is frame-rate independent; `step()` advances exactly one deterministic tick + render. Each fixed step the loop updates the `Time` world resource in place (`{ dt, elapsed, frame }`, seconds), readable as `app.loop.time` or `world.resource(Time)`.
+- **Three-layer Moku model.** `createCoreConfig` (config + events) → `createCore` (framework + the nine plugins) → `createApp({ pluginConfigs })` (your app). Consumers use `createApp` / `createPlugin` from `game` and never import `@moku-labs/core` directly.
 
 ## Plugins
 
-The framework is eight plugins, built and resolved in dependency order: `ecs` → `scheduler` → `renderer` + `input` → `loop` + `assets` → `scene` → `mcp`.
+The framework is nine plugins, built and resolved in dependency order: `ecs` → `scheduler` → `renderer` + `input` → `loop` + `assets` → `context` → `scene` → `mcp`.
 
 | Plugin | Tier | Responsibility | Key API |
 |---|---|---|---|
-| [ecs](src/plugins/ecs/README.md) | Complex | Generational entities, archetype object-SoA storage, typed queries, deferred command buffer, `world.tick`. | `app.ecs.defineComponent` · `spawn` · `query(...).updateEach` · `addSystem` · `tick` |
+| [ecs](src/plugins/ecs/README.md) | Complex | Generational entities, archetype object-SoA storage, typed queries, deferred command buffer, world resource registry, `world.tick`. | `app.ecs.defineComponent` · `spawn` · `query(...).updateEach` · `addSystem` · `defineResource` · `resource` · `tick` |
 | [scheduler](src/plugins/scheduler/README.md) | Standard | The ordered stage contract; thin facade forwarding to the ECS world. | `app.scheduler.addSystem(stage, fn)` · `tick(dt)` · `stages` |
 | [renderer](src/plugins/renderer/README.md) | Complex | PixiJS v8 backend — owns the GPU `Application`, defines `Transform`, syncs ECS → display objects. | `app.renderer.Transform` · `attach` · `render` · `getView` · `getStage` |
 | [input](src/plugins/input/README.md) | Standard | Polled keyboard/pointer captured from DOM, frozen into a per-frame snapshot. | `app.input.snapshot()` → `isDown` · `justPressed` · `pointer` |
-| [loop](src/plugins/loop/README.md) | Standard | Fixed-timestep rAF loop driving `scheduler.tick` then `renderer.render` each frame. | `app.loop.start` · `stop` · `step` · `isRunning` |
+| [loop](src/plugins/loop/README.md) | Standard | Fixed-timestep rAF loop driving `scheduler.tick` then `renderer.render` each frame; publishes the `Time` world resource. | `app.loop.start` · `stop` · `step` · `isRunning` · `time` |
 | [assets](src/plugins/assets/README.md) | Standard | Thin wrapper over Pixi v8 `Assets` — load/cache textures + bundles by alias, build sprites. | `app.assets.load` · `loadBundle` · `sprite` · `get` · `isLoaded` |
+| [context](src/plugins/context/README.md) | Standard | Binds the well-known `Assets` + `GameContext` world resources so systems reach them via `world.resource(token)`. | `app.context` → `assets` · `game` |
 | [scene](src/plugins/scene/README.md) | Standard | Named scene lifecycle with entity-ownership tracking, clean transitions, bundle pre-load. | `app.scene.define` · `load` · `unload` · `currentScene` |
 | [mcp](src/plugins/mcp/README.md) | Complex | First-class MCP server exposing the runtime to agents over stdio / Streamable HTTP. | `app.mcp.isRunning` · `httpEndpoint` · `toolNames` |
 
@@ -153,7 +156,7 @@ bun run test:coverage      # Tests with coverage
 
 ## Docs
 
-- Per-plugin references: [ecs](src/plugins/ecs/README.md) · [scheduler](src/plugins/scheduler/README.md) · [renderer](src/plugins/renderer/README.md) · [input](src/plugins/input/README.md) · [loop](src/plugins/loop/README.md) · [assets](src/plugins/assets/README.md) · [scene](src/plugins/scene/README.md) · [mcp](src/plugins/mcp/README.md)
+- Per-plugin references: [ecs](src/plugins/ecs/README.md) · [scheduler](src/plugins/scheduler/README.md) · [renderer](src/plugins/renderer/README.md) · [input](src/plugins/input/README.md) · [loop](src/plugins/loop/README.md) · [assets](src/plugins/assets/README.md) · [context](src/plugins/context/README.md) · [scene](src/plugins/scene/README.md) · [mcp](src/plugins/mcp/README.md)
 - LLM context: [`llms.txt`](./llms.txt) (concise) · [`llms-full.txt`](./llms-full.txt) (comprehensive reference)
 
 ## License

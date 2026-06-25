@@ -16,6 +16,13 @@ import type { Config } from "./types";
 
 const defaultConfig: Config = { bindGameContext: true };
 
+/**
+ * Context plugin — binds the framework well-known resources onto the ECS world.
+ *
+ * Depends on `ecsPlugin` and `assetsPlugin`. On start it binds the `Assets` resource
+ * (always) and the `GameContext` resource (`{ log, emit, env }`, when `bindGameContext`
+ * is `true`) so any system can read them via `world.resource(token)`. Emits no events.
+ */
 export const contextPlugin = createPlugin("context", {
   depends: [ecsPlugin, assetsPlugin],
   config: defaultConfig,

@@ -741,8 +741,7 @@ export function createWorld(config: Config): World {
       }
       throw new Error(
         `[game] world.resource() — resource "${key}" is not set.\n` +
-          `  Set it with world.setResource(token, value), or define it with a factory:\n` +
-          `  world.defineResource(() => …). Framework resources (Assets, GameContext, Time) are wired at app.start().`
+          `  Set it with world.setResource(token, value) or define it with world.defineResource(() => …). Framework resources (Assets, GameContext, Time) are wired at app.start().`
       );
     },
 
