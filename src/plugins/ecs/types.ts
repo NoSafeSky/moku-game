@@ -155,6 +155,88 @@ export type World = {
   addSystem(stage: Stage, system: System): () => void;
   /** Advance one frame: run stages in order, flushing the command buffer between them. */
   tick(dt: number): void;
+
+  // ── Resources (typed singletons) ──────────────────────────────────────────
+
+  /**
+   * Define a world resource and return its typed token. An optional `create` factory lazily
+   * initialises the value on the first read (memoized). The token carries a stable, auto-generated
+   * key (`"res:N"`). Call once at module / setup scope.
+   *
+   * @param create - Optional factory called once on first read to produce the initial value.
+   * @returns A `Resource<T>` token used to read/write the resource.
+   * @example
+   * ```ts
+   * const Score = world.defineResource(() => ({ value: 0, combo: 1 }));
+   * ```
+   */
+  defineResource<T>(create?: () => T): Resource<T>;
+
+  /**
+   * Store or replace a resource value. Applies IMMEDIATELY, even during iteration (never
+   * command-buffered).
+   *
+   * @param resource - The resource token identifying which resource to set.
+   * @param value - The value to store.
+   * @example
+   * ```ts
+   * world.setResource(Score, { value: 100, combo: 3 });
+   * ```
+   */
+  setResource<T>(resource: Resource<T>, value: T): void;
+
+  /**
+   * Read a resource value. Lazily initialises from `create` if the factory was registered and the
+   * value is unset (memoized thereafter). Returns `undefined` if neither a value nor a factory
+   * exists.
+   *
+   * @param resource - The resource token identifying which resource to read.
+   * @returns The resource value, or `undefined` if unset with no factory.
+   * @example
+   * ```ts
+   * const score = world.getResource(Score); // { value: 0, combo: 1 } | undefined
+   * ```
+   */
+  getResource<T>(resource: Resource<T>): T | undefined;
+
+  /**
+   * Read a resource value. Throws a clear, actionable error if the resource is unset and no
+   * factory was registered.
+   *
+   * @param resource - The resource token identifying which resource to read.
+   * @returns The resource value (never `undefined`).
+   * @throws {Error} When the resource is unset and no factory exists.
+   * @example
+   * ```ts
+   * const score = world.resource(Score); // { value: 0, combo: 1 }
+   * ```
+   */
+  resource<T>(resource: Resource<T>): T;
+
+  /**
+   * Return `true` if reading this resource would succeed — i.e. a value is set, OR a default
+   * factory was registered.
+   *
+   * @param resource - The resource token to check.
+   * @returns `true` if `getResource` would return a non-`undefined` value (or would initialise one).
+   * @example
+   * ```ts
+   * world.hasResource(Score); // true if Score is set or has a factory
+   * ```
+   */
+  hasResource<T>(resource: Resource<T>): boolean;
+
+  /**
+   * Clear the stored value for this resource. A factory, if any, will re-initialise the value on
+   * the next read. Never command-buffered — applies immediately even during iteration.
+   *
+   * @param resource - The resource token to clear.
+   * @example
+   * ```ts
+   * world.removeResource(Score);
+   * ```
+   */
+  removeResource<T>(resource: Resource<T>): void;
 };
 
 /** ecs plugin configuration. */

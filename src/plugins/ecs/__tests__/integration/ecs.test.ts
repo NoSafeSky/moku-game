@@ -78,6 +78,51 @@ describe("ecs integration — full lifecycle headless", () => {
   });
 });
 
+// ─── resource integration tests ───────────────────────────────
+describe("ecs integration — resource flow (headless, no renderer)", () => {
+  it("defines, sets, and gets a resource across start → tick → stop", async () => {
+    const app = createTestApp();
+    await app.start();
+
+    const Score = app.ecs.defineResource(() => ({ value: 0, combo: 1 }));
+
+    // Before any explicit set, lazy-init fires on first read
+    expect(app.ecs.getResource(Score)).toStrictEqual({ value: 0, combo: 1 });
+
+    // Set during active lifetime
+    app.ecs.setResource(Score, { value: 10, combo: 2 });
+    expect(app.ecs.resource(Score)).toStrictEqual({ value: 10, combo: 2 });
+
+    // Resource accessible from inside a system during tick
+    let seenValue = -1;
+    app.ecs.addSystem("update", w => {
+      seenValue = w.resource(Score).value;
+    });
+    app.ecs.tick(1 / 60);
+    expect(seenValue).toBe(10);
+
+    // hasResource and removeResource work across the full lifecycle
+    expect(app.ecs.hasResource(Score)).toBe(true);
+    app.ecs.removeResource(Score);
+    // Factory re-inits on next read
+    expect(app.ecs.getResource(Score)).toStrictEqual({ value: 0, combo: 1 });
+
+    await app.stop();
+  });
+
+  it("resource methods are present on app.ecs", async () => {
+    const app = createTestApp();
+    await app.start();
+    expect(typeof app.ecs.defineResource).toBe("function");
+    expect(typeof app.ecs.setResource).toBe("function");
+    expect(typeof app.ecs.getResource).toBe("function");
+    expect(typeof app.ecs.resource).toBe("function");
+    expect(typeof app.ecs.hasResource).toBe("function");
+    expect(typeof app.ecs.removeResource).toBe("function");
+    await app.stop();
+  });
+});
+
 // ─── type-level tests ─────────────────────────────────────────
 describe("ecs integration — type-level", () => {
   it("app.ecs is typed as World", async () => {

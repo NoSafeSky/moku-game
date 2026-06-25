@@ -123,7 +123,22 @@ const makeTrackingWorld = (world: World, owned: Set<Entity>): World => ({
   // eslint-disable-next-line jsdoc/require-jsdoc -- delegation property
   addSystem: (stage, system) => world.addSystem(stage, system),
   // eslint-disable-next-line jsdoc/require-jsdoc -- delegation property
-  tick: dt => world.tick(dt)
+  tick: dt => world.tick(dt),
+  // NEW (Cycle 2) — resource delegations: forward the six world-resource methods
+  // straight through so the tracked wrapper remains a complete `World` and a scene
+  // `setup` can read/write resources (e.g. `world.resource(app.context.assets)`).
+  // eslint-disable-next-line jsdoc/require-jsdoc -- delegation property
+  defineResource: create => world.defineResource(create),
+  // eslint-disable-next-line jsdoc/require-jsdoc -- delegation property
+  setResource: (resource, value) => world.setResource(resource, value),
+  // eslint-disable-next-line jsdoc/require-jsdoc -- delegation property
+  getResource: resource => world.getResource(resource),
+  // eslint-disable-next-line jsdoc/require-jsdoc -- delegation property
+  resource: resource => world.resource(resource),
+  // eslint-disable-next-line jsdoc/require-jsdoc -- delegation property
+  hasResource: resource => world.hasResource(resource),
+  // eslint-disable-next-line jsdoc/require-jsdoc -- delegation property
+  removeResource: resource => world.removeResource(resource)
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

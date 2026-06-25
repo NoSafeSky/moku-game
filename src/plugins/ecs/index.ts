@@ -2,7 +2,9 @@
  * ECS plugin — Complex tier.
  *
  * ECS data/runtime core: generational entities, archetype object-SoA storage,
- * typed queries, deferred command buffer, world.tick(dt). Emits no events.
+ * typed queries, deferred command buffer, world.tick(dt), and world resources
+ * (typed singletons). Resource ops are immediate — never command-buffered.
+ * Emits no events.
  *
  * @see README.md
  */

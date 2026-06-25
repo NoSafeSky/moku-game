@@ -15,6 +15,7 @@ import type {
   Config,
   Entity,
   Query,
+  Resource,
   Stage,
   StorageStrategy,
   System,
@@ -105,6 +106,19 @@ export function createWorld(config: Config): World {
 
   /** True while inside updateEach or a system callback — routes ops to command buffer. */
   let iterating = false;
+
+  // ─── Resource registry ────────────────────────────────────
+  //
+  // Resource ops are IMMEDIATE — they only touch these maps, never archetype
+  // layout, so they cannot corrupt an in-flight query. The `iterating` flag
+  // is deliberately ignored by all resource methods.
+
+  /** Currently-set resource values, keyed by Resource.__key. */
+  const resourceValues = new Map<string, unknown>();
+  /** Default factories registered by defineResource(create), for lazy init. */
+  const resourceFactories = new Map<string, () => unknown>();
+  /** Monotonic counter used to mint stable "res:N" keys via defineResource. */
+  let nextResourceId = 0;
 
   // ─── Flush target ─────────────────────────────────────────
 
@@ -642,6 +656,123 @@ export function createWorld(config: Config): World {
         // Flush at each stage boundary even if no systems ran
         flushBuffer();
       }
+    },
+
+    // ─── Resources ───────────────────────────────────────────
+
+    /**
+     * Define a world resource and return its typed token.
+     *
+     * @param create - Optional factory called once on first read to produce the initial value.
+     * @returns A `Resource<T>` token with a stable auto-generated key.
+     * @example
+     * ```ts
+     * const Score = world.defineResource(() => ({ value: 0, combo: 1 }));
+     * ```
+     */
+    defineResource<T>(create?: () => T): Resource<T> {
+      const key = `res:${nextResourceId++}`;
+      if (create !== undefined) {
+        resourceFactories.set(key, create as () => unknown);
+      }
+      return { __key: key } as Resource<T>;
+    },
+
+    /**
+     * Store or replace a resource value immediately (never command-buffered).
+     *
+     * @param resource - The resource token identifying which resource to set.
+     * @param value - The value to store.
+     * @example
+     * ```ts
+     * world.setResource(Score, { value: 100, combo: 3 });
+     * ```
+     */
+    setResource<T>(resource: Resource<T>, value: T): void {
+      resourceValues.set(resource.__key, value);
+    },
+
+    /**
+     * Read a resource value, lazily initialising from the factory if unset.
+     * Returns `undefined` if neither a value nor a factory exists.
+     *
+     * @param resource - The resource token identifying which resource to read.
+     * @returns The resource value, or `undefined` if unset with no factory.
+     * @example
+     * ```ts
+     * const score = world.getResource(Score);
+     * ```
+     */
+    getResource<T>(resource: Resource<T>): T | undefined {
+      const key = resource.__key;
+      if (resourceValues.has(key)) {
+        return resourceValues.get(key) as T;
+      }
+      const factory = resourceFactories.get(key);
+      if (factory !== undefined) {
+        const value = factory();
+        resourceValues.set(key, value);
+        return value as T;
+      }
+      return undefined;
+    },
+
+    /**
+     * Read a resource value. Throws a clear, actionable error if unset with no factory.
+     *
+     * @param resource - The resource token identifying which resource to read.
+     * @returns The resource value (never `undefined`).
+     * @throws {Error} When the resource is unset and no factory exists.
+     * @example
+     * ```ts
+     * const score = world.resource(Score);
+     * ```
+     */
+    resource<T>(resource: Resource<T>): T {
+      const key = resource.__key;
+      if (resourceValues.has(key)) {
+        return resourceValues.get(key) as T;
+      }
+      const factory = resourceFactories.get(key);
+      if (factory !== undefined) {
+        const value = factory();
+        resourceValues.set(key, value);
+        return value as T;
+      }
+      throw new Error(
+        `[game] world.resource() — resource "${key}" is not set.\n` +
+          `  Set it with world.setResource(token, value), or define it with a factory:\n` +
+          `  world.defineResource(() => …). Framework resources (Assets, GameContext, Time) are wired at app.start().`
+      );
+    },
+
+    /**
+     * Return `true` if reading this resource would succeed — a value is set, OR a factory exists.
+     *
+     * @param resource - The resource token to check.
+     * @returns `true` if `getResource` would return a non-`undefined` value.
+     * @example
+     * ```ts
+     * world.hasResource(Score); // true
+     * ```
+     */
+    hasResource<T>(resource: Resource<T>): boolean {
+      const key = resource.__key;
+      return resourceValues.has(key) || resourceFactories.has(key);
+    },
+
+    /**
+     * Clear the stored value for this resource. A factory, if any, will re-initialise on next read.
+     * Applies immediately — never command-buffered.
+     *
+     * @param resource - The resource token to clear.
+     * @example
+     * ```ts
+     * world.removeResource(Score);
+     * ```
+     */
+    removeResource<T>(resource: Resource<T>): void {
+      resourceValues.delete(resource.__key);
     }
   };
 
