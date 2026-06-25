@@ -1,8 +1,9 @@
 # game — comprehensive LLM reference
 
-> An ECS game framework for Moku — Spark-style public API and memory layout, PixiJS v8 rendering,
-> built on @moku-labs/core, composable with @moku-labs/web, with a first-class MCP plugin exposing
-> the live runtime to agent clients over stdio and/or Streamable HTTP.
+> An ECS game framework for Moku — Spark-style public API and memory layout, PixiJS v8 rendering
+> (with a first-class headless mode), built on @moku-labs/core, composable with @moku-labs/web, with
+> a first-class MCP plugin exposing the live runtime to agent clients over stdio, Streamable HTTP,
+> and/or an in-page inMemory transport (environment-aware default).
 
 This is the comprehensive reference for `game`. Everything below is grounded in source. The package
 is **unpublished** (`name: "game"`, `version: "0.0.0"`). Use `bun` exclusively. Per-plugin READMEs
@@ -37,6 +38,8 @@ export const coreConfig = createCoreConfig<Config, Events, [typeof logPlugin, ty
 
 export const createPlugin = coreConfig.createPlugin;
 export const createCore = coreConfig.createCore;
+// Re-export the raw Moku Core config factory for advanced / headless assembly.
+export { createCoreConfig } from "@moku-labs/core";
 ```
 
 `logPlugin` and `envPlugin` from `@moku-labs/common` are registered here, so `ctx.log` (structured
@@ -58,6 +61,9 @@ const framework = createCore(coreConfig, {
 export * from "./plugins";            // plugin instances + Ecs/Scheduler/Context/... type namespaces
 export const createApp = framework.createApp;
 export const createPlugin = framework.createPlugin;
+
+// Advanced / headless escape hatches — re-exported from ./config. `createApp` stays the default.
+export { createCore, createCoreConfig } from "./config";
 ```
 
 **Layer 3 — your app**:
@@ -104,6 +110,29 @@ const myPlugin = createPlugin("myPlugin", {
 Resolve a dependency's API at runtime with `ctx.require(<pluginInstance>)`. `depends` declares the
 edge (and ordering); `ctx.require` returns the typed API. Resolving lazily inside methods/lifecycle
 (not at construction) guarantees the dependency has started.
+
+**Advanced / headless core assembly.** Besides `createApp` / `createPlugin`, `game` re-exports two
+Layer-1/2 escape hatches for composing a custom core (tooling, tests, agent-only / headless hosts).
+`createApp` remains the default — reach for these only when you need a non-default plugin set or a
+bespoke `Config`/`Events` shape.
+
+```ts
+import { createCore, createCoreConfig, createPlugin, ecsPlugin, schedulerPlugin, rendererPlugin } from "game";
+
+// (a) createCore — assemble a custom core from a SUBSET of the framework's own plugins. The first
+//     argument is a type-only carrier for the bound createPlugin (pass `{ createPlugin }` or `coreConfig`);
+//     it is unused at runtime. Returns the framework factory ({ createApp, createPlugin }).
+const { createApp } = createCore({ createPlugin }, { plugins: [ecsPlugin, schedulerPlugin, rendererPlugin] });
+const app = createApp({ pluginConfigs: { renderer: { headless: true } } });  // headless: no Pixi/GPU
+await app.start();   // app.ecs / app.scheduler / app.renderer (Transform defined, render() a no-op)
+
+// (b) createCoreConfig — the raw @moku-labs/core Layer-1 factory, re-exported. Build a bespoke core
+//     config with its own Config / Events / core-plugin set, then call the returned createCore.
+const myConfig = createCoreConfig("mygame", { config: {}, plugins: [] });
+const soloPlugin = myConfig.createPlugin("solo", { api: () => ({ ping: () => "pong" }) });
+const mini = myConfig.createCore(myConfig, { plugins: [soloPlugin] }).createApp({});
+await mini.start();  // mini.solo.ping() === "pong"
+```
 
 --------------------------------------------------------------------------------
 ## 2. Plugin dependency graph & initialization order
@@ -384,7 +413,8 @@ export type Config = {
   background: number;  // @default 0x000000
   resolution: number;  // @default 0 (→ window.devicePixelRatio, then 1 headless)
   antialias: boolean;  // @default true
-  mount: string | undefined; // @default undefined (headless / manual)
+  mount: string | undefined; // @default undefined (manual mounting via getView())
+  headless: boolean;   // @default detectHeadless() (true when typeof document === "undefined")
 };
 
 export type Api = {
@@ -407,29 +437,40 @@ export type Api = {
 | `background` | `number` | `0x000000` | Background fill color (hex, e.g. `0x1099bb`). |
 | `resolution` | `number` | `0` | Device-pixel-ratio resolution; `0` falls back to `window.devicePixelRatio` (then `1` headless). |
 | `antialias` | `boolean` | `true` | Enable antialiasing. |
-| `mount` | `string \| undefined` | `undefined` | CSS selector to auto-mount the canvas on start. `undefined` = headless / manual via `getView()`. |
+| `mount` | `string \| undefined` | `undefined` | CSS selector to auto-mount the canvas on start. `undefined` = manual mounting via `getView()`. |
+| `headless` | `boolean` | `detectHeadless()` → `true` when `typeof document === "undefined"`, else `false` (explicit value overrides) | Run without Pixi/GPU. `onStart` skips `Application` creation/init, leaves `state.app` undefined, and `render()`/`getView()`/`getStage()` are no-ops — but `Transform` is still defined and `sync` still registered, so ECS/scene code is identical in both modes. |
 
 ### Lifecycle & design
 
-- **`onStart`**: `new Application()` → `await app.init({ width, height, background, antialias,
-  autoStart: false, resolution })`. On reject, `app.destroy(...)` then rethrow (no half-open GPU
-  context). On success: optionally append `app.canvas` to `document.querySelector(config.mount)`
-  (warns if the selector matches nothing); defines the `Transform` component on the ECS world and
-  stores the token; registers the sync system via `scheduler.addSystem("sync", …)`; writes `app`
-  into state; stashes `{ app, views }` in a module-level `WeakMap` keyed on `ctx.global`.
+- **`detectHeadless()`:** a pure env probe (`typeof document === "undefined"`) used as the `headless`
+  config default, computed at module load in `index.ts`. It does NOT import or touch Pixi, so it is
+  safe to evaluate as a default. An explicit `headless` value always overrides it.
+- **`onStart` (headless path, `config.headless === true`):** logs `"[renderer] headless — Pixi not
+  initialised"`, skips Pixi entirely (no `new Application()`, no `init`), defines the `Transform`
+  component and registers the `sync` system (so ECS/scene code is identical to non-headless), then
+  stores `{ app: undefined, views }` in the `WeakMap`.
+- **`onStart` (non-headless path):** `new Application()` → `await app.init({ width, height,
+  background, antialias, autoStart: false, resolution })`. On reject, `app.destroy(...)` then rethrow
+  (no half-open GPU context). On success: optionally append `app.canvas` to
+  `document.querySelector(config.mount)` (warns if the selector matches nothing); defines the
+  `Transform` component and registers the sync system; writes `app` into state; stashes `{ app,
+  views }` in a module-level `WeakMap` keyed on `ctx.global`.
 - **`onStop`**: reads `{ app, views }` from the `WeakMap` (teardown ctx is only `{ global }`),
-  `destroy()`s every managed `Container`, then `app.destroy(true, { children: true, texture: true,
-  textureSource: true })` for full VRAM cleanup, and deletes the `WeakMap` entry.
-- **Shared `Transform` token:** defined once in `onStart`, read by both the API getter and the sync
-  system from state, so they can never diverge. Reading `app.renderer.Transform` before `start()`
-  throws.
+  `destroy()`s every managed `Container`, then — **only when `app` is present** (non-headless) —
+  `app.destroy(true, { children: true, texture: true, textureSource: true })` for full VRAM cleanup,
+  and deletes the `WeakMap` entry. Idempotent.
+- **Shared `Transform` token:** defined once in `onStart` (both modes), read by both the API getter
+  and the sync system from state, so they can never diverge. Reading `app.renderer.Transform` before
+  `start()` throws.
 - **Dirty-flag sync:** `attach`/`markDirty` add the entity to `state.dirty`; each `sync` tick
   repositions only dirty views (`container.position`, `rotation`, `scale` from `Transform`) then
   clears the set. A second pass diffs `state.views` against `world.isAlive(...)` to dispose views of
   despawned entities — replacing per-despawn events with one liveness diff.
-- **Headless degradation:** DOM globals are probed structurally; runs in a Node/headless runtime
-  when `mount` is `undefined`. Runtime package: `pixi.js@^8`. Composes with `@moku-labs/web` for DOM
-  mounting when `mount` is a selector.
+- **Headless mode + DOM degradation:** with `headless: true` the plugin runs in a Node/Bun host with
+  no GPU at all (the Cycle 3 fix for booting under Bun without `_cancelResize` crashes). In the
+  non-headless path, DOM globals (`document`, `devicePixelRatio`) are still probed structurally.
+  Runtime package: `pixi.js@^8`. Composes with `@moku-labs/web` for DOM mounting when `mount` is a
+  selector.
 
 --------------------------------------------------------------------------------
 ## 7. input — polled keyboard/pointer (Standard)
@@ -800,24 +841,39 @@ part-way still has its spawned entities cleaned up on the next transition. Depen
 
 Attaches a Model Context Protocol server to the running framework. Agent clients (Claude, Cursor,
 etc.) query live state, control the loop, spawn/despawn entities, trigger scene loads, and capture
-screenshots — without touching game code. Depends on all eight other plugins.
+screenshots — without touching game code. Depends on all eight other plugins. The default transport
+is **environment-aware** (`["inMemory"]` in a browser, `["stdio"]` under Node/Bun), so a default
+`createApp().start()` runs in-page without a socket and never crashes on a missing `process.stdin`.
 
 ### Public types (src/plugins/mcp/types.ts)
 
 ```ts
 export type Config = {
-  transports: ReadonlyArray<"stdio" | "http">; // @default ["stdio"]
+  transports: ReadonlyArray<"stdio" | "http" | "inMemory">; // @default env-aware: ["inMemory"] browser, ["stdio"] Node/Bun
   httpHost: string;                             // @default "127.0.0.1"
   httpPort: number;                             // @default 3333
   httpAuth: "none" | "bearer";                  // @default "none"
   bearerToken: string;                          // @default ""  (required + non-empty when httpAuth==="bearer")
   enableMutations: boolean;                     // @default true
+  inMemoryGlobalKey: string;                    // @default "__MOKU_GAME_MCP__" ("" disables the globalThis publish)
+};
+
+// Structural subset of the SDK Transport interface — no @modelcontextprotocol/sdk type leaks into the public surface.
+export type InMemoryClientTransportLike = {
+  start(): Promise<void>;
+  send(message: unknown, options?: unknown): Promise<void>;
+  close(): Promise<void>;
+  onclose?: () => void;
+  onerror?: (error: Error) => void;
+  onmessage?: (message: unknown, extra?: unknown) => void;
+  sessionId?: string;
 };
 
 export type Api = {
   isRunning(): boolean;                  // true when connected on ≥1 transport
-  httpEndpoint(): string | undefined;    // e.g. "http://127.0.0.1:3333/mcp", or undefined (stdio-only)
+  httpEndpoint(): string | undefined;    // e.g. "http://127.0.0.1:3333/mcp", or undefined when no "http" transport
   toolNames(): readonly string[];        // names of all registered tools (stable after onStart)
+  clientTransport(): InMemoryClientTransportLike | undefined; // in-page client paired with the server when "inMemory" is active
 };
 ```
 
@@ -825,12 +881,13 @@ export type Api = {
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `transports` | `ReadonlyArray<"stdio" \| "http">` | `["stdio"]` | Which transports to expose. |
+| `transports` | `ReadonlyArray<"stdio" \| "http" \| "inMemory">` | env-aware: `["inMemory"]` in a browser, `["stdio"]` under Node/Bun | Which transports to expose. `"inMemory"` is in-page only (no socket). |
 | `httpHost` | `string` | `"127.0.0.1"` | HTTP bind address (localhost only by default). |
 | `httpPort` | `number` | `3333` | HTTP server port. |
 | `httpAuth` | `"none" \| "bearer"` | `"none"` | `"none"` trusts the local network; `"bearer"` requires a token on every request. |
 | `bearerToken` | `string` | `""` | Required (non-empty, validated at startup) when `httpAuth === "bearer"`. |
 | `enableMutations` | `boolean` | `true` | `false` → only the three read-only tools are registered. |
+| `inMemoryGlobalKey` | `string` | `"__MOKU_GAME_MCP__"` | `globalThis` property name on which the in-page client transport is published when `"inMemory"` is active in a browser. `""` disables the publish (`clientTransport()` still works). |
 
 ### MCP tool catalog
 
@@ -870,9 +927,20 @@ Mutating (registered when `enableMutations: true`):
 - **Frame-safe mutations:** mutating tools push closures into a `pending: Array<() => void>` queue
   drained on each `"input"` stage tick by a registered ECS system. Read-only tools and loop controls
   run directly between frames.
+- **Environment-aware default + `inMemory` transport:** `defaultTransports()` (a pure env probe in
+  `transport.ts`, no SDK call) picks `["inMemory"]` in a browser and `["stdio"]` under Node/Bun. The
+  `inMemory` transport is built on the SDK's `InMemoryTransport.createLinkedPair()` — the server side
+  is connected, the client side is retained on the handle and returned by `clientTransport()`. It is
+  in-page only (reachable solely by code in the same realm), so it carries no network surface. When
+  `"inMemory"` is active in a browser and `inMemoryGlobalKey` is non-empty, the client transport is
+  also published on `globalThis[inMemoryGlobalKey]` (removed on `onStop`).
+- **stdio guard:** before constructing the stdio transport the plugin checks `typeof process !==
+  "undefined" && process.stdin`; in a browser it skips stdio and emits a `ctx.log.warn` instead of
+  letting the SDK throw an opaque `reading 'on'` error.
 - **Tracked entities:** only entities spawned through `ecs:spawn` are tracked (the world has no
   public enumerate-all API in v1).
-- **SDK isolation:** all `@modelcontextprotocol/sdk` imports are confined to `transport.ts`.
+- **SDK isolation:** all `@modelcontextprotocol/sdk` imports are confined to `transport.ts` (incl.
+  `InMemoryTransport`); `clientTransport()` returns the SDK-free structural `InMemoryClientTransportLike`.
 - **Tool naming:** tools use `domain:action` (`ecs:spawn`, `loop:step`). The MCP SDK warns `:` is
   non-standard (SEP-986 permits `A–Z a–z 0–9 _ - .`); registration still proceeds, but strict
   clients may reject/mis-display — front them with a name-mapping adapter if needed.
@@ -964,9 +1032,15 @@ await app.stop();   // destroys the Pixi Application (frees VRAM), removes liste
 - `app.scene.load(name)` throws if `name` was never `define`d.
 - `mcp` with `httpAuth: "bearer"` validates `bearerToken` as non-empty at startup; an empty token
   fails fast.
-- Headless runtime: renderer (`mount: undefined`), input, and loop degrade gracefully when DOM/rAF
-  globals are absent — the renderer's `render()` is a safe no-op before start, loop scheduling is a
-  no-op while `step()` still ticks deterministically (and still advances `Time`).
+- `mcp` transports default by environment: `["inMemory"]` in a browser (in-page, no socket — reach
+  the client via `app.mcp.clientTransport()`), `["stdio"]` under Node/Bun. The stdio transport is
+  guarded on `process?.stdin`, so a browser default skips it with a warning instead of an opaque SDK
+  throw. `httpEndpoint()` is `undefined` unless the `"http"` transport is enabled.
+- Headless renderer: `renderer.headless` (auto-detected `true` when there is no DOM, overridable)
+  skips Pixi/GPU entirely — `state.app` stays `undefined`; `render()`/`getView()`/`getStage()` are
+  no-ops; `Transform` is still defined and `sync` still runs. The same framework boots under Bun/Node
+  without a GPU. `input` and `loop` likewise degrade gracefully when DOM/rAF globals are absent — loop
+  scheduling is a no-op while `step()` still ticks deterministically (and still advances `Time`).
 - Structural mutations during iteration (`updateEach` / inside a system) are deferred to the command
   buffer and applied at stage boundaries; outside iteration they apply immediately.
 
@@ -996,7 +1070,7 @@ Layout:
 
 ```
 src/config.ts              # Layer 1 — createCoreConfig, Config = {}, Events, createPlugin/createCore
-src/index.ts               # Layer 2 — createCore(9 plugins); exports createApp/createPlugin
+src/index.ts               # Layer 2 — createCore(9 plugins); exports createApp/createPlugin (+ createCore/createCoreConfig)
 src/plugins/index.ts       # plugin barrel (instances + Ecs/Scheduler/Context/... type namespaces)
 src/plugins/<name>/        # api.ts, types.ts, index.ts, lifecycle.ts / resources.ts (where applicable), README.md, __tests__/
 tests/                     # framework-level unit + integration tests

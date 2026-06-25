@@ -17,6 +17,11 @@ kernel events. Systems reach shared services (assets, logging, frame time) throu
   `@moku-labs/core` directly. `createApp(...)` returns an App synchronously; `await app.start()`
   boots the Pixi Application and registers DOM listeners. Each plugin's API is reached as
   `app.<plugin>.<method>()` (e.g. `app.ecs`, `app.scheduler`, `app.renderer`, `app.context`).
+  **Advanced / headless escape hatches** (also exported from `game`): `createCore(carrier, { plugins })`
+  assembles a custom core from a plugin subset (carrier is type-only — pass `{ createPlugin }` or
+  `coreConfig`); `createCoreConfig(name, { config, plugins })` (re-exported from `@moku-labs/core`)
+  builds a bespoke Layer-1 config with its own `Config`/`Events`/core-plugin set. `createApp` stays
+  the default — these are for tooling, tests, and agent-only hosts.
 - **Config composition.** The framework defines no global config fields (`Config = {}`). All
   configuration is per-plugin via `createApp({ pluginConfigs: { <plugin>: { ... } } })`. Core
   plugins `logPlugin` + `envPlugin` from `@moku-labs/common` are registered in `config.ts`, so
@@ -46,9 +51,17 @@ kernel events. Systems reach shared services (assets, logging, frame time) throu
 - **Scheduler stages.** Five fixed, ordered stages: `input → update → physics → sync → render`.
   Systems are `(world, dt) => void`. The command buffer is flushed between stages. `scheduler` is a
   thin facade that forwards to `world.addSystem` / `world.tick`.
-- **MCP runtime exposure.** The `mcp` plugin attaches a Model Context Protocol server (stdio and/or
-  Streamable HTTP) exposing read-only + mutating tools and JSON resources. Mutating tools enqueue
-  closures drained on the next `"input"` stage tick (frame-safe).
+- **MCP runtime exposure.** The `mcp` plugin attaches a Model Context Protocol server exposing
+  read-only + mutating tools and JSON resources. The transport default is **environment-aware**:
+  `["stdio"]` under Node/Bun, `["inMemory"]` in a browser (an in-page `InMemoryTransport` pair, no
+  socket — reach the client side via `app.mcp.clientTransport()`); Streamable HTTP is opt-in. The
+  stdio transport is guarded on `process?.stdin` so a browser default never crashes. Mutating tools
+  enqueue closures drained on the next `"input"` stage tick (frame-safe).
+- **Headless renderer.** `renderer.headless` (auto-detected: `true` when `typeof document ===
+  "undefined"`, explicitly overridable) skips Pixi/GPU entirely in `onStart` — no `Application` is
+  created, `state.app` stays `undefined`, `render()`/`getView()`/`getStage()` become safe no-ops —
+  but `Transform` is still defined and the `sync` system still registered, so ECS/scene code is
+  identical headless or not. Lets the same framework boot under Bun/Node (tests, simulation, agents).
 
 ## Quick Reference
 
@@ -109,16 +122,19 @@ addSystem(stage: Stage, system: System): () => void   // forwards to world.addSy
 tick(dt: number): void                                // forwards to world.tick
 ```
 
-### app.renderer (Complex) — PixiJS v8
+### app.renderer (Complex) — PixiJS v8 (headless-capable)
 
 ```ts
-readonly Transform: Component<{ x; y; rotation; scaleX; scaleY }>   // throws if read before start()
+readonly Transform: Component<{ x; y; rotation; scaleX; scaleY }>   // throws if read before start(); defined even when headless
 attach(entity: Entity, view: Container): void  // Container/Sprite/Graphics
 detach(entity: Entity): void                   // destroy()s view, idempotent
-render(): void                                 // draws one frame; no-op before start
-getView(): HTMLCanvasElement | undefined       // canvas for manual mounting
-getStage(): Container | undefined              // root Pixi stage
+render(): void                                 // draws one frame; no-op before start AND when headless
+getView(): HTMLCanvasElement | undefined       // canvas for manual mounting; undefined when headless
+getStage(): Container | undefined              // root Pixi stage; undefined when headless
 markDirty(entity: Entity): void                // re-sync view next "sync" tick
+// Config.headless: boolean — @default detectHeadless() (true when typeof document === "undefined").
+//   When true, onStart skips Pixi/GPU entirely (no Application, state.app stays undefined) but still
+//   defines Transform + registers the sync system, so ECS/scene code is identical in both modes.
 ```
 
 ### app.input (Standard) — polled
@@ -177,12 +193,19 @@ unload(): void                        // detach + despawn owned entities (if des
 currentScene(): string | undefined
 ```
 
-### app.mcp (Complex) — MCP server
+### app.mcp (Complex) — MCP server (env-aware transports)
 
 ```ts
 isRunning(): boolean
-httpEndpoint(): string | undefined    // e.g. "http://127.0.0.1:3333/mcp", or undefined for stdio-only
+httpEndpoint(): string | undefined    // e.g. "http://127.0.0.1:3333/mcp", or undefined when no "http" transport
 toolNames(): readonly string[]
+clientTransport(): InMemoryClientTransportLike | undefined  // in-page client paired with the server when "inMemory" is active
+// Config.transports: ReadonlyArray<"stdio" | "http" | "inMemory">
+//   @default env-aware: ["inMemory"] in a browser, ["stdio"] under Node/Bun. "inMemory" is in-page only (no socket):
+//   built on the SDK's InMemoryTransport.createLinkedPair(); the client side is returned by clientTransport() and
+//   (when inMemoryGlobalKey is non-empty, default "__MOKU_GAME_MCP__") also published on globalThis[key] in a browser.
+//   stdio connect is guarded on process?.stdin (skip+warn in a browser, never an opaque SDK throw).
+// Config.inMemoryGlobalKey: string — @default "__MOKU_GAME_MCP__" ("" disables the globalThis publish).
 ```
 
 MCP tools (read-only, always): `ecs:query`, `renderer:screenshot`, `scene:getInfo`.
@@ -209,7 +232,7 @@ events of its own.
 game/
 ├── src/
 │   ├── config.ts            # Layer 1: createCoreConfig, Config = {}, Events, createPlugin/createCore
-│   ├── index.ts             # Layer 2: createCore assembles the 9 plugins; exports createApp/createPlugin
+│   ├── index.ts             # Layer 2: createCore assembles the 9 plugins; exports createApp/createPlugin (+ createCore/createCoreConfig for advanced/headless assembly)
 │   └── plugins/
 │       ├── index.ts         # plugin barrel (instances + type namespaces)
 │       ├── ecs/             # data/runtime core + resource registry (world.ts, types.ts, README.md, __tests__/)
@@ -239,8 +262,9 @@ Built/resolved in dependency order. (depends → resolved with `ctx.require`.)
 - **scheduler** — ordered stage contract; thin facade over the world. | Standard |
   `addSystem(stage,fn)`/`tick`/`stages` | events: none | depends: ecs.
 - **renderer** — PixiJS v8 backend; owns the GPU `Application`, defines `Transform`, syncs
-  ECS→display objects on the `sync` stage. | Complex | `Transform`/`attach`/`render`/`getView`/
-  `getStage`/`markDirty` | events: none | depends: ecs, scheduler.
+  ECS→display objects on the `sync` stage. First-class `headless` config (auto-detected; skips
+  Pixi/GPU, still defines `Transform` + sync). | Complex | `Transform`/`attach`/`render`/`getView`/
+  `getStage`/`markDirty` | config: +`headless` | events: none | depends: ecs, scheduler.
 - **input** — polled keyboard/pointer from DOM listeners → per-frame `InputSnapshot` on the `input`
   stage. | Standard | `snapshot()` | events: none | depends: scheduler.
 - **loop** — fixed-timestep rAF loop driving `scheduler.tick` then `renderer.render` each frame
@@ -254,8 +278,10 @@ Built/resolved in dependency order. (depends → resolved with `ctx.require`.)
 - **scene** — named scene lifecycle with entity-ownership tracking, clean transitions, bundle
   pre-load. | Standard | `define`/`load`/`unload`/`currentScene` | events: `scene:loaded` |
   depends: ecs, renderer, assets.
-- **mcp** — first-class MCP server (stdio + Streamable HTTP) exposing the runtime to agents. |
-  Complex | `isRunning`/`httpEndpoint`/`toolNames` | events: none | depends: all eight above.
+- **mcp** — first-class MCP server exposing the runtime to agents over stdio / Streamable HTTP /
+  in-page `inMemory` (env-aware default: `["stdio"]` Node-Bun, `["inMemory"]` browser; stdio guarded
+  on `process?.stdin`). | Complex | `isRunning`/`httpEndpoint`/`toolNames`/`clientTransport` |
+  config: +`inMemoryGlobalKey` | events: none | depends: all eight above.
 
 ## Requirements
 

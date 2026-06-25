@@ -81,6 +81,7 @@ Set under `pluginConfigs.renderer`. Defaults come from `index.ts`.
 | `resolution` | `number` | `0` | Device-pixel-ratio resolution; `0` falls back to `window.devicePixelRatio` (then `1` in a headless runtime). |
 | `antialias` | `boolean` | `true` | Enable antialiasing. |
 | `mount` | `string \| undefined` | `undefined` | CSS selector to auto-mount the canvas into on start. `undefined` = headless / manual mounting via `getView()`. |
+| `headless` | `boolean` | auto-detected (`true` when there is no DOM, i.e. `typeof document === "undefined"`) | Run without Pixi/GPU. When `true`, `onStart` skips `Application` creation/init entirely and leaves the app `undefined`, but **still** defines the `Transform` component and registers the `sync` system — so ECS/scene code is identical in both modes. `render()` / `getView()` / `getStage()` become safe no-ops (the last two return `undefined`). An explicit value always overrides auto-detection. |
 
 ## Events
 
@@ -128,7 +129,7 @@ await app.stop(); // destroys the Application, frees VRAM
 - **Shared `Transform` token.** The token is defined once in `onStart` and stored in `state.transformToken`; both the API getter and the sync system read it from state, so they can never diverge. The getter throws if accessed before start rather than silently minting a second token.
 - **WeakMap teardown.** Because `onStop` only receives `{ global }`, the `{ app, views }` opened at start are retrieved at stop via a module-level `WeakMap<object, TeardownEntry>` keyed on the per-instance `ctx.global` — the same pattern used by the `loop` and `mcp` plugins.
 - **Structural contexts.** `createApi` (`RendererContext`) and `createSyncSystem` (`SyncContext`) declare only the context fields they touch, so unit tests can supply minimal mocks — including a mocked Pixi `Application` — without wiring the full kernel or a real GPU.
-- **Headless degradation.** The DOM surface (`document`, `devicePixelRatio`) is probed through an optional structural `globalThis` view, so the plugin runs in a Node/headless runtime when `config.mount` is `undefined`.
+- **First-class headless mode.** `config.headless` (auto-detected via `detectHeadless()` — `true` when `typeof document === "undefined"`, overridable) makes `onStart` skip Pixi entirely: no `Application` is constructed or initialised and `state.app` stays `undefined`, yet `Transform` is still defined and the `sync` system still registered, so ECS/scene code runs unchanged. `onStop` skips `app.destroy(...)` when no app was created, and the API methods (`render`/`getView`/`getStage`) are undefined-app-safe. This lets the framework run in Bun/Node (or any DOM-less host) without a GPU and without Pixi crashing. The remaining DOM surface (`document`, `devicePixelRatio`) is still probed through an optional structural `globalThis` view for the non-headless mount/resolution paths.
 
 ## Dependencies
 
