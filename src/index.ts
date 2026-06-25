@@ -5,6 +5,7 @@
 import { coreConfig, createCore } from "./config";
 import {
   assetsPlugin,
+  contextPlugin,
   ecsPlugin,
   inputPlugin,
   loopPlugin,
@@ -22,11 +23,15 @@ const framework = createCore(coreConfig, {
     inputPlugin,
     loopPlugin,
     assetsPlugin,
+    contextPlugin,
     scenePlugin,
     mcpPlugin
   ],
   // Framework default plugin configuration. Consumers override via createApp({ pluginConfigs }).
-  pluginConfigs: {}
+  pluginConfigs: {
+    /** context plugin: bind the curated GameContext resource at start (Assets always bound). */
+    context: { bindGameContext: true }
+  }
 });
 
 // ─── Plugins + Types ──────────────────────────────────────────

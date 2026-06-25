@@ -22,6 +22,14 @@ export type Component<T> = {
 /** Presence-only marker component. */
 export type Tag = Component<Record<never, never>>;
 
+/**
+ * Opaque world-resource token — a typed singleton handle (sibling to Component<T>).
+ * Keyed by a stable string. `__value` is a phantom (type-level only); it is NEVER set at runtime.
+ * Minted by `world.defineResource`, or constructed as a fixed-key const for framework well-known
+ * resources (e.g. the context plugin's Assets/GameContext, the loop plugin's Time).
+ */
+export type Resource<T> = { readonly __key: string; readonly __value?: T };
+
 /** Fixed, ordered execution stages. */
 export type Stage = "input" | "update" | "physics" | "sync" | "render";
 

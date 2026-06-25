@@ -6,6 +6,7 @@
 
 // ─── Plugin Instances ────────────────────────────────────────
 export { assetsPlugin } from "./assets";
+export { contextPlugin } from "./context";
 export { ecsPlugin } from "./ecs";
 export { inputPlugin } from "./input";
 export { loopPlugin } from "./loop";
@@ -16,6 +17,7 @@ export { schedulerPlugin } from "./scheduler";
 
 // ─── Plugin Types (namespace re-exports) ─────────────────────
 export * as Assets from "./assets/types";
+export * as Context from "./context/types";
 export * as Ecs from "./ecs/types";
 export * as Input from "./input/types";
 export * as Loop from "./loop/types";
