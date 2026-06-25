@@ -273,7 +273,8 @@ export const start = async (ctx: StartContext): Promise<void> => {
       registerAllResources,
       pending,
       removeDrainSystem,
-      removeStatsSystem
+      removeStatsSystem,
+      warn: ctx.log.warn
     });
   } catch (error) {
     // On failure: remove systems (prevent dangling drain / stats probe)

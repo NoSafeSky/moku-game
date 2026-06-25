@@ -6,7 +6,7 @@
  * WeakMap (exported from lifecycle.ts), mirroring the loop plugin's api.ts pattern.
  */
 import { mcpRegistry } from "./lifecycle";
-import type { Api, McpApiContext } from "./types";
+import type { Api, InMemoryClientTransportLike, McpApiContext } from "./types";
 
 /**
  * Creates the mcp plugin API surface.
@@ -33,7 +33,7 @@ export const createApi = (ctx: McpApiContext): Api => ({
    * @returns Whether the server is running.
    * @example
    * ```ts
-   * if (app.mcp.isRunning()) console.log("MCP ready");
+   * if (app.mcp.isRunning()) startAgentBridge();
    * ```
    */
   isRunning(): boolean {
@@ -64,5 +64,24 @@ export const createApi = (ctx: McpApiContext): Api => ({
    */
   toolNames(): readonly string[] {
     return mcpRegistry.get(ctx.global)?.toolNames ?? [];
+  },
+
+  /**
+   * Returns the in-page MCP client transport when the "inMemory" transport is
+   * active, else undefined.
+   *
+   * Pass it to an SDK MCP `Client` to drive the live runtime in-page. Before
+   * start or after stop (no handle in the registry) → undefined. The return type
+   * is structural so no SDK dependency leaks into the public surface.
+   *
+   * @returns The in-page client transport, or undefined.
+   * @example
+   * ```ts
+   * const transport = app.mcp.clientTransport();
+   * if (transport) await client.connect(transport);
+   * ```
+   */
+  clientTransport(): InMemoryClientTransportLike | undefined {
+    return mcpRegistry.get(ctx.global)?.clientTransport ?? undefined;
   }
 });

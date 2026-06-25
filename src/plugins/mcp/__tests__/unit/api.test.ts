@@ -10,7 +10,7 @@ import { beforeEach, describe, expect, expectTypeOf, it } from "vitest";
 import { createApi } from "../../api";
 import { mcpRegistry, validateConfig } from "../../lifecycle";
 import { createState } from "../../state";
-import type { Config, McpHandle } from "../../types";
+import type { Config, InMemoryClientTransportLike, McpHandle } from "../../types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers (outer scope — unicorn/consistent-function-scoping)
@@ -31,6 +31,13 @@ const makeHandle = (overrides?: Partial<McpHandle>): McpHandle => ({
   ...overrides
 });
 
+/** A minimal structural in-page client transport for clientTransport() assertions. */
+const makeClientTransport = (): InMemoryClientTransportLike => ({
+  start: () => Promise.resolve(),
+  send: () => Promise.resolve(),
+  close: () => Promise.resolve()
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // createState tests
 // ─────────────────────────────────────────────────────────────────────────────
@@ -42,7 +49,8 @@ describe("createState", () => {
     httpPort: 3333,
     httpAuth: "none",
     bearerToken: "",
-    enableMutations: true
+    enableMutations: true,
+    inMemoryGlobalKey: "__MOKU_GAME_MCP__"
   };
 
   it("returns stats with zero initial values", () => {
@@ -116,6 +124,26 @@ describe("createApi", () => {
     expect(api.toolNames()).toEqual(names);
   });
 
+  // ── clientTransport() (Cycle 3) ─────────────────────────────────────────────
+
+  it("clientTransport() returns undefined when no handle in registry", () => {
+    const api = createApi({ global: globalKey });
+    expect(api.clientTransport()).toBeUndefined();
+  });
+
+  it("clientTransport() returns undefined when the handle has no client transport", () => {
+    mcpRegistry.set(globalKey, makeHandle({ clientTransport: undefined }));
+    const api = createApi({ global: globalKey });
+    expect(api.clientTransport()).toBeUndefined();
+  });
+
+  it("clientTransport() returns the handle's clientTransport when present", () => {
+    const transport = makeClientTransport();
+    mcpRegistry.set(globalKey, makeHandle({ clientTransport: transport }));
+    const api = createApi({ global: globalKey });
+    expect(api.clientTransport()).toBe(transport);
+  });
+
   // ── Type-level ─────────────────────────────────────────────────────────────
 
   describe("types", () => {
@@ -133,6 +161,31 @@ describe("createApi", () => {
       const api = createApi({ global: {} });
       expectTypeOf(api.toolNames).toEqualTypeOf<() => readonly string[]>();
     });
+
+    it("clientTransport is typed as () => InMemoryClientTransportLike | undefined", () => {
+      const api = createApi({ global: {} });
+      expectTypeOf(api.clientTransport).toEqualTypeOf<
+        () => InMemoryClientTransportLike | undefined
+      >();
+    });
+
+    it("InMemoryClientTransportLike is SDK-free (structural, assignable from a plain object)", () => {
+      const transport: InMemoryClientTransportLike = {
+        start: () => Promise.resolve(),
+        send: () => Promise.resolve(),
+        close: () => Promise.resolve()
+      };
+      expectTypeOf(transport.start).toEqualTypeOf<() => Promise<void>>();
+      expectTypeOf(transport.send).parameter(0).toEqualTypeOf<unknown>();
+    });
+
+    it("rejects a transports value outside the stdio | http | inMemory union", () => {
+      const ok: Config["transports"] = ["stdio", "http", "inMemory"];
+      expectTypeOf(ok).toEqualTypeOf<ReadonlyArray<"stdio" | "http" | "inMemory">>();
+      // @ts-expect-error — "websocket" is not in the transports union
+      const bad: Config["transports"] = ["websocket"];
+      expect(bad).toBeDefined();
+    });
   });
 });
 
@@ -148,7 +201,8 @@ describe("validateConfig", () => {
       httpPort: 3333,
       httpAuth: "none",
       bearerToken: "",
-      enableMutations: true
+      enableMutations: true,
+      inMemoryGlobalKey: "__MOKU_GAME_MCP__"
     };
     expect(() => validateConfig(config)).not.toThrow();
   });
@@ -160,7 +214,8 @@ describe("validateConfig", () => {
       httpPort: 3333,
       httpAuth: "bearer",
       bearerToken: "secret-token",
-      enableMutations: true
+      enableMutations: true,
+      inMemoryGlobalKey: "__MOKU_GAME_MCP__"
     };
     expect(() => validateConfig(config)).not.toThrow();
   });
@@ -172,7 +227,8 @@ describe("validateConfig", () => {
       httpPort: 3333,
       httpAuth: "bearer",
       bearerToken: "",
-      enableMutations: true
+      enableMutations: true,
+      inMemoryGlobalKey: "__MOKU_GAME_MCP__"
     };
     expect(() => validateConfig(config)).toThrow();
   });

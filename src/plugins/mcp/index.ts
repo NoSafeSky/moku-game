@@ -17,15 +17,17 @@ import { schedulerPlugin } from "../scheduler";
 import { createApi } from "./api";
 import { start, stop } from "./lifecycle";
 import { createState } from "./state";
+import { defaultTransports } from "./transport";
 import type { Config } from "./types";
 
 const defaultConfig: Config = {
-  transports: ["stdio"],
+  transports: defaultTransports(),
   httpHost: "127.0.0.1",
   httpPort: 3333,
   httpAuth: "none",
   bearerToken: "",
-  enableMutations: true
+  enableMutations: true,
+  inMemoryGlobalKey: "__MOKU_GAME_MCP__"
 };
 
 export const mcpPlugin = createPlugin("mcp", {

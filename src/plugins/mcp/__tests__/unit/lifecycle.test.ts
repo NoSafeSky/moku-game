@@ -48,7 +48,8 @@ const defaultConfig: Config = {
   httpPort: 3333,
   httpAuth: "none",
   bearerToken: "",
-  enableMutations: true
+  enableMutations: true,
+  inMemoryGlobalKey: "__MOKU_GAME_MCP__"
 };
 
 const makeHandle = (overrides?: Partial<McpHandle>): McpHandle => ({
@@ -233,5 +234,36 @@ describe("stop", () => {
     // finally block ran despite the rejection
     expect(handle.running).toBe(false);
     expect(mcpRegistry.get(global)).toBeUndefined();
+  });
+
+  // ── Cycle 3: inMemory global-key teardown via handle.close() ────────────────
+
+  it("removes globalThis[key] on stop (close() owns the key) and a second stop is a no-op", async () => {
+    const global = {};
+    const key = "__MOKU_GAME_MCP__";
+    // Simulate a browser-published key: the real transport.ts close() deletes it.
+    (globalThis as Record<string, unknown>)[key] = { closed: false };
+
+    let closeCalls = 0;
+    const handle = makeHandle({
+      running: true,
+      publishedGlobalKey: key,
+      close: vi.fn(() => {
+        closeCalls += 1;
+        delete (globalThis as Record<string, unknown>)[key];
+        return Promise.resolve();
+      })
+    });
+    mcpRegistry.set(global, handle);
+
+    await stop({ global } as unknown as StopCtx);
+    expect((globalThis as Record<string, unknown>)[key]).toBeUndefined();
+    expect(closeCalls).toBe(1);
+
+    // Second stop: no handle in the registry → close() not called again (idempotent)
+    await stop({ global } as unknown as StopCtx);
+    expect(closeCalls).toBe(1);
+
+    delete (globalThis as Record<string, unknown>)[key];
   });
 });

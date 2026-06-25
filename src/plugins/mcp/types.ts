@@ -9,11 +9,11 @@
 /** mcp plugin configuration. */
 export type Config = {
   /**
-   * Transports to expose.
+   * Transport(s) to expose.
    *
-   * @default ["stdio"]
+   * @default environment-aware: browser → ["inMemory"], Node/Bun → ["stdio"]
    */
-  transports: ReadonlyArray<"stdio" | "http">;
+  transports: ReadonlyArray<"stdio" | "http" | "inMemory">;
   /**
    * HTTP host (localhost by default for safety).
    *
@@ -44,6 +44,14 @@ export type Config = {
    * @default true
    */
   enableMutations: boolean;
+  /**
+   * globalThis property name on which the in-page client transport is published
+   * when the "inMemory" transport is active in a browser. `""` disables the
+   * publish (the {@link Api.clientTransport} method still works).
+   *
+   * @default "__MOKU_GAME_MCP__"
+   */
+  inMemoryGlobalKey: string;
 };
 
 /** mcp plugin state. */
@@ -53,6 +61,62 @@ export type State = {
    * Updated each render tick by a lightweight probe system.
    */
   stats: { frame: number; lastDt: number; entityCount: number };
+};
+
+/**
+ * Structural subset of the SDK `Transport` interface exposed for the in-page
+ * "inMemory" client side.
+ *
+ * Matches the shape of `@modelcontextprotocol/sdk`'s `Transport` so a consumer
+ * can hand it to an MCP `Client` without this plugin importing the SDK outside
+ * `transport.ts`. Keeping it structural (no SDK import) keeps the SDK out of the
+ * public `.d.ts`.
+ *
+ * @example
+ * ```ts
+ * import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+ * const transport = app.mcp.clientTransport();
+ * if (transport) await new Client({ name: "agent", version: "0.0.0" }).connect(transport);
+ * ```
+ */
+export type InMemoryClientTransportLike = {
+  /**
+   * Starts the transport (begins processing queued messages).
+   *
+   * @returns A Promise that resolves once the transport has started.
+   */
+  start(): Promise<void>;
+  /**
+   * Sends a JSON-RPC message to the paired server transport.
+   *
+   * @param message - The JSON-RPC message to send.
+   * @param options - Optional send options (e.g. related request id / auth info).
+   * @returns A Promise that resolves once the message has been queued/sent.
+   */
+  send(message: unknown, options?: unknown): Promise<void>;
+  /**
+   * Closes the transport and signals the paired transport to close.
+   *
+   * @returns A Promise that resolves once the transport is closed.
+   */
+  close(): Promise<void>;
+  /** Invoked when the transport closes. */
+  onclose?: () => void;
+  /**
+   * Invoked when the transport encounters an error.
+   *
+   * @param error - The error that occurred.
+   */
+  onerror?: (error: Error) => void;
+  /**
+   * Invoked when a message is received from the paired transport.
+   *
+   * @param message - The received JSON-RPC message.
+   * @param extra - Optional transport-specific metadata (e.g. auth info).
+   */
+  onmessage?: (message: unknown, extra?: unknown) => void;
+  /** Optional session id assigned by the transport. */
+  sessionId?: string;
 };
 
 /** mcp plugin API — small surface, the rich functionality is the MCP tool/resource catalog. */
@@ -75,6 +139,17 @@ export type Api = {
    * @returns Read-only array of tool names.
    */
   toolNames(): readonly string[];
+  /**
+   * The in-page MCP client transport (paired with the connected server) when the
+   * "inMemory" transport is active, else undefined.
+   *
+   * Pass it to an SDK MCP `Client` to drive the live runtime from in-page agent
+   * code with no socket. The return type is structural — no SDK dependency leaks
+   * into the public surface. Before start or after stop (no handle) → undefined.
+   *
+   * @returns The in-page client transport, or undefined.
+   */
+  clientTransport(): InMemoryClientTransportLike | undefined;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -174,7 +249,19 @@ export type McpHandle = {
   removeDrainSystem: () => void;
   /** Unsubscribe function for the stats probe system registered on the render stage. */
   removeStatsSystem: () => void;
-  /** Closes the MCP server and HTTP listener. */
+  /**
+   * The in-page client transport paired with the connected server when the
+   * "inMemory" transport is active, else undefined. Retained for the
+   * {@link Api.clientTransport} method.
+   */
+  clientTransport?: InMemoryClientTransportLike | undefined;
+  /**
+   * The `globalThis` key on which the client transport was published, or
+   * undefined when nothing was published (key was `""` or not in a browser).
+   * Lets teardown delete the published global key idempotently.
+   */
+  publishedGlobalKey?: string | undefined;
+  /** Closes the MCP server, every transport (HTTP + inMemory pair), and removes any published global key. */
   close: () => Promise<void>;
 };
 

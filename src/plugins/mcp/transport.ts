@@ -8,9 +8,10 @@
  * v1 boundary: to swap the SDK (e.g. v2, browser transport) only edit this file.
  */
 import { timingSafeEqual } from "node:crypto";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import type { Config, McpHandle, McpServerLike } from "./types";
+import type { Config, InMemoryClientTransportLike, McpHandle, McpServerLike } from "./types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -19,6 +20,46 @@ import type { Config, McpHandle, McpServerLike } from "./types";
 const FRAMEWORK_NAME = "game";
 const FRAMEWORK_VERSION = "0.1.0";
 const MCP_PATH = "/mcp";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Environment probes (pure — no SDK call in the body)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Structural view of a `globalThis` that may carry a published client transport
+ * under an arbitrary string key. Mutating an index of `globalThis` directly is
+ * disallowed by `noImplicitAny`/`noUncheckedIndexedAccess`, so the publish/unpublish
+ * paths project through this record shape.
+ */
+type GlobalThisRecord = Record<string, unknown>;
+
+/**
+ * Structural view of `globalThis` for the DOM probe. The tsconfig omits the `dom`
+ * lib, so `document` is not a declared global; reading it through this cast keeps
+ * the browser check type-safe without referencing a bare undeclared identifier
+ * (mirrors the renderer plugin's `GlobalWithDom` pattern).
+ */
+type GlobalWithDocument = {
+  /** The DOM document — present only in a browser realm. */
+  document?: unknown;
+};
+
+/**
+ * Returns the environment-aware default transport list.
+ *
+ * Pure environment probe — performs NO SDK call. Returns `["inMemory"]` in a
+ * browser (where `document` is defined) so a default `createApp()` runs in-page
+ * without a socket; returns `["stdio"]` under Node/Bun (the existing default).
+ * Suitable for computing a config default at module load time.
+ *
+ * @returns `["inMemory"]` when a DOM is present (`typeof document !== "undefined"`), else `["stdio"]`.
+ * @example
+ * ```ts
+ * const transports = defaultTransports(); // ["stdio"] under Bun, ["inMemory"] in browser
+ * ```
+ */
+export const defaultTransports = (): ReadonlyArray<"stdio" | "http" | "inMemory"> =>
+  (globalThis as GlobalWithDocument).document === undefined ? ["stdio"] : ["inMemory"];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -66,6 +107,14 @@ export type BuildHandleOptions = {
   removeDrainSystem: () => void;
   /** Stats probe system unsubscribe fn (stored in the handle for onStop). */
   removeStatsSystem: () => void;
+  /**
+   * Warning callback (threaded from lifecycle's `ctx.log.warn`). Invoked when a
+   * requested transport is unavailable in the current environment (e.g. stdio in
+   * a browser) so the skip is observable instead of a silent or opaque SDK throw.
+   *
+   * @param message - The warning message to surface.
+   */
+  warn: (message: string) => void;
 };
 
 /**
@@ -89,7 +138,8 @@ export const buildMcpHandle = async (opts: BuildHandleOptions): Promise<McpHandl
     registerAllResources,
     pending,
     removeDrainSystem,
-    removeStatsSystem
+    removeStatsSystem,
+    warn
   } = opts;
 
   // Build the McpServer (SDK class; stays inside this file)
@@ -108,15 +158,35 @@ export const buildMcpHandle = async (opts: BuildHandleOptions): Promise<McpHandl
   // ── Connect configured transports (half-open-safe: on any error, close all opened) ──
 
   let httpEndpoint: string | undefined;
+  let clientTransport: InMemoryClientTransportLike | undefined;
+  let publishedGlobalKey: string | undefined;
   const closers: Array<() => Promise<void>> = [];
 
   try {
     if (config.transports.includes("stdio")) {
-      const stdioTransport = new StdioServerTransport();
-      await server.connect(stdioTransport);
-      closers.push(async () => {
-        await stdioTransport.close();
-      });
+      // Guard before constructing StdioServerTransport: `process` may be wholly
+      // undefined in a true browser, so probe `typeof process` first. Without
+      // process.stdin the SDK throws `Cannot read properties of undefined
+      // (reading 'on')` — skip + warn instead. (`&&` already coerces to boolean,
+      // so no explicit Boolean() wrapper is needed.)
+      if (typeof process !== "undefined" && process?.stdin) {
+        const stdioTransport = new StdioServerTransport();
+        await server.connect(stdioTransport);
+        closers.push(async () => {
+          await stdioTransport.close();
+        });
+      } else {
+        warn(
+          '[mcp] stdio transport unavailable (no process.stdin) — skipping. Use "inMemory" or "http" in this environment.'
+        );
+      }
+    }
+
+    if (config.transports.includes("inMemory")) {
+      const inMemory = await connectInMemory(server, config);
+      clientTransport = inMemory.clientTransport;
+      publishedGlobalKey = inMemory.publishedGlobalKey;
+      closers.push(inMemory.closeInMemory);
     }
 
     if (config.transports.includes("http")) {
@@ -126,6 +196,8 @@ export const buildMcpHandle = async (opts: BuildHandleOptions): Promise<McpHandl
     }
   } catch (connectError) {
     // Close all transports that successfully connected before the failure
+    // (this also unpublishes the global key / closes the inMemory pair if that
+    // branch ran before a later transport threw).
     for (const closer of closers) {
       await closer().catch(() => {
         /* ignore close errors during error-path teardown */
@@ -138,7 +210,8 @@ export const buildMcpHandle = async (opts: BuildHandleOptions): Promise<McpHandl
   }
 
   /**
-   * Closes all transports and the MCP server.
+   * Closes all transports (HTTP listener and/or in-memory pair), deletes any
+   * published `globalThis` key, then closes the MCP server.
    *
    * @returns A Promise that resolves once all transports are closed.
    * @example
@@ -160,8 +233,76 @@ export const buildMcpHandle = async (opts: BuildHandleOptions): Promise<McpHandl
     pending,
     removeDrainSystem,
     removeStatsSystem,
+    clientTransport,
+    publishedGlobalKey,
     close
   };
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// inMemory transport (in-page browser support — no socket)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Connects the server over an in-memory transport pair and (in a browser, when
+ * `inMemoryGlobalKey` is non-empty) publishes the client side on `globalThis`.
+ *
+ * Uses `InMemoryTransport.createLinkedPair()`: the server side is connected via
+ * `server.connect(serverTransport)`; the client side is retained and projected
+ * to the structural {@link InMemoryClientTransportLike} so no SDK type escapes
+ * this file. The returned closer closes BOTH transports of the pair and removes
+ * the published global key (idempotently).
+ *
+ * @param server - The McpServer to connect the in-memory server transport to.
+ * @param config - Resolved mcp plugin configuration (reads `inMemoryGlobalKey`).
+ * @returns The structural client transport, the published key (or undefined), and a closer.
+ * @example
+ * ```ts
+ * const { clientTransport, publishedGlobalKey, closeInMemory } = await connectInMemory(server, config);
+ * ```
+ */
+const connectInMemory = async (
+  server: McpServer,
+  config: Readonly<Config>
+): Promise<{
+  clientTransport: InMemoryClientTransportLike;
+  publishedGlobalKey: string | undefined;
+  closeInMemory: () => Promise<void>;
+}> => {
+  const [clientPair, serverPair] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverPair);
+
+  // Project the SDK client transport to the structural type (sanctioned seam cast).
+  const clientTransport = clientPair as unknown as InMemoryClientTransportLike;
+
+  // Publish on globalThis only in a browser AND when a non-empty key is set.
+  const inBrowser = (globalThis as GlobalWithDocument).document !== undefined;
+  const shouldPublish = inBrowser && config.inMemoryGlobalKey !== "";
+  const publishedGlobalKey = shouldPublish ? config.inMemoryGlobalKey : undefined;
+
+  if (publishedGlobalKey !== undefined) {
+    (globalThis as GlobalThisRecord)[publishedGlobalKey] = clientTransport;
+  }
+
+  /**
+   * Closes both transports of the in-memory pair and deletes the published
+   * global key (when one was published). Idempotent.
+   *
+   * @returns A Promise that resolves once both transports are closed.
+   * @example
+   * ```ts
+   * await closeInMemory();
+   * ```
+   */
+  const closeInMemory = async (): Promise<void> => {
+    if (publishedGlobalKey !== undefined) {
+      delete (globalThis as GlobalThisRecord)[publishedGlobalKey];
+    }
+    await serverPair.close();
+    await clientPair.close();
+  };
+
+  return { clientTransport, publishedGlobalKey, closeInMemory };
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

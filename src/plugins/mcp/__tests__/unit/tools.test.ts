@@ -405,6 +405,25 @@ describe("registerTools", () => {
       expect(result.isError).toBe(true);
     });
 
+    it("renderer:screenshot with a HEADLESS renderer returns not-available and does NOT throw", async () => {
+      // Headless renderer: getView() returns undefined (renderer spec). The tool
+      // must tolerate the missing view and return an error result, never throw.
+      renderer.getView.mockReturnValue(undefined);
+      registerTools(
+        server,
+        { world, loop, scene, renderer, trackedEntities },
+        { enableMutations: true, enqueueMutation }
+      );
+      const handler = getToolHandler(server, "renderer:screenshot");
+
+      const result = await handler({});
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0]?.text).toMatch(/no canvas|not started|not available|headless/i);
+      // The view was probed (proves the headless branch was exercised)
+      expect(renderer.getView).toHaveBeenCalled();
+    });
+
     it("scene:getInfo returns current scene", async () => {
       scene.currentScene.mockReturnValue("menu");
       registerTools(
