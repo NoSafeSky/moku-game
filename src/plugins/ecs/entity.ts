@@ -67,6 +67,10 @@ export interface EntityTable {
   generationOf(entity: Entity): number;
   /** Reserve an index/generation without inserting into archetypes (for deferred spawn). */
   reserve(): Entity;
+  /** Snapshot array of every currently-live entity handle (introspection). */
+  liveEntities(): Entity[];
+  /** Count of currently-live entities (introspection — cheaper than liveEntities().length). */
+  liveCount(): number;
 }
 
 /**
@@ -90,6 +94,8 @@ export function createEntityTable(initialCapacity: number): EntityTable {
   const alive: boolean[] = Array.from({ length: initialCapacity }, () => false);
   const freeList: number[] = [];
   let nextIndex = 0;
+  // Live-entity counter, kept in sync by alloc/reserve (+1) and free (-1) so liveCount is O(1).
+  let liveCount = 0;
 
   /**
    * Grow the slot arrays to accommodate the given index if needed.
@@ -139,6 +145,7 @@ export function createEntityTable(initialCapacity: number): EntityTable {
     alloc(): Entity {
       const index = allocIndex();
       alive[index] = true;
+      liveCount++;
       return encodeEntity(index, generations[index]!);
     },
 
@@ -155,6 +162,7 @@ export function createEntityTable(initialCapacity: number): EntityTable {
       const index = allocIndex();
       // Mark alive so isAlive works immediately (deferred insertion handles archetype later)
       alive[index] = true;
+      liveCount++;
       return encodeEntity(index, generations[index]!);
     },
 
@@ -171,6 +179,7 @@ export function createEntityTable(initialCapacity: number): EntityTable {
       const index = indexOfEntity(entity);
       if (!alive[index]) return;
       alive[index] = false;
+      liveCount--;
       generations[index] = (generations[index]! + 1) & GEN_MASK;
       freeList.push(index);
     },
@@ -217,6 +226,39 @@ export function createEntityTable(initialCapacity: number): EntityTable {
      */
     generationOf(entity: Entity): number {
       return generationOfEntity(entity);
+    },
+
+    /**
+     * Return a snapshot array of every currently-live entity handle.
+     *
+     * Scans the slot table and encodes each live slot with its current generation.
+     * Order follows slot index; the array is a fresh copy.
+     *
+     * @returns An array of live entity handles.
+     * @example
+     * ```ts
+     * const entities = table.liveEntities();
+     * ```
+     */
+    liveEntities(): Entity[] {
+      const result: Entity[] = [];
+      for (const [index, isAliveSlot] of alive.entries()) {
+        if (isAliveSlot) result.push(encodeEntity(index, generations[index]!));
+      }
+      return result;
+    },
+
+    /**
+     * Return the count of currently-live entities (O(1) — maintained by alloc/reserve/free).
+     *
+     * @returns The number of live entities.
+     * @example
+     * ```ts
+     * const n = table.liveCount();
+     * ```
+     */
+    liveCount(): number {
+      return liveCount;
     }
   };
 }

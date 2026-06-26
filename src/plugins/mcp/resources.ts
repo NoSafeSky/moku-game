@@ -4,11 +4,11 @@
  * Registers the four read-only MCP resources that expose live runtime state to
  * agent clients as on-demand snapshots (no per-frame push / no subscriptions in v1).
  *
- * v1 limitations documented per resource:
- * - game://world/snapshot — reflects only MCP-spawned entities (no enumerate-all in ECS API).
- * - game://systems/list — reports stage names with system counts tracked externally (not per-stage).
+ * Cycle 4: game://world/snapshot now reports EVERY live entity with its named
+ * component values (via the ecs introspection facet). game://systems/list still
+ * reports stage names only (per-stage system counts are not tracked).
  */
-import type { Entity } from "../ecs/types";
+import type { World } from "../ecs/types";
 import type { Api as SceneApi } from "../scene/types";
 import type { Stage } from "../scheduler/types";
 import type { McpResourceResult, McpServerLike } from "./types";
@@ -26,10 +26,10 @@ export type ResourceDeps = {
   /** Scheduler API for stages list. */
   scheduler: { readonly stages: readonly Stage[] };
   /**
-   * MCP-tracked entity set.
-   * v1 limitation: only contains entities spawned via ecs:spawn MCP tool.
+   * World introspection (Cycle 4) — powers the live world snapshot. Replaces the
+   * MCP-spawned-only `trackedEntities` set so the snapshot covers EVERY live entity.
    */
-  trackedEntities: ReadonlySet<Entity>;
+  world: Pick<World, "liveEntities" | "componentsOf">;
   /** Returns the current frame stats snapshot. */
   getStats: () => { frame: number; lastDt: number; entityCount: number };
 };
@@ -51,7 +51,7 @@ const URI_SCENE_CURRENT = "game://scene/current";
  * Registers the read-only MCP resource catalog on the server.
  *
  * Four resources:
- * - `game://world/snapshot` — MCP-tracked entities (v1 limitation: not all world entities).
+ * - `game://world/snapshot` — every live entity with its named component values.
  * - `game://systems/list` — Stage names from the scheduler.
  * - `game://stats/frame` — Frame number, last delta, entity count.
  * - `game://scene/current` — Current scene name.
@@ -60,11 +60,11 @@ const URI_SCENE_CURRENT = "game://scene/current";
  * @param deps - Runtime plugin APIs and live state accessors.
  * @example
  * ```ts
- * registerResources(server, { scene, scheduler, trackedEntities, getStats });
+ * registerResources(server, { scene, scheduler, world, getStats });
  * ```
  */
 export const registerResources = (server: McpServerLike, deps: ResourceDeps): void => {
-  const { scene, scheduler, trackedEntities, getStats } = deps;
+  const { scene, scheduler, world, getStats } = deps;
 
   // ── game://world/snapshot ─────────────────────────────────────────────────
 
@@ -74,11 +74,14 @@ export const registerResources = (server: McpServerLike, deps: ResourceDeps): vo
     {
       title: "World snapshot",
       description:
-        "MCP-tracked entities and their ids. v1 limitation: reflects only entities spawned through MCP tools.",
+        "Every live entity with its named component values (Cycle 4 — full world, not just MCP-spawned).",
       mimeType: "application/json"
     },
     (_uri: URL): McpResourceResult => {
-      const entities = [...trackedEntities].map(entity => entity as number);
+      const entities = world.liveEntities().map(entity => ({
+        id: entity as number,
+        components: world.componentsOf(entity)
+      }));
       return {
         contents: [
           {

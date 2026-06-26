@@ -40,6 +40,25 @@ if (snap.isDown("ShiftLeft")) player.sprint(dt);     // every held frame
 const { x, y, buttons } = snap.pointer;              // buttons bitmask: 1 = left, 2 = right, 4 = middle
 ```
 
+### Injection — `keyDown` / `keyUp` / `keyPress`
+
+Programmatic input, so an agent or test can **play** the game without real DOM events. Each method mutates the same live edge-sets the DOM listeners do, so the next `"input"`-stage snapshot observes it exactly like a genuine key event. Used by the `mcp` plugin's `input:key` tool.
+
+| Method | Signature | Description |
+|---|---|---|
+| `keyDown` | `(key: string) => void` | Hold a key down (and flag `justPressed` if it was not already down) — mirrors a DOM `keydown`. |
+| `keyUp` | `(key: string) => void` | Release a held key and flag `justReleased` — mirrors a DOM `keyup`. |
+| `keyPress` | `(key: string) => void` | One-frame tap: flags `justPressed` **and** `justReleased` for the next snapshot without ever holding the key (ideal for discrete actions like jump/fire/confirm). |
+
+```ts
+app.input.keyDown("ArrowRight"); // start holding right
+app.loop.step();                 // the next snapshot reports isDown("ArrowRight") === true
+app.input.keyUp("ArrowRight");   // stop holding
+app.input.keyPress("Space");     // a single tap
+```
+
+Injection is applied **directly** (not through the ECS command buffer): the input edge-sets are designed to be written between frames, and the single reader (the input-stage system) snapshots them on the next tick. This matches real DOM-event semantics and keeps edge timing correct.
+
 ## Lifecycle
 
 The plugin owns real DOM listener resources, so both lifecycle hooks are used (both marked `@no-resource-check` — the managed resource is the listener set, not a handle returned from a factory).

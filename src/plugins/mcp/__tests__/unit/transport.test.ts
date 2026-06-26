@@ -264,16 +264,35 @@ describe("buildMcpHandle — http transport", () => {
     const serveOpts = bunServe.mock.calls[0]?.[0];
     expect(serveOpts?.port).toBe(3333);
     expect(serveOpts?.hostname).toBe("127.0.0.1");
-    expect(sdk.httpTransports).toHaveLength(1);
+    // Stateless: no transport is constructed at bind time — only per request.
+    expect(sdk.httpTransports).toHaveLength(0);
   });
 
-  it("close() stops the Bun server and closes the http transport", async () => {
+  it("creates a fresh transport per request — two sequential requests both succeed (issue #2 regression)", async () => {
+    await buildMcpHandle(makeOpts(makeConfig({ transports: ["http"] })));
+    if (!capturedFetch) throw new Error("fetch handler was not captured");
+
+    const r1 = await capturedFetch(new Request("http://127.0.0.1:3333/mcp"));
+    const r2 = await capturedFetch(new Request("http://127.0.0.1:3333/mcp"));
+
+    // Distinct transport per request (regression for the SDK's "Stateless transport
+    // cannot be reused across requests." throw on the 2nd request). Each handled once
+    // and was closed.
+    expect(sdk.httpTransports).toHaveLength(2);
+    expect(sdk.httpTransports[0]?.handleRequest).toHaveBeenCalledOnce();
+    expect(sdk.httpTransports[1]?.handleRequest).toHaveBeenCalledOnce();
+    expect(sdk.httpTransports[0]?.close).toHaveBeenCalledOnce();
+    expect(sdk.httpTransports[1]?.close).toHaveBeenCalledOnce();
+    expect(r1.status).toBe(200);
+    expect(r2.status).toBe(200);
+  });
+
+  it("close() stops the Bun server", async () => {
     const handle = await buildMcpHandle(makeOpts(makeConfig({ transports: ["http"] })));
 
     await handle.close();
 
     expect(bunStop).toHaveBeenCalledWith(true);
-    expect(sdk.httpTransports[0]?.close).toHaveBeenCalledOnce();
   });
 
   it("throws a helpful error and closes the server when Bun.serve is unavailable", async () => {
@@ -299,7 +318,8 @@ describe("buildMcpHandle — http bearer auth", () => {
     const response = await handler(new Request("http://127.0.0.1:3333/mcp"));
 
     expect(response.status).toBe(401);
-    expect(sdk.httpTransports[0]?.handleRequest).not.toHaveBeenCalled();
+    // Rejected before any transport/server is built for the request.
+    expect(sdk.httpTransports).toHaveLength(0);
   });
 
   it("rejects a request with a wrong same-length token (401)", async () => {

@@ -124,6 +124,17 @@ const makeTrackingWorld = (world: World, owned: Set<Entity>): World => ({
   addSystem: (stage, system) => world.addSystem(stage, system),
   // eslint-disable-next-line jsdoc/require-jsdoc -- delegation property
   tick: dt => world.tick(dt),
+  // NEW (Cycle 4) — introspection delegations: forward the read-only facet so a
+  // tracked scene `setup` (and any tooling reading the world during setup) sees the
+  // whole live world, not a partial wrapper.
+  // eslint-disable-next-line jsdoc/require-jsdoc -- delegation property
+  liveEntities: () => world.liveEntities(),
+  // eslint-disable-next-line jsdoc/require-jsdoc -- delegation property
+  entityCount: () => world.entityCount(),
+  // eslint-disable-next-line jsdoc/require-jsdoc -- delegation property
+  componentNames: () => world.componentNames(),
+  // eslint-disable-next-line jsdoc/require-jsdoc -- delegation property
+  componentsOf: entity => world.componentsOf(entity),
   // NEW (Cycle 2) — resource delegations: forward the six world-resource methods
   // straight through so the tracked wrapper remains a complete `World` and a scene
   // `setup` can read/write resources (e.g. `world.resource(app.context.assets)`).

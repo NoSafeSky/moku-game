@@ -1,8 +1,16 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 
+import type { World } from "../../../scheduler/types";
 import { createApi } from "../../api";
+import { createInputSystem } from "../../lifecycle";
 import { createState } from "../../state";
 import type { Config, InputContext, InputSnapshot } from "../../types";
+
+/** A throwaway world handle — the input-stage system never reads it. */
+const stubWorld = {} as unknown as World;
+
+/** Roll one input-stage tick so api.snapshot() reflects injected state. */
+const rollFrame = (ctx: InputContext) => createInputSystem(ctx.state)(stubWorld, 0);
 
 // ─── helpers ──────────────────────────────────────────────────
 
@@ -70,12 +78,90 @@ describe("createApi", () => {
     });
   });
 
+  describe("injection", () => {
+    it("keyDown marks the key held + just-pressed in the next snapshot", () => {
+      const ctx = makeCtx();
+      const api = createApi(ctx);
+
+      api.keyDown("ArrowRight");
+      rollFrame(ctx);
+
+      const snap = api.snapshot();
+      expect(snap.isDown("ArrowRight")).toBe(true);
+      expect(snap.justPressed("ArrowRight")).toBe(true);
+    });
+
+    it("keyDown stays held but justPressed clears on the following frame", () => {
+      const ctx = makeCtx();
+      const api = createApi(ctx);
+
+      api.keyDown("ArrowRight");
+      rollFrame(ctx); // press frame
+      rollFrame(ctx); // next frame — no new input injected
+
+      const snap = api.snapshot();
+      expect(snap.isDown("ArrowRight")).toBe(true);
+      expect(snap.justPressed("ArrowRight")).toBe(false);
+    });
+
+    it("repeated keyDown does not re-flag justPressed while already held", () => {
+      const ctx = makeCtx();
+      const api = createApi(ctx);
+
+      api.keyDown("Space");
+      api.keyDown("Space"); // repeat (e.g. OS key-repeat) — no new edge
+      expect(ctx.state.pressed.size).toBe(1);
+    });
+
+    it("keyUp releases the key + flags just-released in the next snapshot", () => {
+      const ctx = makeCtx();
+      const api = createApi(ctx);
+
+      api.keyDown("ArrowRight");
+      rollFrame(ctx);
+      api.keyUp("ArrowRight");
+      rollFrame(ctx);
+
+      const snap = api.snapshot();
+      expect(snap.isDown("ArrowRight")).toBe(false);
+      expect(snap.justReleased("ArrowRight")).toBe(true);
+    });
+
+    it("keyPress is a one-frame tap (justPressed && justReleased, never stuck down)", () => {
+      const ctx = makeCtx();
+      const api = createApi(ctx);
+
+      api.keyPress("Space");
+      rollFrame(ctx);
+
+      const snap = api.snapshot();
+      expect(snap.justPressed("Space")).toBe(true);
+      expect(snap.justReleased("Space")).toBe(true);
+      expect(snap.isDown("Space")).toBe(false);
+
+      // The tap does not persist into the following frame.
+      rollFrame(ctx);
+      const next = api.snapshot();
+      expect(next.justPressed("Space")).toBe(false);
+      expect(next.isDown("Space")).toBe(false);
+    });
+  });
+
   describe("types", () => {
     it("snapshot() returns InputSnapshot", () => {
       const ctx = makeCtx();
       const api = createApi(ctx);
 
       expectTypeOf(api.snapshot).toMatchTypeOf<() => InputSnapshot>();
+    });
+
+    it("injection methods take a key string and return void", () => {
+      const ctx = makeCtx();
+      const api = createApi(ctx);
+
+      expectTypeOf(api.keyDown).toEqualTypeOf<(key: string) => void>();
+      expectTypeOf(api.keyUp).toEqualTypeOf<(key: string) => void>();
+      expectTypeOf(api.keyPress).toEqualTypeOf<(key: string) => void>();
     });
 
     it("pointer fields are readonly", () => {

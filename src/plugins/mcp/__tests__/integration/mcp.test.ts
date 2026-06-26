@@ -192,7 +192,7 @@ describe("mcp plugin integration", () => {
   // ── Tool catalog ───────────────────────────────────────────────────────────
 
   describe("tool catalog", () => {
-    it("toolNames() returns all 12 tools with default config", async () => {
+    it("toolNames() returns all 14 tools with default config", async () => {
       const app = createTestApp();
       await app.start();
 
@@ -202,6 +202,8 @@ describe("mcp plugin integration", () => {
       expect(names).toContain("ecs:setComponent");
       expect(names).toContain("ecs:removeComponent");
       expect(names).toContain("ecs:query");
+      expect(names).toContain("input:key");
+      expect(names).toContain("renderer:tree");
       expect(names).toContain("loop:step");
       expect(names).toContain("loop:pause");
       expect(names).toContain("loop:resume");
@@ -209,6 +211,7 @@ describe("mcp plugin integration", () => {
       expect(names).toContain("scene:load");
       expect(names).toContain("scene:getInfo");
       expect(names).toContain("game:reset");
+      expect(names).toHaveLength(14);
 
       await app.stop();
     });

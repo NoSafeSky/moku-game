@@ -13,7 +13,96 @@ import type { Container } from "pixi.js";
 import type { ecsPlugin } from "../ecs";
 import type { Component, Entity, World } from "../ecs/types";
 import type { schedulerPlugin } from "../scheduler";
-import type { Api, Config, State, TransformValue } from "./types";
+import type { Api, Config, SceneNode, State, TransformValue } from "./types";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scene-graph walk (Pixi → plain SceneNode data — keeps Pixi types out of the result)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Depth cap for the scene-graph walk, guarding against pathological trees. */
+const MAX_TREE_DEPTH = 64;
+
+/**
+ * Structural view of a Pixi display object — only the fields {@link buildSceneNode}
+ * reads. Using a structural type (rather than Pixi's `Container`) keeps the walk
+ * decoupled from Pixi's class hierarchy; the caller projects `app.stage` to it.
+ */
+type DisplayNodeLike = {
+  /** User-set node name ("" when unset). */
+  label?: string;
+  /** Local position. */
+  position: { x: number; y: number };
+  /** Rotation in radians. */
+  rotation: number;
+  /** Local scale. */
+  scale: { x: number; y: number };
+  /** Visibility flag. */
+  visible: boolean;
+  /** Alpha (0–1). */
+  alpha: number;
+  /** Computed bounds width. */
+  width: number;
+  /** Computed bounds height. */
+  height: number;
+  /** Child display objects. */
+  children: readonly DisplayNodeLike[];
+  /** Present (string) on Pixi `Text` nodes. */
+  text?: unknown;
+  /** Present on Pixi `Sprite` nodes. */
+  texture?: unknown;
+};
+
+/**
+ * Classify a display object by duck-typing the fields Pixi subclasses add.
+ *
+ * @param node - The display object to classify.
+ * @returns "Text" when it carries string `text`, "Sprite" when it has a `texture`, else "Container".
+ * @example
+ * ```ts
+ * nodeType(stage); // "Container"
+ * ```
+ */
+const nodeType = (node: DisplayNodeLike): string => {
+  if (typeof node.text === "string") return "Text";
+  if (node.texture !== undefined) return "Sprite";
+  return "Container";
+};
+
+/**
+ * Recursively project a Pixi display object into a plain {@link SceneNode}.
+ *
+ * @param node - The display object to serialise (structural projection of a Pixi Container).
+ * @param depth - Current recursion depth; children are dropped past {@link MAX_TREE_DEPTH}.
+ * @returns A JSON-serialisable scene node.
+ * @example
+ * ```ts
+ * const tree = buildSceneNode(stage, 0);
+ * ```
+ */
+const buildSceneNode = (node: DisplayNodeLike, depth: number): SceneNode => {
+  const type = nodeType(node);
+
+  const result: SceneNode = {
+    label: node.label ?? "",
+    type,
+    x: node.position.x,
+    y: node.position.y,
+    rotation: node.rotation,
+    scaleX: node.scale.x,
+    scaleY: node.scale.y,
+    visible: node.visible,
+    alpha: node.alpha,
+    width: node.width,
+    height: node.height,
+    children:
+      depth >= MAX_TREE_DEPTH ? [] : node.children.map(child => buildSceneNode(child, depth + 1))
+  };
+
+  // Only Text nodes carry a text string — set it conditionally (exactOptionalPropertyTypes).
+  if (type === "Text") result.text = String(node.text);
+
+  return result;
+};
 
 /**
  * Structural context type required by createApi.
@@ -192,6 +281,40 @@ export const createApi = (ctx: RendererContext): Api => {
      */
     markDirty(entity: Entity): void {
       ctx.state.dirty.add(entity);
+    },
+
+    /**
+     * Capture the current frame as a PNG data URL via Pixi's `extract` system.
+     *
+     * Re-renders the stage into an extract target, so the capture is reliable
+     * regardless of frame timing. Resolves to undefined when headless / before start.
+     *
+     * @returns A Promise resolving to a `data:image/png;base64,...` URL, or undefined.
+     * @example
+     * ```ts
+     * const dataUrl = await api.screenshot();
+     * ```
+     */
+    async screenshot(): Promise<string | undefined> {
+      const app = ctx.state.app;
+      if (!app) return undefined;
+      return app.renderer.extract.base64(app.stage);
+    },
+
+    /**
+     * Return a JSON-serialisable snapshot of the Pixi scene graph, or undefined
+     * when headless / before start.
+     *
+     * @returns The root SceneNode (positions, labels, text, children), or undefined.
+     * @example
+     * ```ts
+     * const tree = api.tree();
+     * ```
+     */
+    tree(): SceneNode | undefined {
+      const app = ctx.state.app;
+      if (!app) return undefined;
+      return buildSceneNode(app.stage as unknown as DisplayNodeLike, 0);
     }
   };
 };

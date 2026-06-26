@@ -20,6 +20,8 @@ Register a named scene. `definition` is a `SceneDefinition` (`setup` + optional 
 app.scene.define("menu", { setup: (world) => { world.spawn(); } });
 ```
 
+> **Define scenes at startup for agent control.** `scene:load` (and the `mcp` plugin's `scene:load` tool) can only load scenes that have already been `define`d. If a consumer gates `define`/`load` behind a DOM menu (e.g. only defining a level once a button is clicked), an MCP agent driving the page through the in-page bridge cannot start a match. **Define your scenes at boot** (and load an initial one if appropriate); keep DOM affordances as *triggers* for already-defined scenes, not as the place definition happens.
+
 ### `load(name): Promise<void>`
 
 Load a previously-defined scene. Throws an `Error` if `name` was never `define`d. The ordered steps are:

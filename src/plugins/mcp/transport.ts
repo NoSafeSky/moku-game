@@ -142,18 +142,34 @@ export const buildMcpHandle = async (opts: BuildHandleOptions): Promise<McpHandl
     warn
   } = opts;
 
-  // Build the McpServer (SDK class; stays inside this file)
-  const server = new McpServer({ name: FRAMEWORK_NAME, version: FRAMEWORK_VERSION });
+  /**
+   * Build a fresh McpServer with the full tool + resource catalog registered.
+   *
+   * Used for the long-lived stdio / inMemory server AND per request in the
+   * stateless HTTP path (the Streamable HTTP transport is single-use). The
+   * registrars close over the shared world/queue, so every server routes
+   * mutations to the same runtime.
+   *
+   * @returns A newly constructed, fully-registered McpServer.
+   * @example
+   * ```ts
+   * const server = buildServer(); // tools + resources registered
+   * ```
+   */
+  const buildServer = (): McpServer => {
+    const built = new McpServer({ name: FRAMEWORK_NAME, version: FRAMEWORK_VERSION });
+    // Cast via the structural interface — tools/resources never see McpServer directly.
+    const builtLike = built as unknown as McpServerLike;
+    registerAllTools(builtLike);
+    registerAllResources(builtLike);
+    return built;
+  };
 
-  // Cast via the structural interface — tools/resources never see McpServer directly
-  const serverLike = server as unknown as McpServerLike;
+  // The long-lived server backing stdio / inMemory; also the source of toolNames.
+  const server = buildServer();
 
-  // Register all tools and resources via structural interface
-  registerAllTools(serverLike);
-  registerAllResources(serverLike);
-
-  // Collect tool names now (before connect — list is stable after registration)
-  const toolNames = extractToolNames(serverLike);
+  // Collect tool names now (list is stable after registration).
+  const toolNames = extractToolNames(server as unknown as McpServerLike);
 
   // ── Connect configured transports (half-open-safe: on any error, close all opened) ──
 
@@ -190,7 +206,9 @@ export const buildMcpHandle = async (opts: BuildHandleOptions): Promise<McpHandl
     }
 
     if (config.transports.includes("http")) {
-      const { connectHttp, closeHttp } = await startHttpServer(server, config);
+      // Pass the factory (not the long-lived server) — HTTP builds a fresh
+      // server + transport per request (stateless-correct; see startHttpServer).
+      const { connectHttp, closeHttp } = await startHttpServer(buildServer, config);
       httpEndpoint = connectHttp;
       closers.push(closeHttp);
     }
@@ -323,31 +341,24 @@ type GlobalWithBun = {
 };
 
 /**
- * Starts a Bun HTTP server wrapping the Streamable HTTP MCP transport.
- * Returns the endpoint URL and a closer function.
+ * Starts a Bun HTTP server that builds a fresh MCP server + Streamable HTTP
+ * transport per request (stateless-correct). Returns the endpoint URL and a closer.
  *
- * @param server - The McpServer to connect the HTTP transport to.
+ * @param buildServer - Factory that constructs a fully-registered McpServer per request.
  * @param config - Resolved mcp plugin configuration (host, port, auth).
  * @returns The HTTP endpoint URL string and a close function.
  * @example
  * ```ts
- * const { connectHttp, closeHttp } = await startHttpServer(server, config);
+ * const { connectHttp, closeHttp } = await startHttpServer(buildServer, config);
  * ```
  */
 const startHttpServer = async (
-  server: McpServer,
+  buildServer: () => McpServer,
   config: Readonly<Config>
 ): Promise<{ connectHttp: string; closeHttp: () => Promise<void> }> => {
   const { WebStandardStreamableHTTPServerTransport } = await import(
     "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js"
   );
-
-  // Omit sessionIdGenerator to let SDK use its default (avoids exactOptionalPropertyTypes violation)
-  const httpTransport = new WebStandardStreamableHTTPServerTransport({
-    enableJsonResponse: true
-  });
-
-  await server.connect(httpTransport);
 
   const bunGlobal = globalThis as GlobalWithBun;
 
@@ -359,12 +370,41 @@ const startHttpServer = async (
 
   const bearerToken = config.httpAuth === "bearer" ? config.bearerToken : undefined;
 
+  /**
+   * Handle one HTTP request with a FRESH server + transport, then dispose both.
+   *
+   * The SDK's Streamable HTTP transport is stateless and single-use — reusing one
+   * across requests throws "Stateless transport cannot be reused across requests."
+   * So each request gets its own transport (and a fresh McpServer from `buildServer`,
+   * whose tool closures still target the shared world/queue). With
+   * `enableJsonResponse`, `handleRequest` returns a fully-buffered Response, so
+   * closing the transport/server afterwards is safe.
+   *
+   * @param request - The incoming HTTP Request.
+   * @returns A Promise resolving to the HTTP Response.
+   * @example
+   * ```ts
+   * const response = await handleOneRequest(request);
+   * ```
+   */
+  const handleOneRequest = async (request: Request): Promise<Response> => {
+    const perRequestServer = buildServer();
+    // Omit sessionIdGenerator to let the SDK use its stateless default.
+    const transport = new WebStandardStreamableHTTPServerTransport({ enableJsonResponse: true });
+    await perRequestServer.connect(transport);
+    try {
+      return await transport.handleRequest(request);
+    } finally {
+      await transport.close();
+      await perRequestServer.close();
+    }
+  };
+
   const bunServer = bunGlobal.Bun.serve({
     port: config.httpPort,
     hostname: config.httpHost,
     /**
-     * Handles an incoming HTTP request, applying optional bearer auth before
-     * delegating to the Streamable HTTP MCP transport.
+     * Applies optional bearer auth, then delegates to a fresh per-request transport.
      *
      * @param request - The incoming HTTP Request object.
      * @returns A Promise resolving to the HTTP Response.
@@ -381,14 +421,15 @@ const startHttpServer = async (
           return new Response("Unauthorized", { status: 401 });
         }
       }
-      return httpTransport.handleRequest(request);
+      return handleOneRequest(request);
     }
   });
 
   const endpoint = `http://${config.httpHost}:${config.httpPort}${MCP_PATH}`;
 
   /**
-   * Stops the Bun HTTP server.
+   * Stops the Bun HTTP server. Per-request transports are already closed in
+   * {@link handleOneRequest}, so there is no long-lived transport to tear down.
    *
    * @returns A Promise that resolves when the server is stopped.
    * @example
@@ -398,7 +439,6 @@ const startHttpServer = async (
    */
   const closeHttp = async (): Promise<void> => {
     bunServer.stop(true);
-    await httpTransport.close();
   };
 
   return { connectHttp: endpoint, closeHttp };

@@ -56,13 +56,17 @@ export type Query<Values extends readonly object[]> = {
 
 /** The ECS world facade (also the plugin API). */
 export type World = {
-  /** Define a component with a default-value factory. */
+  /**
+   * Define a component with a default-value factory. Pass `opts.name` to make the
+   * component discoverable by name through the introspection facet (`componentNames`,
+   * `componentsOf`) — used by tooling such as the mcp plugin.
+   */
   defineComponent<T extends object>(
     create: () => T,
-    opts?: { storage?: StorageStrategy }
+    opts?: { storage?: StorageStrategy; name?: string }
   ): Component<T>;
-  /** Define a presence-only tag. */
-  defineTag(opts?: { storage?: StorageStrategy }): Tag;
+  /** Define a presence-only tag. Pass `opts.name` to make it introspectable by name. */
+  defineTag(opts?: { storage?: StorageStrategy; name?: string }): Tag;
   /** Create an entity with the given component values. */
   spawn(...parts: ComponentInit[]): Entity;
   /** Destroy an entity and recycle its index (generation bumped). */
@@ -155,6 +159,58 @@ export type World = {
   addSystem(stage: Stage, system: System): () => void;
   /** Advance one frame: run stages in order, flushing the command buffer between them. */
   tick(dt: number): void;
+
+  // ── Introspection (read-only — for tooling such as the mcp plugin) ──────────
+
+  /**
+   * Return a snapshot array of every currently-live entity handle.
+   *
+   * Order is unspecified. The array is a fresh copy — mutating it does not affect the world.
+   * Includes entities with no components (bare `spawn()`).
+   *
+   * @returns A read-only array of live entity handles.
+   * @example
+   * ```ts
+   * for (const entity of world.liveEntities()) console.log(world.componentsOf(entity));
+   * ```
+   */
+  liveEntities(): readonly Entity[];
+
+  /**
+   * Return the number of currently-live entities (direct count — cheaper than `liveEntities().length`).
+   *
+   * @returns The count of live entities.
+   * @example
+   * ```ts
+   * const n = world.entityCount(); // e.g. 42
+   * ```
+   */
+  entityCount(): number;
+
+  /**
+   * Return the names of all components defined with an `opts.name` (registration order).
+   * Anonymous components are not listed.
+   *
+   * @returns A read-only array of registered component names.
+   * @example
+   * ```ts
+   * world.componentNames(); // ["Transform", "Velocity", "Paddle"]
+   * ```
+   */
+  componentNames(): readonly string[];
+
+  /**
+   * Return the **named** components currently on an entity, paired with their live values.
+   * Anonymous (unnamed) components are omitted; a dead or unknown entity yields `[]`.
+   *
+   * @param entity - The entity to inspect.
+   * @returns A read-only array of `{ name, value }` for each named component the entity has.
+   * @example
+   * ```ts
+   * world.componentsOf(ball); // [{ name: "Transform", value: { x: 10, y: 5, ... } }]
+   * ```
+   */
+  componentsOf(entity: Entity): ReadonlyArray<{ name: string; value: unknown }>;
 
   // ── Resources (typed singletons) ──────────────────────────────────────────
 

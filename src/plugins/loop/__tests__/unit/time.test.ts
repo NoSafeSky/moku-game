@@ -106,7 +106,12 @@ const makeMockWorld = (): MockWorld => {
     set: vi.fn() as unknown as World["set"],
     query: vi.fn() as unknown as World["query"],
     addSystem: vi.fn() as unknown as World["addSystem"],
-    tick: vi.fn() as unknown as World["tick"]
+    tick: vi.fn() as unknown as World["tick"],
+    // introspection facet (Cycle 4) — unused here but required for structural typing as World
+    liveEntities: vi.fn() as unknown as World["liveEntities"],
+    entityCount: vi.fn() as unknown as World["entityCount"],
+    componentNames: vi.fn() as unknown as World["componentNames"],
+    componentsOf: vi.fn() as unknown as World["componentsOf"]
   };
 
   return mockWorld;

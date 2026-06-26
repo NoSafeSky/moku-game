@@ -48,6 +48,12 @@ const createFakeScheduler = () => ({
   tick: vi.fn()
 });
 
+// World introspection fake (Cycle 4 — world/snapshot reads liveEntities + componentsOf).
+const createFakeWorld = () => ({
+  liveEntities: vi.fn((): readonly Entity[] => []),
+  componentsOf: vi.fn((_entity: Entity): ReadonlyArray<{ name: string; value: unknown }> => [])
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -68,14 +74,14 @@ describe("registerResources", () => {
   let server: ReturnType<typeof createFakeServer>;
   let scene: ReturnType<typeof createFakeScene>;
   let scheduler: ReturnType<typeof createFakeScheduler>;
-  let trackedEntities: Set<Entity>;
+  let world: ReturnType<typeof createFakeWorld>;
   let getStats: () => { frame: number; lastDt: number; entityCount: number };
 
   beforeEach(() => {
     server = createFakeServer();
     scene = createFakeScene();
     scheduler = createFakeScheduler();
-    trackedEntities = new Set();
+    world = createFakeWorld();
     getStats = () => ({ frame: 0, lastDt: 0, entityCount: 0 });
   });
 
@@ -83,7 +89,7 @@ describe("registerResources", () => {
 
   describe("catalog", () => {
     it("registers all 4 resources", () => {
-      registerResources(server, { scene, scheduler, trackedEntities, getStats });
+      registerResources(server, { scene, scheduler, world, getStats });
       expect(server.resources).toHaveLength(4);
       const uris = server.resources.map(r => r.uri);
       expect(uris).toContain("game://world/snapshot");
@@ -98,7 +104,7 @@ describe("registerResources", () => {
   describe("game://stats/frame", () => {
     it("returns frame stats as JSON text", async () => {
       getStats = () => ({ frame: 42, lastDt: 0.016, entityCount: 5 });
-      registerResources(server, { scene, scheduler, trackedEntities, getStats });
+      registerResources(server, { scene, scheduler, world, getStats });
       const callback = getResourceCallback(server, "stats:frame");
       const result = await callback(fakeUrl("game://stats/frame"));
       expect(result.contents[0]?.text).toContain("42");
@@ -112,7 +118,7 @@ describe("registerResources", () => {
   describe("game://scene/current", () => {
     it("returns current scene name when loaded", async () => {
       scene.currentScene.mockReturnValue("level1");
-      registerResources(server, { scene, scheduler, trackedEntities, getStats });
+      registerResources(server, { scene, scheduler, world, getStats });
       const callback = getResourceCallback(server, "scene:current");
       const result = await callback(fakeUrl("game://scene/current"));
       expect(result.contents[0]?.text).toContain("level1");
@@ -120,7 +126,7 @@ describe("registerResources", () => {
 
     it("returns null/undefined indicator when no scene loaded", async () => {
       scene.currentScene.mockReturnValue(undefined);
-      registerResources(server, { scene, scheduler, trackedEntities, getStats });
+      registerResources(server, { scene, scheduler, world, getStats });
       const callback = getResourceCallback(server, "scene:current");
       const result = await callback(fakeUrl("game://scene/current"));
       expect(result.contents[0]?.text).toBeDefined();
@@ -131,7 +137,7 @@ describe("registerResources", () => {
 
   describe("game://systems/list", () => {
     it("returns stage list from scheduler", async () => {
-      registerResources(server, { scene, scheduler, trackedEntities, getStats });
+      registerResources(server, { scene, scheduler, world, getStats });
       const callback = getResourceCallback(server, "systems:list");
       const result = await callback(fakeUrl("game://systems/list"));
       expect(result.contents[0]?.text).toContain("input");
@@ -142,21 +148,31 @@ describe("registerResources", () => {
   // ── game://world/snapshot ─────────────────────────────────────────────────
 
   describe("game://world/snapshot", () => {
-    it("returns tracked entity ids as JSON", async () => {
-      trackedEntities.add(10 as unknown as Entity);
-      trackedEntities.add(20 as unknown as Entity);
-      registerResources(server, { scene, scheduler, trackedEntities, getStats });
+    it("returns every live entity with its named component values", async () => {
+      world.liveEntities.mockReturnValue([10, 20] as unknown as Entity[]);
+      world.componentsOf.mockImplementation((entity: Entity) =>
+        (entity as unknown as number) === 10 ? [{ name: "Transform", value: { x: 1, y: 2 } }] : []
+      );
+      registerResources(server, { scene, scheduler, world, getStats });
       const callback = getResourceCallback(server, "world:snapshot");
       const result = await callback(fakeUrl("game://world/snapshot"));
-      expect(result.contents[0]?.text).toContain("10");
-      expect(result.contents[0]?.text).toContain("20");
+      const parsed = JSON.parse(result.contents[0]?.text ?? "{}") as {
+        entities: Array<{ id: number; components: Array<{ name: string; value: unknown }> }>;
+        count: number;
+      };
+      expect(parsed.count).toBe(2);
+      expect(parsed.entities.map(e => e.id)).toEqual(expect.arrayContaining([10, 20]));
+      expect(parsed.entities.find(e => e.id === 10)?.components).toEqual([
+        { name: "Transform", value: { x: 1, y: 2 } }
+      ]);
     });
 
-    it("returns empty list when no tracked entities", async () => {
-      registerResources(server, { scene, scheduler, trackedEntities, getStats });
+    it("returns an empty list when the world has no entities", async () => {
+      registerResources(server, { scene, scheduler, world, getStats });
       const callback = getResourceCallback(server, "world:snapshot");
       const result = await callback(fakeUrl("game://world/snapshot"));
-      expect(result.contents[0]?.text).toBeDefined();
+      const parsed = JSON.parse(result.contents[0]?.text ?? "{}") as { count: number };
+      expect(parsed.count).toBe(0);
     });
   });
 });

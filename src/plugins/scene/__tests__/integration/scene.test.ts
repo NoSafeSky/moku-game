@@ -183,6 +183,43 @@ describe("scene plugin integration", () => {
 
       await app.stop();
     });
+
+    it("the tracked setup world delegates the Cycle 4 introspection facet to the real world", async () => {
+      const app = createTestApp();
+      await app.start();
+
+      let snapshot:
+        | {
+            count: number;
+            names: readonly string[];
+            comps: ReadonlyArray<{ name: string; value: unknown }>;
+            listed: boolean;
+          }
+        | undefined;
+
+      app.scene.define("level", {
+        setup: world => {
+          const Health = world.defineComponent(() => ({ hp: 100 }), { name: "Health" });
+          const entity = world.spawn(Health({ hp: 75 }));
+          snapshot = {
+            count: world.entityCount(),
+            names: world.componentNames(),
+            comps: world.componentsOf(entity),
+            listed: world.liveEntities().includes(entity)
+          };
+        }
+      });
+
+      await app.scene.load("level");
+
+      // Each introspection call on the wrapper reached the real world.
+      expect(snapshot?.count).toBeGreaterThanOrEqual(1);
+      expect(snapshot?.names).toContain("Health");
+      expect(snapshot?.comps).toEqual([{ name: "Health", value: { hp: 75 } }]);
+      expect(snapshot?.listed).toBe(true);
+
+      await app.stop();
+    });
   });
 
   // ──────────────────────────────────────────────────────────────────────────

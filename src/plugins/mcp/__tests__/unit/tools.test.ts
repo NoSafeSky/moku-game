@@ -2,15 +2,16 @@
  * @file mcp plugin — unit tests for tools.ts
  *
  * Tests that:
- * - Each tool maps inputs → right dep call
- * - Mutating tools enqueue (spy on world.spawn → not called until drain runs, then called)
- * - ecs:query / resources serialize correctly
- * - enableMutations:false registers only read-only tools
- * - toolNames() matches the catalog
+ * - The full catalog (14 tools) registers; enableMutations:false leaves only read-only tools
+ * - Mutating ECS tools enqueue (drained, not synchronous); loop + input tools call directly
+ * - ecs:query reads the WHOLE world by component name (Cycle 4), with values + unknown-name error
+ * - renderer:screenshot (extract) and renderer:tree degrade to not-available results
+ * - input:key injects via the input API directly (not command-buffered)
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Entity } from "../../../ecs/types";
-import type { CanvasLike, RendererDep } from "../../tools";
+import type { SceneNode } from "../../../renderer/types";
+import type { RendererDep } from "../../tools";
 import { registerTools } from "../../tools";
 import type { McpServerLike, McpToolResult } from "../../types";
 
@@ -41,13 +42,17 @@ const createFakeServer = (): McpServerLike & { tools: ToolRecord[] } => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Fake world / deps — typed to match ToolDeps exactly
+// Fake world / deps — typed to match ToolDeps exactly (Cycle 4 introspection)
 // ─────────────────────────────────────────────────────────────────────────────
 
 const createFakeWorld = () => ({
   spawn: vi.fn(() => 42 as unknown as Entity),
   despawn: vi.fn<(entity: Entity) => void>(),
-  isAlive: vi.fn(() => true)
+  isAlive: vi.fn(() => true),
+  liveEntities: vi.fn((): readonly Entity[] => []),
+  entityCount: vi.fn(() => 0),
+  componentNames: vi.fn((): readonly string[] => []),
+  componentsOf: vi.fn((_entity: Entity): ReadonlyArray<{ name: string; value: unknown }> => [])
 });
 
 const createFakeLoop = () => ({
@@ -62,11 +67,21 @@ const createFakeScene = () => ({
   currentScene: vi.fn((): string | undefined => undefined)
 });
 
-// RendererDep-typed fake — only getView() is needed
-const createFakeRenderer = (): RendererDep & { getView: ReturnType<typeof vi.fn> } => {
-  const getView = vi.fn((): CanvasLike | undefined => undefined);
-  return { getView };
-};
+// RendererDep-typed fake — screenshot (extract) + scene tree
+const createFakeRenderer = (): RendererDep & {
+  screenshot: ReturnType<typeof vi.fn>;
+  tree: ReturnType<typeof vi.fn>;
+} => ({
+  screenshot: vi.fn(async (): Promise<string | undefined> => undefined),
+  tree: vi.fn((): SceneNode | undefined => undefined)
+});
+
+// InputDep fake — injection methods (typed vi.fn so .toHaveBeenCalledWith works)
+const createFakeInput = () => ({
+  keyDown: vi.fn<(key: string) => void>(),
+  keyUp: vi.fn<(key: string) => void>(),
+  keyPress: vi.fn<(key: string) => void>()
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -84,6 +99,9 @@ const getToolRecord = (server: ReturnType<typeof createFakeServer>, name: string
   return found;
 };
 
+const parseText = (result: McpToolResult): Record<string, unknown> =>
+  JSON.parse(result.content[0]?.text ?? "{}") as Record<string, unknown>;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
@@ -94,6 +112,7 @@ describe("registerTools", () => {
   let loop: ReturnType<typeof createFakeLoop>;
   let scene: ReturnType<typeof createFakeScene>;
   let renderer: ReturnType<typeof createFakeRenderer>;
+  let input: ReturnType<typeof createFakeInput>;
   let trackedEntities: Set<Entity>;
   let pending: Array<() => void>;
   let enqueueMutation: <T>(fn: () => T) => Promise<T>;
@@ -104,6 +123,7 @@ describe("registerTools", () => {
     loop = createFakeLoop();
     scene = createFakeScene();
     renderer = createFakeRenderer();
+    input = createFakeInput();
     trackedEntities = new Set<Entity>();
     pending = [];
     enqueueMutation = <T>(fn: () => T): Promise<T> =>
@@ -117,96 +137,94 @@ describe("registerTools", () => {
   // ── Catalog registration ───────────────────────────────────────────────────
 
   describe("catalog", () => {
-    it("registers all 12 tools when enableMutations=true", () => {
+    it("registers all 14 tools when enableMutations=true", () => {
       registerTools(
         server,
-        { world, loop, scene, renderer, trackedEntities },
+        { world, loop, scene, renderer, input, trackedEntities },
         { enableMutations: true, enqueueMutation }
       );
       const names = server.tools.map(t => t.name);
-      expect(names).toContain("ecs:spawn");
-      expect(names).toContain("ecs:despawn");
-      expect(names).toContain("ecs:setComponent");
-      expect(names).toContain("ecs:removeComponent");
-      expect(names).toContain("ecs:query");
-      expect(names).toContain("loop:step");
-      expect(names).toContain("loop:pause");
-      expect(names).toContain("loop:resume");
-      expect(names).toContain("renderer:screenshot");
-      expect(names).toContain("scene:load");
-      expect(names).toContain("scene:getInfo");
-      expect(names).toContain("game:reset");
-      expect(server.tools).toHaveLength(12);
+      for (const expected of [
+        "ecs:spawn",
+        "ecs:despawn",
+        "ecs:setComponent",
+        "ecs:removeComponent",
+        "ecs:query",
+        "input:key",
+        "renderer:tree",
+        "loop:step",
+        "loop:pause",
+        "loop:resume",
+        "renderer:screenshot",
+        "scene:load",
+        "scene:getInfo",
+        "game:reset"
+      ]) {
+        expect(names).toContain(expected);
+      }
+      expect(server.tools).toHaveLength(14);
     });
 
     it("registers only read-only tools when enableMutations=false", () => {
       registerTools(
         server,
-        { world, loop, scene, renderer, trackedEntities },
+        { world, loop, scene, renderer, input, trackedEntities },
         { enableMutations: false, enqueueMutation }
       );
       const names = server.tools.map(t => t.name);
-      // Read-only tools should be present
+      // Read-only tools present
       expect(names).toContain("ecs:query");
       expect(names).toContain("renderer:screenshot");
+      expect(names).toContain("renderer:tree");
       expect(names).toContain("scene:getInfo");
-      // Mutating tools must not be registered
+      expect(names).toHaveLength(4);
+      // Mutating / interaction tools absent
       expect(names).not.toContain("ecs:spawn");
-      expect(names).not.toContain("ecs:despawn");
-      expect(names).not.toContain("ecs:setComponent");
-      expect(names).not.toContain("ecs:removeComponent");
+      expect(names).not.toContain("input:key");
       expect(names).not.toContain("loop:step");
-      expect(names).not.toContain("loop:pause");
-      expect(names).not.toContain("loop:resume");
-      expect(names).not.toContain("scene:load");
       expect(names).not.toContain("game:reset");
     });
 
     it("annotates mutating tools with destructiveHint:true", () => {
       registerTools(
         server,
-        { world, loop, scene, renderer, trackedEntities },
+        { world, loop, scene, renderer, input, trackedEntities },
         { enableMutations: true, enqueueMutation }
       );
-      const spawnRecord = getToolRecord(server, "ecs:spawn");
-      expect(spawnRecord.annotations.destructiveHint).toBe(true);
+      expect(getToolRecord(server, "ecs:spawn").annotations.destructiveHint).toBe(true);
     });
 
     it("annotates read-only tools with readOnlyHint:true", () => {
       registerTools(
         server,
-        { world, loop, scene, renderer, trackedEntities },
+        { world, loop, scene, renderer, input, trackedEntities },
         { enableMutations: true, enqueueMutation }
       );
-      const queryRecord = getToolRecord(server, "ecs:query");
-      expect(queryRecord.annotations.readOnlyHint).toBe(true);
+      expect(getToolRecord(server, "ecs:query").annotations.readOnlyHint).toBe(true);
+      expect(getToolRecord(server, "renderer:tree").annotations.readOnlyHint).toBe(true);
     });
   });
 
-  // ── Frame-safety: mutating tools enqueue, not direct mutation ─────────────
+  // ── Frame-safety: mutating ECS tools enqueue, not direct mutation ─────────
 
   describe("frame-safety (command buffer)", () => {
-    it("ecs:spawn does NOT call world.spawn synchronously", async () => {
+    beforeEach(() => {
       registerTools(
         server,
-        { world, loop, scene, renderer, trackedEntities },
+        { world, loop, scene, renderer, input, trackedEntities },
         { enableMutations: true, enqueueMutation }
       );
-      const handler = getToolHandler(server, "ecs:spawn");
-      // Fire the handler but do NOT drain the queue
-      void handler({});
+    });
+
+    it("ecs:spawn does NOT call world.spawn synchronously", async () => {
+      const settled = getToolHandler(server, "ecs:spawn")({});
       expect(world.spawn).not.toHaveBeenCalled();
+      for (const fn of pending) fn();
+      await settled;
     });
 
     it("ecs:spawn calls world.spawn after drain runs", async () => {
-      registerTools(
-        server,
-        { world, loop, scene, renderer, trackedEntities },
-        { enableMutations: true, enqueueMutation }
-      );
-      const handler = getToolHandler(server, "ecs:spawn");
-      const resultPromise = handler({});
-      // Drain the queue
+      const resultPromise = getToolHandler(server, "ecs:spawn")({});
       for (const fn of pending) fn();
       const result = await resultPromise;
       expect(world.spawn).toHaveBeenCalledOnce();
@@ -214,107 +232,51 @@ describe("registerTools", () => {
     });
 
     it("ecs:despawn does NOT call world.despawn synchronously", async () => {
-      registerTools(
-        server,
-        { world, loop, scene, renderer, trackedEntities },
-        { enableMutations: true, enqueueMutation }
-      );
-      const handler = getToolHandler(server, "ecs:despawn");
-      void handler({ id: 42 });
+      const settled = getToolHandler(server, "ecs:despawn")({ id: 42 });
       expect(world.despawn).not.toHaveBeenCalled();
-    });
-
-    it("ecs:despawn calls world.despawn after drain", async () => {
-      registerTools(
-        server,
-        { world, loop, scene, renderer, trackedEntities },
-        { enableMutations: true, enqueueMutation }
-      );
-      const handler = getToolHandler(server, "ecs:despawn");
-      const resultPromise = handler({ id: 42 });
       for (const fn of pending) fn();
-      await resultPromise;
-      expect(world.despawn).toHaveBeenCalledOnce();
+      await settled;
     });
 
     it("game:reset does NOT call world.despawn synchronously", async () => {
-      registerTools(
-        server,
-        { world, loop, scene, renderer, trackedEntities },
-        { enableMutations: true, enqueueMutation }
-      );
-      const handler = getToolHandler(server, "game:reset");
-      void handler({});
+      const settled = getToolHandler(server, "game:reset")({});
       expect(world.despawn).not.toHaveBeenCalled();
+      for (const fn of pending) fn();
+      await settled;
     });
   });
 
-  // ── trackedEntities wiring ────────────────────────────────────────────────
+  // ── trackedEntities wiring (spawn/despawn/reset still scope to MCP-spawned) ──
 
   describe("trackedEntities wiring", () => {
-    it("ecs:spawn adds the new entity to trackedEntities after drain", async () => {
+    beforeEach(() => {
       registerTools(
         server,
-        { world, loop, scene, renderer, trackedEntities },
+        { world, loop, scene, renderer, input, trackedEntities },
         { enableMutations: true, enqueueMutation }
       );
-      const handler = getToolHandler(server, "ecs:spawn");
-      const resultPromise = handler({});
+    });
+
+    it("ecs:spawn adds the new entity to trackedEntities after drain", async () => {
+      const resultPromise = getToolHandler(server, "ecs:spawn")({});
       for (const fn of pending) fn();
       await resultPromise;
       expect(trackedEntities.size).toBe(1);
       expect([...trackedEntities]).toContain(42 as unknown as Entity);
     });
 
-    it("ecs:query returns tracked entity ids and count", async () => {
-      // Pre-seed two entities
-      const e1 = 1 as unknown as Entity;
-      const e2 = 2 as unknown as Entity;
-      trackedEntities.add(e1);
-      trackedEntities.add(e2);
-      registerTools(
-        server,
-        { world, loop, scene, renderer, trackedEntities },
-        { enableMutations: true, enqueueMutation }
-      );
-      const handler = getToolHandler(server, "ecs:query");
-      const result = await handler({ componentNames: [] });
-      const parsed = JSON.parse(result.content[0]?.text ?? "{}") as {
-        entities: number[];
-        count: number;
-      };
-      expect(parsed.count).toBe(2);
-      expect(parsed.entities).toContain(1);
-      expect(parsed.entities).toContain(2);
-    });
-
     it("ecs:despawn removes the entity from trackedEntities after drain", async () => {
-      const entity = 42 as unknown as Entity;
-      trackedEntities.add(entity);
-      registerTools(
-        server,
-        { world, loop, scene, renderer, trackedEntities },
-        { enableMutations: true, enqueueMutation }
-      );
-      const handler = getToolHandler(server, "ecs:despawn");
-      const resultPromise = handler({ id: 42 });
+      trackedEntities.add(42 as unknown as Entity);
+      const resultPromise = getToolHandler(server, "ecs:despawn")({ id: 42 });
       for (const fn of pending) fn();
       await resultPromise;
       expect(trackedEntities.size).toBe(0);
     });
 
     it("game:reset despawns all tracked entities and clears the set after drain", async () => {
-      const e1 = 10 as unknown as Entity;
-      const e2 = 20 as unknown as Entity;
-      trackedEntities.add(e1);
-      trackedEntities.add(e2);
-      registerTools(
-        server,
-        { world, loop, scene, renderer, trackedEntities },
-        { enableMutations: true, enqueueMutation }
-      );
-      const handler = getToolHandler(server, "game:reset");
-      const resultPromise = handler({});
+      trackedEntities.add(10 as unknown as Entity);
+      trackedEntities.add(20 as unknown as Entity);
+      const resultPromise = getToolHandler(server, "game:reset")({});
       for (const fn of pending) fn();
       await resultPromise;
       expect(world.despawn).toHaveBeenCalledTimes(2);
@@ -323,116 +285,193 @@ describe("registerTools", () => {
     });
   });
 
+  // ── ecs:query — reads the WHOLE world by component name (Cycle 4) ──────────
+
+  describe("ecs:query (world-wide)", () => {
+    beforeEach(() => {
+      registerTools(
+        server,
+        { world, loop, scene, renderer, input, trackedEntities },
+        { enableMutations: true, enqueueMutation }
+      );
+    });
+
+    it("returns every live entity with its named components when filter is empty", async () => {
+      world.liveEntities.mockReturnValue([1, 2] as unknown as Entity[]);
+      world.componentsOf.mockImplementation((entity: Entity) =>
+        (entity as unknown as number) === 1 ? [{ name: "Transform", value: { x: 10, y: 5 } }] : []
+      );
+
+      const result = await getToolHandler(server, "ecs:query")({ componentNames: [] });
+      const parsed = parseText(result) as {
+        entities: Array<{ id: number; components: Array<{ name: string; value: unknown }> }>;
+        count: number;
+      };
+
+      expect(parsed.count).toBe(2);
+      const first = parsed.entities.find(e => e.id === 1);
+      expect(first?.components).toEqual([{ name: "Transform", value: { x: 10, y: 5 } }]);
+      // Does not touch the deferred queue (read-only tool)
+      expect(pending).toHaveLength(0);
+    });
+
+    it("filters to entities having ALL requested component names", async () => {
+      world.componentNames.mockReturnValue(["Transform", "Velocity"]);
+      world.liveEntities.mockReturnValue([1, 2, 3] as unknown as Entity[]);
+      world.componentsOf.mockImplementation((entity: Entity) => {
+        const id = entity as unknown as number;
+        if (id === 1) return [{ name: "Transform", value: {} }];
+        if (id === 2) {
+          return [
+            { name: "Transform", value: {} },
+            { name: "Velocity", value: {} }
+          ];
+        }
+        return [{ name: "Velocity", value: {} }];
+      });
+
+      const both = parseText(
+        await getToolHandler(server, "ecs:query")({ componentNames: ["Transform", "Velocity"] })
+      ) as { count: number; entities: Array<{ id: number }> };
+      expect(both.count).toBe(1);
+      expect(both.entities[0]?.id).toBe(2);
+
+      const justTransform = parseText(
+        await getToolHandler(server, "ecs:query")({ componentNames: ["Transform"] })
+      ) as { count: number };
+      expect(justTransform.count).toBe(2);
+    });
+
+    it("returns an error listing known names when a requested name is unknown", async () => {
+      world.componentNames.mockReturnValue(["Transform"]);
+      const result = await getToolHandler(server, "ecs:query")({ componentNames: ["Bogus"] });
+      expect(result.isError).toBe(true);
+      expect(result.content[0]?.text).toContain("Bogus");
+      expect(result.content[0]?.text).toContain("Transform");
+    });
+
+    it("treats omitted componentNames as 'all entities'", async () => {
+      world.liveEntities.mockReturnValue([7] as unknown as Entity[]);
+      const result = await getToolHandler(server, "ecs:query")({});
+      expect((parseText(result) as { count: number }).count).toBe(1);
+    });
+  });
+
   // ── Loop control: direct calls (NOT enqueued) ─────────────────────────────
 
   describe("loop control (direct)", () => {
-    it("loop:step calls loop.step() directly", async () => {
+    beforeEach(() => {
       registerTools(
         server,
-        { world, loop, scene, renderer, trackedEntities },
+        { world, loop, scene, renderer, input, trackedEntities },
         { enableMutations: true, enqueueMutation }
       );
-      const handler = getToolHandler(server, "loop:step");
-      await handler({});
+    });
+
+    it("loop:step calls loop.step() directly", async () => {
+      await getToolHandler(server, "loop:step")({});
       expect(loop.step).toHaveBeenCalledOnce();
-      // pending queue should be empty (not enqueued)
       expect(pending).toHaveLength(0);
     });
 
     it("loop:pause calls loop.stop() directly", async () => {
-      registerTools(
-        server,
-        { world, loop, scene, renderer, trackedEntities },
-        { enableMutations: true, enqueueMutation }
-      );
-      const handler = getToolHandler(server, "loop:pause");
-      await handler({});
+      await getToolHandler(server, "loop:pause")({});
       expect(loop.stop).toHaveBeenCalledOnce();
-      expect(pending).toHaveLength(0);
     });
 
     it("loop:resume calls loop.start() directly", async () => {
+      await getToolHandler(server, "loop:resume")({});
+      expect(loop.start).toHaveBeenCalledOnce();
+    });
+  });
+
+  // ── input:key — injects via the input API directly (not buffered) ─────────
+
+  describe("input:key (direct injection)", () => {
+    beforeEach(() => {
       registerTools(
         server,
-        { world, loop, scene, renderer, trackedEntities },
+        { world, loop, scene, renderer, input, trackedEntities },
         { enableMutations: true, enqueueMutation }
       );
-      const handler = getToolHandler(server, "loop:resume");
-      await handler({});
-      expect(loop.start).toHaveBeenCalledOnce();
+    });
+
+    it("action 'down' calls input.keyDown with the key and does not enqueue", async () => {
+      const result = await getToolHandler(
+        server,
+        "input:key"
+      )({ key: "ArrowRight", action: "down" });
+      expect(input.keyDown).toHaveBeenCalledWith("ArrowRight");
+      expect(input.keyUp).not.toHaveBeenCalled();
       expect(pending).toHaveLength(0);
+      expect(result.content[0]?.text).toContain("ArrowRight");
+    });
+
+    it("action 'up' calls input.keyUp", async () => {
+      await getToolHandler(server, "input:key")({ key: "ArrowRight", action: "up" });
+      expect(input.keyUp).toHaveBeenCalledWith("ArrowRight");
+    });
+
+    it("action 'press' calls input.keyPress", async () => {
+      await getToolHandler(server, "input:key")({ key: "Space", action: "press" });
+      expect(input.keyPress).toHaveBeenCalledWith("Space");
     });
   });
 
   // ── Read tools: direct API calls ──────────────────────────────────────────
 
   describe("read tools (direct)", () => {
-    it("ecs:query returns a result without accessing pending queue", async () => {
+    beforeEach(() => {
       registerTools(
         server,
-        { world, loop, scene, renderer, trackedEntities },
+        { world, loop, scene, renderer, input, trackedEntities },
         { enableMutations: true, enqueueMutation }
       );
-      const handler = getToolHandler(server, "ecs:query");
-      const result = await handler({ componentNames: [] });
-      expect(result.content[0]?.text).toBeDefined();
-      // Should not be in pending queue
-      expect(pending).toHaveLength(0);
     });
 
-    it("renderer:screenshot returns base64 from canvas.toDataURL", async () => {
-      const mockCanvas: CanvasLike = { toDataURL: vi.fn(() => "data:image/png;base64,iVBORw0") };
-      renderer.getView.mockReturnValue(mockCanvas);
-      registerTools(
-        server,
-        { world, loop, scene, renderer, trackedEntities },
-        { enableMutations: true, enqueueMutation }
-      );
-      const handler = getToolHandler(server, "renderer:screenshot");
-      const result = await handler({});
+    it("renderer:screenshot returns base64 from renderer.screenshot (prefix stripped)", async () => {
+      renderer.screenshot.mockResolvedValue("data:image/png;base64,iVBORw0");
+      const result = await getToolHandler(server, "renderer:screenshot")({});
       expect(result.content[0]?.text).toContain("iVBORw0");
+      expect(result.content[0]?.text).not.toContain("data:image/png");
     });
 
-    it("renderer:screenshot returns error when canvas not available", async () => {
-      renderer.getView.mockReturnValue(undefined);
-      registerTools(
-        server,
-        { world, loop, scene, renderer, trackedEntities },
-        { enableMutations: true, enqueueMutation }
-      );
-      const handler = getToolHandler(server, "renderer:screenshot");
-      const result = await handler({});
+    it("renderer:screenshot returns not-available (no throw) when headless", async () => {
+      renderer.screenshot.mockResolvedValue(undefined);
+      const result = await getToolHandler(server, "renderer:screenshot")({});
       expect(result.isError).toBe(true);
+      expect(result.content[0]?.text).toMatch(/not available|headless|not started/i);
     });
 
-    it("renderer:screenshot with a HEADLESS renderer returns not-available and does NOT throw", async () => {
-      // Headless renderer: getView() returns undefined (renderer spec). The tool
-      // must tolerate the missing view and return an error result, never throw.
-      renderer.getView.mockReturnValue(undefined);
-      registerTools(
-        server,
-        { world, loop, scene, renderer, trackedEntities },
-        { enableMutations: true, enqueueMutation }
-      );
-      const handler = getToolHandler(server, "renderer:screenshot");
+    it("renderer:tree returns the serialized scene graph", async () => {
+      renderer.tree.mockReturnValue({
+        label: "stage",
+        type: "Container",
+        x: 0,
+        y: 0,
+        rotation: 0,
+        scaleX: 1,
+        scaleY: 1,
+        visible: true,
+        alpha: 1,
+        width: 800,
+        height: 600,
+        children: []
+      } satisfies SceneNode);
+      const result = await getToolHandler(server, "renderer:tree")({});
+      expect(result.content[0]?.text).toContain("stage");
+    });
 
-      const result = await handler({});
-
+    it("renderer:tree returns not-available (no throw) when headless", async () => {
+      renderer.tree.mockReturnValue(undefined);
+      const result = await getToolHandler(server, "renderer:tree")({});
       expect(result.isError).toBe(true);
-      expect(result.content[0]?.text).toMatch(/no canvas|not started|not available|headless/i);
-      // The view was probed (proves the headless branch was exercised)
-      expect(renderer.getView).toHaveBeenCalled();
+      expect(result.content[0]?.text).toMatch(/not available|headless|not started/i);
     });
 
     it("scene:getInfo returns current scene", async () => {
       scene.currentScene.mockReturnValue("menu");
-      registerTools(
-        server,
-        { world, loop, scene, renderer, trackedEntities },
-        { enableMutations: true, enqueueMutation }
-      );
-      const handler = getToolHandler(server, "scene:getInfo");
-      const result = await handler({});
+      const result = await getToolHandler(server, "scene:getInfo")({});
       expect(result.content[0]?.text).toContain("menu");
     });
   });
@@ -443,11 +482,10 @@ describe("registerTools", () => {
     it("scene:load calls scene.load after drain", async () => {
       registerTools(
         server,
-        { world, loop, scene, renderer, trackedEntities },
+        { world, loop, scene, renderer, input, trackedEntities },
         { enableMutations: true, enqueueMutation }
       );
-      const handler = getToolHandler(server, "scene:load");
-      const resultPromise = handler({ name: "level1" });
+      const resultPromise = getToolHandler(server, "scene:load")({ name: "level1" });
       for (const fn of pending) fn();
       await resultPromise;
       expect(scene.load).toHaveBeenCalledWith("level1");

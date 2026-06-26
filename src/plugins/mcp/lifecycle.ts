@@ -16,13 +16,12 @@
  */
 import { ecsPlugin } from "../ecs";
 import type { Entity, Stage } from "../ecs/types";
-import type { inputPlugin } from "../input";
+import { inputPlugin } from "../input";
 import { loopPlugin } from "../loop";
 import { rendererPlugin } from "../renderer";
 import { scenePlugin } from "../scene";
 import { schedulerPlugin } from "../scheduler";
 import { registerResources } from "./resources";
-import type { CanvasLike, RendererDep } from "./tools";
 import { registerTools } from "./tools";
 import { buildMcpHandle } from "./transport";
 import type { Config, McpHandle, McpServerLike, State } from "./types";
@@ -126,6 +125,7 @@ export const start = async (ctx: StartContext): Promise<void> => {
   const renderer = ctx.require(rendererPlugin);
   const loop = ctx.require(loopPlugin);
   const scene = ctx.require(scenePlugin);
+  const input = ctx.require(inputPlugin);
 
   // ── 3. Pending mutation queue (drained by the input-stage system) ─────────
   const pending: Array<() => void> = [];
@@ -174,10 +174,10 @@ export const start = async (ctx: StartContext): Promise<void> => {
   // ── 6. Stats probe system: runs on "render" stage, updates state.stats ────
 
   /**
-   * Stats probe: increments frame counter and records lastDt and entityCount.
-   * entityCount reflects MCP-tracked entities (v1 limitation).
+   * Stats probe: increments frame counter and records lastDt and the true live
+   * entity count (Cycle 4 — via world.entityCount()).
    *
-   * @param _world - ECS world (unused here).
+   * @param _world - ECS world (unused here — entityCount read from the captured world).
    * @param dt - Delta time in seconds for lastDt.
    * @example
    * ```ts
@@ -187,38 +187,17 @@ export const start = async (ctx: StartContext): Promise<void> => {
   const statsProbe = (_world: import("../ecs/types").World, dt: number): void => {
     ctx.state.stats.frame += 1;
     ctx.state.stats.lastDt = dt;
-    ctx.state.stats.entityCount = trackedEntities.size;
+    // Cycle 4: report the TRUE live entity count (was trackedEntities.size — MCP-spawned only).
+    ctx.state.stats.entityCount = world.entityCount();
   };
 
   const removeStatsSystem = world.addSystem("render" as Stage, statsProbe);
 
   // ── 7. Build tool / resource registrars ───────────────────────────────────
-
-  // Wrap the renderer so its getView() return satisfies CanvasLike | undefined.
-  // The renderer's full Api returns HTMLCanvasElement which (without DOM lib) doesn't
-  // declare toDataURL. We project to the structural CanvasLike here.
-
-  /**
-   * Structural RendererDep wrapper that projects getView() to CanvasLike.
-   * Needed because HTMLCanvasElement (without DOM lib) lacks toDataURL.
-   */
-  const rendererDep: RendererDep = {
-    /**
-     * Returns the canvas-like view, projecting HTMLCanvasElement to CanvasLike.
-     *
-     * @returns The canvas-like element or undefined if renderer not started.
-     * @example
-     * ```ts
-     * const view = rendererDep.getView(); // CanvasLike | undefined
-     * ```
-     */
-    getView(): CanvasLike | undefined {
-      const view = renderer.getView();
-      if (!view) return undefined;
-      // HTMLCanvasElement always has toDataURL at runtime; cast to CanvasLike here.
-      return view as unknown as CanvasLike;
-    }
-  };
+  //
+  // The renderer's screenshot()/tree() and input's keyDown/keyUp/keyPress are
+  // plain-data / DOM-free now, so the full plugin APIs satisfy the structural
+  // ToolDeps shapes directly — no wrapper needed.
 
   /**
    * Registers all tools on the given server instance.
@@ -232,7 +211,7 @@ export const start = async (ctx: StartContext): Promise<void> => {
   const registerAllTools = (server: McpServerLike): void => {
     registerTools(
       server,
-      { world, loop, scene, renderer: rendererDep, trackedEntities },
+      { world, loop, scene, renderer, input, trackedEntities },
       { enableMutations: ctx.config.enableMutations, enqueueMutation }
     );
   };
@@ -250,7 +229,7 @@ export const start = async (ctx: StartContext): Promise<void> => {
     registerResources(server, {
       scene,
       scheduler,
-      trackedEntities,
+      world,
       /**
        * Returns a snapshot of the current frame stats.
        *

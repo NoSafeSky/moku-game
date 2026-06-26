@@ -62,6 +62,23 @@ Marks an entity dirty so the next `sync` tick repositions its view. Called by ga
 app.renderer.markDirty(entity);
 ```
 
+### `screenshot(): Promise<string | undefined>`
+
+Captures the current frame as a PNG **data URL** via Pixi's `extract` system (`app.renderer.extract.base64(stage)`). Because `extract` re-renders into a target, the capture is **reliable regardless of frame timing** — it is correct even while the loop is paused (unlike reading the WebGL backbuffer, which can be blank). Resolves to `undefined` when headless / before start. Used by the `mcp` plugin's `renderer:screenshot` tool.
+
+```ts
+const dataUrl = await app.renderer.screenshot(); // "data:image/png;base64,..." | undefined
+```
+
+### `tree(): SceneNode | undefined`
+
+Returns a JSON-serialisable snapshot of the Pixi scene graph rooted at the stage — `{ label, type, x, y, rotation, scaleX, scaleY, visible, alpha, width, height, text?, children }` (with `text` for Pixi `Text` nodes). The most direct way to read on-screen positions and text. `undefined` when headless / before start. No Pixi types leak — `SceneNode` is plain data. Used by the `mcp` plugin's `renderer:tree` tool.
+
+```ts
+const root = app.renderer.tree();
+// { label: "stage", type: "Container", children: [{ label: "score", type: "Text", text: "12", x: 10, y: 8, ... }] }
+```
+
 ## Lifecycle
 
 The renderer is one of the few plugins that owns a real GPU resource, so both lifecycle hooks are load-bearing.

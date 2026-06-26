@@ -118,13 +118,18 @@ export const detectHeadless = (): boolean =>
  */
 const registerTransformAndSync = (ctx: StartContext): void => {
   const world = ctx.require(ecsPlugin);
-  const transformToken = world.defineComponent<TransformValue>(() => ({
-    x: 0,
-    y: 0,
-    rotation: 0,
-    scaleX: 1,
-    scaleY: 1
-  }));
+  // Name the component so MCP agents can read entity positions by name out of the box
+  // (ecs introspection facet — see ecs spec Cycle 4 / mcp ecs:query).
+  const transformToken = world.defineComponent<TransformValue>(
+    () => ({
+      x: 0,
+      y: 0,
+      rotation: 0,
+      scaleX: 1,
+      scaleY: 1
+    }),
+    { name: "Transform" }
+  );
   ctx.state.transformToken = transformToken;
 
   const scheduler = ctx.require(schedulerPlugin);

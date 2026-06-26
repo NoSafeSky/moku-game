@@ -239,24 +239,84 @@ describe("mcp browser integration — in-page Client round-trip", () => {
       const spawnContent = spawnResult.content as Array<{ type: string; text: string }>;
       expect(spawnContent[0]?.text ?? "{}").toMatch(/entity/);
 
-      // The entity is now tracked → ecs:query reports a count of 1.
+      // The entity now exists in the world → ecs:query (whole-world) reports count 1.
       const queryResult = await client.callTool({
         name: "ecs:query",
         arguments: { componentNames: [] }
       });
       const queryContent = queryResult.content as Array<{ type: string; text: string }>;
       const parsed = JSON.parse(queryContent[0]?.text ?? "{}") as {
-        entities: number[];
+        entities: Array<{ id: number; components: Array<{ name: string; value: unknown }> }>;
         count: number;
       };
       expect(parsed.count).toBe(1);
       expect(parsed.entities).toHaveLength(1);
+      expect(typeof parsed.entities[0]?.id).toBe("number");
     } finally {
       clearInterval(ticker);
     }
 
     await client.close();
     await app.stop();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cycle 4 — read real game state by component name over the in-page client
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("mcp browser integration — read named state via ecs:query", () => {
+  it("reads a consumer entity's Transform by component name (positions + values)", async () => {
+    const app = createBrowserApp();
+    await app.start();
+
+    // A consumer-style entity carrying the renderer's named Transform component.
+    app.ecs.spawn(app.renderer.Transform({ x: 42, y: 7, rotation: 0, scaleX: 1, scaleY: 1 }));
+
+    const client = new Client({ name: "in-page-agent", version: "0.0.0" });
+    await client.connect(app.mcp.clientTransport() as never);
+    try {
+      const result = await client.callTool({
+        name: "ecs:query",
+        arguments: { componentNames: ["Transform"] }
+      });
+      const content = result.content as Array<{ type: string; text: string }>;
+      const parsed = JSON.parse(content[0]?.text ?? "{}") as {
+        entities: Array<{
+          id: number;
+          components: Array<{ name: string; value: { x: number; y: number } }>;
+        }>;
+        count: number;
+      };
+
+      expect(parsed.count).toBe(1);
+      const transform = parsed.entities[0]?.components.find(c => c.name === "Transform");
+      expect(transform?.value.x).toBe(42);
+      expect(transform?.value.y).toBe(7);
+    } finally {
+      await client.close();
+      await app.stop();
+    }
+  });
+
+  it("injects input via input:key so a snapshot observes the held key", async () => {
+    const app = createBrowserApp();
+    await app.start();
+
+    const client = new Client({ name: "in-page-agent", version: "0.0.0" });
+    await client.connect(app.mcp.clientTransport() as never);
+    try {
+      await client.callTool({
+        name: "input:key",
+        arguments: { key: "ArrowRight", action: "down" }
+      });
+      // The input-stage system snapshots the injected key on the next tick.
+      app.loop.step();
+      expect(app.input.snapshot().isDown("ArrowRight")).toBe(true);
+    } finally {
+      await client.close();
+      await app.stop();
+    }
   });
 });
 

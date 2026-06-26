@@ -84,6 +84,44 @@ export type Api = {
    * ```
    */
   snapshot(): InputSnapshot;
+  /**
+   * Inject a key-down, exactly as a real `keydown` event would. The key is added
+   * to the held set (and, if newly down, the just-pressed edge); the next
+   * input-stage tick snapshots it. Stays held until {@link Api.keyUp}.
+   *
+   * Applied immediately (between frames) — NOT command-buffered — so the next
+   * snapshot observes it. Lets an agent/test drive gameplay programmatically.
+   *
+   * @param key - The key identifier (e.g. "ArrowRight", "Space").
+   * @example
+   * ```ts
+   * app.input.keyDown("ArrowRight"); // hold right
+   * ```
+   */
+  keyDown(key: string): void;
+  /**
+   * Inject a key-up, exactly as a real `keyup` event would — removes the key from
+   * the held set and records the just-released edge for the next snapshot.
+   *
+   * @param key - The key identifier to release.
+   * @example
+   * ```ts
+   * app.input.keyUp("ArrowRight"); // stop holding right
+   * ```
+   */
+  keyUp(key: string): void;
+  /**
+   * Inject a one-frame tap: the next snapshot reports `justPressed` and
+   * `justReleased` for the key, and the key never sticks in the held set. Ideal
+   * for discrete actions (jump, fire, confirm) where holding is not required.
+   *
+   * @param key - The key identifier to tap.
+   * @example
+   * ```ts
+   * app.input.keyPress("Space"); // single tap
+   * ```
+   */
+  keyPress(key: string): void;
 };
 
 /**

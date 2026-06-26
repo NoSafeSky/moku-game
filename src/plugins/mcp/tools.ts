@@ -1,45 +1,48 @@
 /**
  * @file mcp plugin — tool registration.
  *
- * Registers the MCP tool catalog on a structural McpServerLike. All mutating
- * ECS tools route through an `enqueueMutation` closure (frame-safety); loop
- * controls call their APIs directly between frames. zod is imported here for
- * input schema shapes (it is a schema lib, not the SDK — allowed by the seam rule).
+ * Registers the MCP tool catalog on a structural McpServerLike. Mutating ECS tools
+ * route through an `enqueueMutation` closure (frame-safety); loop controls and input
+ * injection (`input:key`) call their APIs directly between frames. zod is imported here
+ * for input schema shapes (it is a schema lib, not the SDK — allowed by the seam rule).
  *
- * v1 limitation: entityCount and world snapshot reflect only MCP-spawned entities
- * (tracked in the `trackedEntities` Set). The ECS public API has no enumerate-all.
+ * Cycle 4: `ecs:query` and `game://world/snapshot` enumerate the WHOLE live world via the
+ * ECS introspection facet (liveEntities/componentsOf), and entityCount is exact. The
+ * `trackedEntities` Set now scopes only mutation cleanup (`ecs:despawn`, `game:reset`).
  */
 import { z } from "zod";
 import type { Entity, World } from "../ecs/types";
+import type { Api as InputApi } from "../input/types";
 import type { Api as LoopApi } from "../loop/types";
+import type { SceneNode } from "../renderer/types";
 import type { Api as SceneApi } from "../scene/types";
 import type { McpServerLike, McpToolResult } from "./types";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Structural canvas type (avoids relying on HTMLCanvasElement from DOM lib)
+// Structural renderer dep (only what tools.ts uses — screenshot + scene tree)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Structural view of a canvas-like element exposing only what the screenshot
- * tool needs. Using a structural type keeps tools.ts free of DOM lib dependency.
- */
-export type CanvasLike = {
-  /** Returns a data URL for the image in the canvas (e.g. "data:image/png;base64,..."). */
-  toDataURL(type?: string): string;
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Structural renderer dep (only what tools.ts uses)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Structural renderer dependency — only the getView method is needed.
- * Uses CanvasLike rather than HTMLCanvasElement to stay DOM-lib-free.
+ * Structural renderer dependency — the screenshot (extract) and scene-tree methods
+ * the read-only renderer tools delegate to. Both degrade to `undefined` when the
+ * renderer is headless / not started. Plain data only — no Pixi/DOM types leak in.
  */
 export type RendererDep = {
-  /** Returns the canvas-like element, or undefined before start. */
-  getView(): CanvasLike | undefined;
+  /** Capture the current frame as a PNG data URL, or undefined when headless / before start. */
+  screenshot(): Promise<string | undefined>;
+  /** Return the Pixi scene graph snapshot, or undefined when headless / before start. */
+  tree(): SceneNode | undefined;
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Structural input dep (only the injection methods input:key needs)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Structural input dependency — the programmatic injection surface the `input:key`
+ * tool calls (held down / release / one-frame tap).
+ */
+export type InputDep = Pick<InputApi, "keyDown" | "keyUp" | "keyPress">;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Deps type (structural — only what tools.ts actually touches)
@@ -49,18 +52,32 @@ export type RendererDep = {
  * Runtime dependencies passed to registerTools from lifecycle.ts.
  */
 export type ToolDeps = {
-  /** The ECS world facade. */
-  world: Pick<World, "spawn" | "despawn" | "isAlive">;
+  /**
+   * The ECS world facade — structural ops plus the Cycle 4 introspection facet
+   * (`liveEntities`/`entityCount`/`componentNames`/`componentsOf`) that powers `ecs:query`.
+   */
+  world: Pick<
+    World,
+    | "spawn"
+    | "despawn"
+    | "isAlive"
+    | "liveEntities"
+    | "entityCount"
+    | "componentNames"
+    | "componentsOf"
+  >;
   /** The loop plugin API (step / start / stop). */
   loop: Pick<LoopApi, "step" | "start" | "stop">;
   /** The scene plugin API (load / unload / currentScene). */
   scene: Pick<SceneApi, "load" | "unload" | "currentScene">;
-  /** Renderer dep exposing getView for screenshot. */
+  /** Renderer dep exposing screenshot + scene tree. */
   renderer: RendererDep;
+  /** Input dep exposing key injection for the `input:key` tool. */
+  input: InputDep;
   /**
-   * Mutable set of MCP-tracked entities.
-   * Shared with resources.ts (same Set instance) so world/snapshot stays consistent.
-   * v1: only entities spawned via ecs:spawn MCP tool appear here.
+   * Mutable set of entities spawned via the `ecs:spawn` MCP tool. Used by
+   * `ecs:despawn` / `game:reset` to scope cleanup to MCP-created entities.
+   * (Reads — `ecs:query`, `game://world/snapshot` — now enumerate the whole world.)
    */
   trackedEntities: Set<Entity>;
 };
@@ -137,7 +154,7 @@ const DESTRUCTIVE_ANNOTATIONS = { destructiveHint: true } as const;
  * ```
  */
 export const registerTools = (server: McpServerLike, deps: ToolDeps, opts: ToolOptions): void => {
-  const { world, loop, scene, renderer, trackedEntities } = deps;
+  const { world, loop, scene, renderer, input, trackedEntities } = deps;
   const { enableMutations, enqueueMutation } = opts;
 
   // ── Read-only tools (always registered) ───────────────────────────────────
@@ -146,38 +163,81 @@ export const registerTools = (server: McpServerLike, deps: ToolDeps, opts: ToolO
     "ecs:query",
     {
       description:
-        "Query MCP-tracked entities. v1: componentNames filter is ignored — returns all MCP-spawned entity ids and count.",
+        "Query ALL live entities, optionally filtered to those having every named component in componentNames (empty/omitted = all entities). Returns each entity's id and its named components with values. Unknown names return an error listing the known component names.",
       inputSchema: {
         componentNames: z
           .array(z.string())
+          .optional()
           .describe(
-            "Component names to match (ignored in v1 — filter not implementable without component tokens)."
+            "Component names that a matching entity must ALL have (only components defined with a name are queryable). Omit or pass [] for every live entity."
           )
       },
       annotations: READ_ONLY_ANNOTATIONS
     },
-    async (_args: Record<string, unknown>): Promise<McpToolResult> => {
-      const entities = [...trackedEntities].map(entity => entity as number);
-      return textResult({ entities, count: trackedEntities.size });
+    async (args: Record<string, unknown>): Promise<McpToolResult> => {
+      const requested = (args.componentNames as string[] | undefined) ?? [];
+
+      // Validate filter names up front so an agent gets an actionable error, not silence.
+      const known = world.componentNames();
+      const unknownNames = requested.filter(name => !known.includes(name));
+      if (unknownNames.length > 0) {
+        return errorResult(
+          `Unknown component name(s): ${unknownNames.join(", ")}. Known names: ${known.join(", ") || "(none — pass opts.name to defineComponent)"}`
+        );
+      }
+
+      // Enumerate the whole world; keep entities whose named components cover the filter.
+      const entities: Array<{
+        id: number;
+        components: ReadonlyArray<{ name: string; value: unknown }>;
+      }> = [];
+      for (const entity of world.liveEntities()) {
+        const components = world.componentsOf(entity);
+        const names = new Set(components.map(component => component.name));
+        const matches = requested.every(name => names.has(name));
+        if (matches) entities.push({ id: entity as number, components });
+      }
+
+      return textResult({ entities, count: entities.length });
     }
   );
 
   server.registerTool(
     "renderer:screenshot",
     {
-      description: "Return the current frame as a base64 PNG (strips the data: URI prefix).",
+      description:
+        "Return the current frame as a base64 PNG via Pixi's extract system (reliable regardless of frame timing — works while paused). Returns a not-available result when the renderer is headless / not started.",
       inputSchema: {},
       annotations: READ_ONLY_ANNOTATIONS
     },
     async (_args: Record<string, unknown>): Promise<McpToolResult> => {
-      const canvas = renderer.getView();
-      if (!canvas) {
-        return errorResult("renderer not started — no canvas available");
+      // extract.base64 re-renders into a target, so the capture is timing-independent.
+      const dataUrl = await renderer.screenshot();
+      if (!dataUrl) {
+        return errorResult(
+          "renderer not available (headless or not started) — no frame to capture"
+        );
       }
-      const dataUrl = canvas.toDataURL("image/png");
-      // Strip 'data:image/png;base64,' prefix so callers receive raw base64
+      // Strip the 'data:image/png;base64,' prefix so callers receive raw base64.
       const base64 = dataUrl.replace(/^data:[^;]+;base64,/, "");
       return textResult({ base64, mimeType: "image/png" });
+    }
+  );
+
+  server.registerTool(
+    "renderer:tree",
+    {
+      description:
+        "Return the Pixi scene graph (labels, positions, rotation/scale, visibility, and text for Text nodes) rooted at the stage. The most direct way to read on-screen state (e.g. ball/paddle positions, score text). Not-available result when headless / not started.",
+      inputSchema: {},
+      annotations: READ_ONLY_ANNOTATIONS
+    },
+    async (_args: Record<string, unknown>): Promise<McpToolResult> => {
+      const tree = renderer.tree();
+      if (!tree) {
+        return errorResult("renderer not available (headless or not started) — no scene graph");
+      }
+      return textResult({ tree });
     }
   );
 
@@ -271,6 +331,32 @@ export const registerTools = (server: McpServerLike, deps: ToolDeps, opts: ToolO
         /* v1: no-op — component tokens are not addressable by string name */
       });
       return textResult({ id: args.id, component: args.component, status: "v1-noop" });
+    }
+  );
+
+  server.registerTool(
+    "input:key",
+    {
+      description:
+        "Inject a key so an agent can play: action 'down' holds the key, 'up' releases it, 'press' is a one-frame tap (justPressed+justReleased). Applied immediately between frames — the next loop:step (or tick) observes it.",
+      inputSchema: {
+        key: z.string().describe("Key identifier, e.g. 'ArrowRight', 'ArrowLeft', 'Space', 'w'."),
+        action: z
+          .enum(["down", "up", "press"])
+          .describe("'down' = hold, 'up' = release, 'press' = one-frame tap.")
+      },
+      annotations: DESTRUCTIVE_ANNOTATIONS
+    },
+    async (args: Record<string, unknown>): Promise<McpToolResult> => {
+      const key = args.key as string;
+      const action = args.action as "down" | "up" | "press";
+      // Direct injection (NOT command-buffered): the input edge-sets are written
+      // between frames like real DOM events; the input-stage system snapshots them
+      // next tick. Draining would run AFTER that snapshot and garble edge timing.
+      if (action === "down") input.keyDown(key);
+      else if (action === "up") input.keyUp(key);
+      else input.keyPress(key);
+      return textResult({ key, action });
     }
   );
 

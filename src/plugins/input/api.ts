@@ -33,5 +33,52 @@ export const createApi = (ctx: InputContext): Api => ({
    * if (snap.isDown("ArrowRight")) move(dt);
    * ```
    */
-  snapshot: () => ctx.state.snapshot
+  snapshot: () => ctx.state.snapshot,
+
+  /**
+   * Inject a key-down — mirrors the DOM keydown handler. The next input-stage
+   * snapshot observes the held key (and the just-pressed edge if it was not
+   * already down). Mutates live state directly between frames (not buffered).
+   *
+   * @param key - The key identifier to press.
+   * @example
+   * ```ts
+   * app.input.keyDown("ArrowRight");
+   * ```
+   */
+  keyDown: (key: string): void => {
+    // Only flag the just-pressed edge on a genuine down transition (ignores repeats).
+    if (!ctx.state.down.has(key)) ctx.state.pressed.add(key);
+    ctx.state.down.add(key);
+  },
+
+  /**
+   * Inject a key-up — mirrors the DOM keyup handler. Clears the held key and
+   * records the just-released edge for the next snapshot.
+   *
+   * @param key - The key identifier to release.
+   * @example
+   * ```ts
+   * app.input.keyUp("ArrowRight");
+   * ```
+   */
+  keyUp: (key: string): void => {
+    ctx.state.down.delete(key);
+    ctx.state.released.add(key);
+  },
+
+  /**
+   * Inject a one-frame tap — flags both just-pressed and just-released for the
+   * next snapshot without ever holding the key, so it cannot get stuck down.
+   *
+   * @param key - The key identifier to tap.
+   * @example
+   * ```ts
+   * app.input.keyPress("Space");
+   * ```
+   */
+  keyPress: (key: string): void => {
+    ctx.state.pressed.add(key);
+    ctx.state.released.add(key);
+  }
 });

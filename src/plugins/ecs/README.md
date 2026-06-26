@@ -14,11 +14,12 @@ Accessed as `app.ecs.*` after `createApp()`. The API object is the `World` facad
 
 #### `defineComponent<T>(create, opts?): Component<T>`
 
-Registers a component type with a default-value factory and returns its typed token. Storage defaults to `"archetype"` (cache-coherent). Call once at module scope.
+Registers a component type with a default-value factory and returns its typed token. Storage defaults to `"archetype"` (cache-coherent). Call once at module scope. Pass `opts.name` to make the component discoverable **by name** through the introspection facet below (and the `mcp` plugin's `ecs:query` — so an agent can read it).
 
 ```ts
 const Position = app.ecs.defineComponent(() => ({ x: 0, y: 0 }));
 const Velocity = app.ecs.defineComponent(() => ({ dx: 0, dy: 0 }), { storage: "sparse" });
+const Health = app.ecs.defineComponent(() => ({ hp: 100 }), { name: "Health" }); // introspectable
 ```
 
 #### `defineTag(opts?): Tag`
@@ -155,6 +156,26 @@ app.ecs.addSystem("update", (w) => {
   const maybe = w.getResource(Score); // { value, combo } | undefined
   if (maybe) maybe.value += 10;
 });
+```
+
+### Introspection (read-only)
+
+A small read-only facet for tooling — used by the `mcp` plugin to expose the live world to agents. All reads are immediate and side-effect-free (they never touch the command buffer).
+
+| Method | Signature | Description |
+|---|---|---|
+| `liveEntities` | `liveEntities(): readonly Entity[]` | Snapshot array of every currently-live entity handle (including bare-spawned ones). Fresh copy each call. |
+| `entityCount` | `entityCount(): number` | Count of live entities (O(1) — not `liveEntities().length`). |
+| `componentNames` | `componentNames(): readonly string[]` | Names of all components defined with `opts.name`, in registration order. Anonymous components are not listed. |
+| `componentsOf` | `componentsOf(entity): ReadonlyArray<{ name: string; value: unknown }>` | The **named** components currently on an entity, with their live values. Anonymous components are omitted; a dead entity yields `[]`. |
+
+```ts
+const Health = app.ecs.defineComponent(() => ({ hp: 100 }), { name: "Health" });
+const e = app.ecs.spawn(Health({ hp: 75 }));
+
+app.ecs.entityCount();        // e.g. 1
+app.ecs.componentNames();     // ["Health"]
+app.ecs.componentsOf(e);      // [{ name: "Health", value: { hp: 75 } }]
 ```
 
 ## Configuration

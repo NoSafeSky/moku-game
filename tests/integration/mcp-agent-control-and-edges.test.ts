@@ -6,7 +6,7 @@
  * mocked so onStart does not attach to the real process.stdin.
  *
  * Two themes:
- *  1. MCP agent-control surface — the registered tool catalog (12 default / 3
+ *  1. MCP agent-control surface — the registered tool catalog (14 default / 4
  *     read-only), lifecycle (`isRunning`), the stdio-only `httpEndpoint`, and
  *     that the input-stage drain system coexists with the loop without throwing.
  *  2. EDGE cases — loading an undefined scene rejects, empty-world queries are
@@ -164,7 +164,7 @@ describe("mcp agent-control surface + edge cases (root integration)", () => {
   // ── 1. Full default tool catalog ───────────────────────────────────────────
 
   describe("tool catalog", () => {
-    it("registers all 12 default tools after start", async () => {
+    it("registers all 14 default tools after start", async () => {
       const app = createFullApp();
       await app.start();
 
@@ -175,6 +175,8 @@ describe("mcp agent-control surface + edge cases (root integration)", () => {
         "ecs:setComponent",
         "ecs:removeComponent",
         "ecs:query",
+        "input:key",
+        "renderer:tree",
         "loop:step",
         "loop:pause",
         "loop:resume",
@@ -186,13 +188,14 @@ describe("mcp agent-control surface + edge cases (root integration)", () => {
       for (const tool of expected) {
         expect(names).toContain(tool);
       }
+      expect(names).toHaveLength(14);
 
       await app.stop();
     });
 
-    // ── 2. enableMutations:false → only the 3 read-only tools ────────────────
+    // ── 2. enableMutations:false → only the 4 read-only tools ────────────────
 
-    it("registers exactly the 3 read-only tools when enableMutations is false", async () => {
+    it("registers exactly the 4 read-only tools when enableMutations is false", async () => {
       const { createApp } = coreConfig.createCore(coreConfig, { plugins: [...allPlugins] });
       const app = createApp({
         pluginConfigs: {
@@ -203,22 +206,24 @@ describe("mcp agent-control surface + edge cases (root integration)", () => {
 
       const names = app.mcp.toolNames();
 
-      // The three read-only tools are present.
+      // The four read-only tools are present.
       expect(names).toContain("ecs:query");
       expect(names).toContain("renderer:screenshot");
+      expect(names).toContain("renderer:tree");
       expect(names).toContain("scene:getInfo");
 
-      // Exactly three tools, no more.
+      // Exactly four tools, no more.
       expect([...names].toSorted()).toEqual(
-        ["ecs:query", "renderer:screenshot", "scene:getInfo"].toSorted()
+        ["ecs:query", "renderer:screenshot", "renderer:tree", "scene:getInfo"].toSorted()
       );
 
-      // None of the mutating tools leak through.
+      // None of the mutating / interaction tools leak through.
       for (const mutating of [
         "ecs:spawn",
         "ecs:despawn",
         "ecs:setComponent",
         "ecs:removeComponent",
+        "input:key",
         "loop:step",
         "loop:pause",
         "loop:resume",

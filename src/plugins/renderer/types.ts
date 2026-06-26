@@ -8,6 +8,41 @@
 import type { Application, Container } from "pixi.js";
 import type { Component, Entity } from "../ecs/types";
 
+/**
+ * JSON-serialisable snapshot of one Pixi display object, returned by {@link Api.tree}.
+ *
+ * Plain data only — no Pixi types leak past the renderer boundary. `text` is present
+ * only for Pixi `Text` nodes. `children` is the recursive sub-tree (depth-capped).
+ */
+export type SceneNode = {
+  /** The display object's `label` (user-set name), or "" when unlabelled. */
+  label: string;
+  /** Best-effort node kind: "Text", "Sprite", or "Container". */
+  type: string;
+  /** Local X position in pixels. */
+  x: number;
+  /** Local Y position in pixels. */
+  y: number;
+  /** Rotation in radians. */
+  rotation: number;
+  /** Horizontal scale factor. */
+  scaleX: number;
+  /** Vertical scale factor. */
+  scaleY: number;
+  /** Whether the node is visible. */
+  visible: boolean;
+  /** Node alpha (0–1). */
+  alpha: number;
+  /** Computed bounds width in pixels. */
+  width: number;
+  /** Computed bounds height in pixels. */
+  height: number;
+  /** The string content of a Pixi `Text` node (omitted for non-text nodes). */
+  text?: string;
+  /** Child nodes, in z-order. */
+  children: SceneNode[];
+};
+
 /** Transform component value shape (renderer defines and reads it on the ecs world). */
 export type TransformValue = {
   /** X position in world-space pixels. */
@@ -105,6 +140,25 @@ export type Api = {
    * @param entity - The entity whose Transform has changed.
    */
   markDirty(entity: Entity): void;
+  /**
+   * Capture the current frame as a PNG **data URL** via Pixi's `extract` system.
+   *
+   * Uses `app.renderer.extract.base64(stage)`, which re-renders into an extract target,
+   * so the result is correct regardless of frame timing (unlike reading the WebGL
+   * backbuffer, which can be blank when not captured immediately after a draw).
+   * Resolves to `undefined` when headless / before start.
+   *
+   * @returns A Promise resolving to a `data:image/png;base64,...` URL, or `undefined`.
+   */
+  screenshot(): Promise<string | undefined>;
+  /**
+   * Return a JSON-serialisable snapshot of the Pixi scene graph rooted at the stage,
+   * or `undefined` when headless / before start. Useful for reading on-screen
+   * positions and text (e.g. an agent inspecting the running game).
+   *
+   * @returns The root {@link SceneNode}, or `undefined`.
+   */
+  tree(): SceneNode | undefined;
 };
 
 /**

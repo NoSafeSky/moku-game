@@ -2,7 +2,7 @@
 
 > Complex plugin — first-class MCP server exposing the whole runtime to agent clients over stdio, Streamable HTTP, and/or an in-page `inMemory` transport.
 
-The `mcp` plugin attaches a Model Context Protocol server to the running game framework. Agent clients (Claude, Cursor, etc.) can query live runtime state, control the game loop, spawn and despawn entities, trigger scene loads, and capture screenshots — all without touching the game code directly.
+The `mcp` plugin attaches a Model Context Protocol server to the running game framework. Agent clients (Claude, Cursor, etc.) can **read live game state** (every entity's named components, the Pixi scene graph), **inject input to play** (`input:key`), control the game loop, spawn/despawn entities, trigger scene loads, and capture **reliable screenshots** — all without touching the game code directly.
 
 The default transport is **environment-aware**: under Node/Bun it is `["stdio"]`; in a browser (where `document` is present) it is `["inMemory"]`, so a default `createApp().start()` runs in-page without a socket and never crashes on a missing `process.stdin`.
 
@@ -59,8 +59,9 @@ When the `"inMemory"` transport is active in a browser and `inMemoryGlobalKey` i
 
 | Tool | Description |
 |---|---|
-| `ecs:query` | Returns MCP-tracked entity ids and count. v1: `componentNames` filter is not applied (component tokens are opaque runtime objects). |
-| `renderer:screenshot` | Returns the current frame as a raw base64 PNG string (data-URI prefix stripped). Returns an error result if the renderer has not started yet. |
+| `ecs:query` | Queries **all** live entities, optionally filtered to those having every name in `componentNames` (empty/omitted = all). Returns `{ entities: [{ id, components: [{ name, value }] }], count }`. An unknown name returns an error listing the known component names. Only components defined with `{ name }` are queryable (the renderer's `Transform` is named by default). |
+| `renderer:tree` | Returns the Pixi scene graph rooted at the stage — `{ label, type, x, y, rotation, scaleX, scaleY, visible, alpha, width, height, text?, children }`. The most direct way to read on-screen positions and text. Not-available result when headless. |
+| `renderer:screenshot` | Returns the current frame as a raw base64 PNG (data-URI prefix stripped) via Pixi's `extract` system — **reliable regardless of frame timing**, including while paused. Not-available result when headless / not started. |
 | `scene:getInfo` | Returns the current scene name, or `undefined` when no scene is loaded. |
 
 ### Mutating tools (registered when `enableMutations: true`)
@@ -71,6 +72,7 @@ When the `"inMemory"` transport is active in a browser and `inMemoryGlobalKey` i
 | `ecs:despawn` | Despawns an entity by numeric id. Removes the entity from the tracked set. |
 | `ecs:setComponent` | v1 no-op — component tokens are not addressable by string name. Returns `{ status: "v1-noop" }`. |
 | `ecs:removeComponent` | v1 no-op — same limitation as `ecs:setComponent`. Returns `{ status: "v1-noop" }`. |
+| `input:key` | Injects a key so an agent can play: `{ key, action: "down" \| "up" \| "press" }`. `down` holds, `up` releases, `press` is a one-frame tap. Applied immediately (not command-buffered); the next `loop:step`/tick observes it. |
 | `loop:step` | Advances the loop by exactly one fixed step (deterministic tick). |
 | `loop:pause` | Pauses the rAF-driven game loop. |
 | `loop:resume` | Resumes the rAF-driven game loop. |
@@ -81,9 +83,9 @@ When the `"inMemory"` transport is active in a browser and `inMemoryGlobalKey` i
 
 | URI | Description |
 |---|---|
-| `game://world/snapshot` | JSON snapshot of all MCP-tracked entity ids. v1: only entities spawned via `ecs:spawn`. |
+| `game://world/snapshot` | JSON snapshot of **every live entity** with its named component values: `{ entities: [{ id, components: [{ name, value }] }], count }`. |
 | `game://systems/list` | JSON list of registered scheduler stage names. |
-| `game://stats/frame` | JSON with current `frame` number, `lastDt` (seconds), and MCP-tracked `entityCount`. |
+| `game://stats/frame` | JSON with current `frame` number, `lastDt` (seconds), and the **true live** `entityCount`. |
 | `game://scene/current` | JSON with the `current` scene name, or `undefined` when no scene is loaded. |
 
 ## Configuration
@@ -95,7 +97,7 @@ When the `"inMemory"` transport is active in a browser and `inMemoryGlobalKey` i
 | `httpPort` | `number` | `3333` | HTTP server port. |
 | `httpAuth` | `"none" \| "bearer"` | `"none"` | HTTP auth mode. `"none"` trusts the local network; `"bearer"` requires a token on every request. |
 | `bearerToken` | `string` | `""` | Required when `httpAuth === "bearer"`. Must be non-empty — validated at startup. |
-| `enableMutations` | `boolean` | `true` | When `false`, only the three read-only tools are registered (`ecs:query`, `renderer:screenshot`, `scene:getInfo`). |
+| `enableMutations` | `boolean` | `true` | When `false`, only the four read-only tools are registered (`ecs:query`, `renderer:tree`, `renderer:screenshot`, `scene:getInfo`). |
 | `inMemoryGlobalKey` | `string` | `"__MOKU_GAME_MCP__"` | `globalThis` property name on which the in-page client transport is published when `"inMemory"` is active in a browser. Set to `""` to disable the publish (the `clientTransport()` API still works). |
 
 ## Usage Example
@@ -127,8 +129,11 @@ console.log("Tools:", app.mcp.toolNames());
 - **SDK isolation:** all `@modelcontextprotocol/sdk` imports are confined to `transport.ts`. Swapping the SDK version only requires editing that one file. `defaultTransports()` lives there too but is a pure environment probe with no SDK call.
 - **Environment-aware default + `inMemory` transport:** `defaultTransports()` selects `["inMemory"]` in a browser and `["stdio"]` under Node/Bun, so the same `createApp()` works in both. The `inMemory` transport is built on the SDK's `InMemoryTransport.createLinkedPair()` — the server side is connected, the client side is retained on the handle and exposed via `clientTransport()`. It is in-page only (reachable solely by code in the same realm), so it carries no network surface.
 - **stdio guard:** before constructing the stdio transport the plugin checks `typeof process !== "undefined" && process.stdin`; in a browser (no `process.stdin`) it skips stdio and emits a `ctx.log.warn` rather than letting the SDK throw an opaque `reading 'on'` error.
-- **Frame-safe mutations:** mutating tools push closures into a `pending: Array<() => void>` queue that is spliced and drained on each `"input"` stage tick by a registered ECS system.
-- **Tracked entities:** only entities spawned through `ecs:spawn` appear in the tracked set. The ECS world has no public enumerate-all API (v1 limitation).
+- **Frame-safe mutations:** ECS-structural mutating tools push closures into a `pending: Array<() => void>` queue drained on each `"input"` stage tick. `input:key` is the exception — it mutates the input edge-sets **directly** (between frames, exactly like a real DOM event); draining it would run *after* the input-stage snapshot system and garble edge timing.
+- **Reading state:** `ecs:query`, `game://world/snapshot`, and `entityCount` use the ECS introspection facet (`liveEntities`/`entityCount`/`componentsOf`) — they cover the **whole** live world, not just MCP-spawned entities. Components are visible by name only when defined with `{ name }` (the renderer names its `Transform`). For positions/text of arbitrary Pixi objects, use `renderer:tree`.
+- **Reliable screenshots:** `renderer:screenshot` calls `renderer.screenshot()` → `app.renderer.extract.base64(stage)`, which re-renders into an extract target, so a capture taken while paused is never blank (unlike reading the WebGL backbuffer).
+- **Stateless HTTP:** the `"http"` transport builds a fresh MCP server + transport **per request** (the SDK's Streamable HTTP transport is single-use), so repeated requests no longer throw *"Stateless transport cannot be reused across requests."* `stdio`/`inMemory` keep one long-lived server.
+- **Scene must be defined at boot for agent control:** an agent can only `scene:load` scenes that have been `define()`d. **Define (and, if appropriate, load) scenes at startup — do not gate `define`/`load` behind a DOM menu** — otherwise an agent driving the page through the `inMemory` bridge cannot start a match.
 - **Half-open safety:** if any transport fails to connect during startup, all already-connected transports are closed before the error propagates.
 - **WeakMap pattern:** per-instance state (the `McpHandle`) is stored in a module-level `WeakMap<object, McpHandle>` keyed on `ctx.global`, mirroring the `loop` plugin's teardown pattern.
 - **Tool naming (`:` separator):** tool names use a `domain:action` form (`ecs:spawn`, `loop:step`, …) per the framework spec. The MCP SDK warns that `:` is non-standard (SEP-986 permits only `A–Z a–z 0–9 _ - .`) and registration still proceeds, but a strict MCP client may reject or mis-display these names. This is a deliberate, spec-faithful choice; if you target strict clients, front them with a name-mapping adapter.

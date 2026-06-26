@@ -29,6 +29,8 @@ interface ComponentEntry {
   readonly id: number;
   readonly create: () => unknown;
   readonly storage: StorageStrategy;
+  /** Optional introspection name (from defineComponent/defineTag `opts.name`); undefined when anonymous. */
+  readonly name: string | undefined;
 }
 
 // ─── Stage execution order ────────────────────────────────────
@@ -382,21 +384,22 @@ export function createWorld(config: Config): World {
      * Register a new component type and return its typed token.
      *
      * @param create - Factory that produces the default value for this component.
-     * @param opts - Optional storage options.
+     * @param opts - Optional storage + introspection options.
      * @param opts.storage - Storage strategy: `"archetype"` (default) or `"sparse"`.
+     * @param opts.name - Optional name making the component discoverable via `componentNames`/`componentsOf`.
      * @returns A `Component<T>` token used to spawn and query entities.
      * @example
      * ```ts
-     * const Position = world.defineComponent(() => ({ x: 0, y: 0 }));
+     * const Position = world.defineComponent(() => ({ x: 0, y: 0 }), { name: "Position" });
      * ```
      */
     defineComponent<T extends object>(
       create: () => T,
-      opts?: { storage?: StorageStrategy }
+      opts?: { storage?: StorageStrategy; name?: string }
     ): Component<T> {
       const id = nextComponentId++;
       const storage = opts?.storage ?? "archetype";
-      componentRegistry.set(id, { id, create, storage });
+      componentRegistry.set(id, { id, create, storage, name: opts?.name });
       if (storage === "sparse") sparseStorage.set(id, new Map());
       return makeToken<T>(id);
     },
@@ -404,8 +407,9 @@ export function createWorld(config: Config): World {
     /**
      * Register a zero-value tag component and return its typed token.
      *
-     * @param opts - Optional storage options.
+     * @param opts - Optional storage + introspection options.
      * @param opts.storage - Storage strategy: `"sparse"` (default) or `"archetype"`.
+     * @param opts.name - Optional name making the tag discoverable via `componentNames`/`componentsOf`.
      * @returns A `Component<Record<never, never>>` token for the tag.
      * @example
      * ```ts
@@ -413,7 +417,10 @@ export function createWorld(config: Config): World {
      * world.spawn(Alive({}));
      * ```
      */
-    defineTag(opts?: { storage?: StorageStrategy }): Component<Record<never, never>> {
+    defineTag(opts?: {
+      storage?: StorageStrategy;
+      name?: string;
+    }): Component<Record<never, never>> {
       const id = nextComponentId++;
       const storage = opts?.storage ?? "sparse";
       /**
@@ -426,7 +433,7 @@ export function createWorld(config: Config): World {
        * ```
        */
       const createTag = (): Record<never, never> => ({});
-      componentRegistry.set(id, { id, create: createTag, storage });
+      componentRegistry.set(id, { id, create: createTag, storage, name: opts?.name });
       if (storage === "sparse") sparseStorage.set(id, new Map());
       return makeToken<Record<never, never>>(id);
     },
@@ -656,6 +663,86 @@ export function createWorld(config: Config): World {
         // Flush at each stage boundary even if no systems ran
         flushBuffer();
       }
+    },
+
+    // ─── Introspection (read-only — for tooling such as the mcp plugin) ───────
+
+    /**
+     * Return a snapshot array of every currently-live entity handle.
+     *
+     * @returns A read-only array of live entity handles (fresh copy; order follows slot index).
+     * @example
+     * ```ts
+     * for (const e of world.liveEntities()) console.log(world.componentsOf(e));
+     * ```
+     */
+    liveEntities(): readonly Entity[] {
+      return entityTable.liveEntities();
+    },
+
+    /**
+     * Return the number of currently-live entities (O(1) — maintained by the entity table).
+     *
+     * @returns The count of live entities.
+     * @example
+     * ```ts
+     * const n = world.entityCount();
+     * ```
+     */
+    entityCount(): number {
+      return entityTable.liveCount();
+    },
+
+    /**
+     * Return the names of all components defined with an `opts.name`, in registration order.
+     * Anonymous components are not listed.
+     *
+     * @returns A read-only array of registered component names.
+     * @example
+     * ```ts
+     * world.componentNames(); // ["Transform", "Velocity"]
+     * ```
+     */
+    componentNames(): readonly string[] {
+      const names: string[] = [];
+      for (const entry of componentRegistry.values()) {
+        if (entry.name !== undefined) names.push(entry.name);
+      }
+      return names;
+    },
+
+    /**
+     * Return the named components currently on an entity, paired with their live values.
+     * Anonymous components are omitted; a dead or unknown entity yields an empty array.
+     *
+     * @param entity - The entity to inspect.
+     * @returns A read-only array of `{ name, value }` for each named component the entity has.
+     * @example
+     * ```ts
+     * world.componentsOf(ball); // [{ name: "Transform", value: { x: 10, y: 5 } }]
+     * ```
+     */
+    componentsOf(entity: Entity): ReadonlyArray<{ name: string; value: unknown }> {
+      if (!entityTable.isAlive(entity)) return [];
+
+      const result: Array<{ name: string; value: unknown }> = [];
+      for (const entry of componentRegistry.values()) {
+        if (entry.name === undefined) continue;
+
+        // Probe the storage that matches this component's strategy.
+        const present =
+          entry.storage === "sparse"
+            ? (sparseStorage.get(entry.id)?.has(entity) ?? false)
+            : archetypeStore.has(entity, entry.id);
+        if (!present) continue;
+
+        const value =
+          entry.storage === "sparse"
+            ? sparseStorage.get(entry.id)?.get(entity)
+            : archetypeStore.get(entity, entry.id);
+        result.push({ name: entry.name, value });
+      }
+      return result;
     },
 
     // ─── Resources ───────────────────────────────────────────

@@ -67,6 +67,20 @@ const makeContainer = () => ({
   destroy: vi.fn()
 });
 
+/** Build a structural Pixi-display-object stub for the scene-graph walk. */
+const makeNode = (over: Record<string, unknown> = {}) => ({
+  label: "",
+  position: { x: 0, y: 0 },
+  rotation: 0,
+  scale: { x: 1, y: 1 },
+  visible: true,
+  alpha: 1,
+  width: 0,
+  height: 0,
+  children: [] as unknown[],
+  ...over
+});
+
 /** A stub Transform token of the same shape onStart stores on state. */
 const makeToken = (id: number): Component<TransformValue> =>
   ({ __id: id, __value: {} }) as unknown as Component<TransformValue>;
@@ -78,7 +92,7 @@ import type { RendererContext } from "../../api";
 // ─────────────────────────────────────────────────────────────────────────────
 import { createApi } from "../../api";
 import { createState } from "../../state";
-import type { Config } from "../../types";
+import type { Config, SceneNode } from "../../types";
 
 const defaultConfig: Config = {
   width: 800,
@@ -230,6 +244,95 @@ describe("createApi", () => {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
+  // screenshot (Pixi extract)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  describe("screenshot", () => {
+    it("returns undefined before start (app is undefined)", async () => {
+      const ctx = createMockCtx();
+      const api = createApi(ctx);
+
+      await expect(api.screenshot()).resolves.toBeUndefined();
+    });
+
+    it("delegates to renderer.extract.base64(stage) and returns its data URL", async () => {
+      const ctx = createMockCtx();
+      const base64 = vi.fn().mockResolvedValue("data:image/png;base64,AAAA");
+      const stage = makeContainer();
+      ctx.state.app = {
+        renderer: { extract: { base64 } },
+        stage
+      } as unknown as import("pixi.js").Application;
+      const api = createApi(ctx);
+
+      const result = await api.screenshot();
+
+      expect(result).toBe("data:image/png;base64,AAAA");
+      expect(base64).toHaveBeenCalledWith(stage);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // tree (scene-graph walk)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  describe("tree", () => {
+    it("returns undefined before start (app is undefined)", () => {
+      const ctx = createMockCtx();
+      const api = createApi(ctx);
+
+      expect(api.tree()).toBeUndefined();
+    });
+
+    it("serialises the stage and its children with positions and types", () => {
+      const ctx = createMockCtx();
+      const scoreText = makeNode({
+        label: "score",
+        text: "12",
+        position: { x: 10, y: 20 },
+        width: 50,
+        height: 12
+      });
+      const paddle = makeNode({ label: "paddle", texture: {}, position: { x: 5, y: 100 } });
+      const stage = makeNode({ label: "stage", children: [scoreText, paddle] });
+      ctx.state.app = { stage } as unknown as import("pixi.js").Application;
+      const api = createApi(ctx);
+
+      const tree = api.tree();
+
+      expect(tree?.label).toBe("stage");
+      expect(tree?.type).toBe("Container");
+      expect(tree?.children).toHaveLength(2);
+
+      const [text, sprite] = tree?.children ?? [];
+      expect(text?.type).toBe("Text");
+      expect(text?.text).toBe("12");
+      expect(text?.x).toBe(10);
+      expect(text?.y).toBe(20);
+      expect(sprite?.type).toBe("Sprite");
+      expect(sprite?.text).toBeUndefined();
+    });
+
+    it("truncates children past the MAX_TREE_DEPTH cap (no pathological recursion)", () => {
+      const ctx = createMockCtx();
+      // A chain deeper than the 64-level cap (70 wrappers around a leaf).
+      let node: Record<string, unknown> = makeNode({ label: "leaf" });
+      for (let i = 0; i < 70; i += 1) node = makeNode({ label: `n${i}`, children: [node] });
+      ctx.state.app = { stage: node } as unknown as import("pixi.js").Application;
+      const api = createApi(ctx);
+
+      // Follow the single child chain; it must bottom out (children === []) at the cap.
+      let cursor = api.tree();
+      let depth = 0;
+      while (cursor && cursor.children.length > 0) {
+        cursor = cursor.children[0];
+        depth += 1;
+      }
+      expect(depth).toBe(64); // MAX_TREE_DEPTH — deeper nodes are dropped
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
   // Type-level assertions
   // ─────────────────────────────────────────────────────────────────────────
 
@@ -261,6 +364,20 @@ describe("createApi", () => {
       const api = createApi(ctx);
 
       expectTypeOf(api.getStage).toEqualTypeOf<() => Container | undefined>();
+    });
+
+    it("screenshot returns Promise<string | undefined>", () => {
+      const ctx = createMockCtx();
+      const api = createApi(ctx);
+
+      expectTypeOf(api.screenshot).toEqualTypeOf<() => Promise<string | undefined>>();
+    });
+
+    it("tree returns SceneNode | undefined", () => {
+      const ctx = createMockCtx();
+      const api = createApi(ctx);
+
+      expectTypeOf(api.tree).toEqualTypeOf<() => SceneNode | undefined>();
     });
   });
 });
