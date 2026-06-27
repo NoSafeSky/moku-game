@@ -43,6 +43,38 @@ export type SceneNode = {
   children: SceneNode[];
 };
 
+/**
+ * Shared style fields for every {@link PrimitiveSpec} shape. Plain data — color
+ * ints (e.g. `0xff0000`), no Pixi types. `label` sets the resulting node's Pixi
+ * label so {@link Api.tree} reports it.
+ */
+export type PrimitiveStyle = {
+  /** Fill color as a hex int (e.g. `0xff0000`), or undefined for no fill. */
+  fill?: number;
+  /** Stroke color as a hex int, or undefined for no stroke. */
+  stroke?: number;
+  /** Stroke width in pixels. Default: 1 (when a stroke color is set). */
+  strokeWidth?: number;
+  /** Node opacity, 0–1. Default: 1. */
+  alpha?: number;
+  /** Pixi node label so {@link Api.tree} can report it. */
+  label?: string;
+};
+
+/**
+ * JSON-describable primitive shape + style, built into a Pixi `Graphics` by the
+ * renderer's `attachPrimitive`. A discriminated union over `shape`; no Pixi types
+ * leak past the renderer boundary.
+ */
+export type PrimitiveSpec =
+  | ({ shape: "rect"; width: number; height: number } & PrimitiveStyle)
+  | ({ shape: "circle"; radius: number } & PrimitiveStyle)
+  | ({ shape: "line"; x2: number; y2: number } & PrimitiveStyle)
+  | ({
+      shape: "polygon";
+      points: ReadonlyArray<{ x: number; y: number }>;
+    } & PrimitiveStyle);
+
 /** Transform component value shape (renderer defines and reads it on the ecs world). */
 export type TransformValue = {
   /** X position in world-space pixels. */
