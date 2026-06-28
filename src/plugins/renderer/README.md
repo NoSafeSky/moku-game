@@ -72,12 +72,49 @@ const dataUrl = await app.renderer.screenshot(); // "data:image/png;base64,..." 
 
 ### `tree(): SceneNode | undefined`
 
-Returns a JSON-serialisable snapshot of the Pixi scene graph rooted at the stage — `{ label, type, x, y, rotation, scaleX, scaleY, visible, alpha, width, height, text?, children }` (with `text` for Pixi `Text` nodes). The most direct way to read on-screen positions and text. `undefined` when headless / before start. No Pixi types leak — `SceneNode` is plain data. Used by the `mcp` plugin's `renderer:tree` tool.
+Returns a JSON-serialisable snapshot of the Pixi scene graph rooted at the stage — `{ label, type, x, y, rotation, scaleX, scaleY, visible, alpha, width, height, text?, children }` (with `text` for Pixi `Text` nodes). The `type` field is a best-effort node kind, one of `"Text" | "Graphics" | "Sprite" | "Container"` — duck-typed in this order so a Pixi v8 `Graphics` (which also exposes a `texture` getter) is correctly reported as `"Graphics"` rather than mislabeled `"Sprite"`. The most direct way to read on-screen positions and text. `undefined` when headless / before start. No Pixi types leak — `SceneNode` is plain data. Used by the `mcp` plugin's `renderer:tree` tool.
 
 ```ts
 const root = app.renderer.tree();
 // { label: "stage", type: "Container", children: [{ label: "score", type: "Text", text: "12", x: 10, y: 8, ... }] }
 ```
+
+### `attachPrimitive(entity, spec): boolean`
+
+Builds a Pixi `Graphics` from a plain `PrimitiveSpec`, **adds it to the stage itself** (`stage.addChild`), and registers it (views + dirty) so the sync system positions it from the entity's `Transform` on the next `sync` tick. This is the one method that contrasts with `attach()`: `attach()` only records the view in the views map and leaves it to the consumer to add the display object to the stage, whereas `attachPrimitive` does the `stage.addChild` itself — so an MCP-spawned entity actually renders without the caller holding a stage handle. Returns `false` when headless / before start (no `app`) — nothing is added; `true` otherwise. Used by the `mcp` plugin to make agent-spawned entities visible. No Pixi types cross the boundary — `spec` is plain data (see `PrimitiveSpec` below).
+
+```ts
+const ok = app.renderer.attachPrimitive(entity, { shape: "circle", radius: 10, fill: 0xff0000 });
+```
+
+#### `PrimitiveSpec` / `PrimitiveStyle`
+
+Plain, JSON-describable shape + style — no Pixi types leak. `PrimitiveSpec` is a discriminated union over `shape`, each variant carrying its own geometry plus the shared `PrimitiveStyle` fields:
+
+```ts
+type PrimitiveStyle = {
+  fill?: number;        // hex int e.g. 0xff0000, or omitted for no fill
+  stroke?: number;      // hex int, or omitted for no stroke
+  strokeWidth?: number; // px, default 1 when stroke is set
+  alpha?: number;       // 0–1, default 1
+  label?: string;       // sets the Pixi node label so tree() reports it
+};
+
+type PrimitiveSpec =
+  | ({ shape: "rect"; width: number; height: number } & PrimitiveStyle)
+  | ({ shape: "circle"; radius: number } & PrimitiveStyle)
+  | ({ shape: "line"; x2: number; y2: number } & PrimitiveStyle)
+  | ({ shape: "polygon"; points: ReadonlyArray<{ x: number; y: number }> } & PrimitiveStyle);
+```
+
+| Shape | Geometry fields | Notes |
+|---|---|---|
+| `rect` | `width`, `height` | Drawn from the local origin `(0, 0)`. |
+| `circle` | `radius` | Centred on the local origin. |
+| `line` | `x2`, `y2` | From the local origin to `(x2, y2)`. Stroke only — `fill` is ignored. |
+| `polygon` | `points` | A closed polygon through the given points. |
+
+Style fields apply to every shape: `fill` (skipped for `line`), `stroke` (with `strokeWidth`, default `1`), `alpha` (default `1`), and `label` (sets the Pixi node label so `tree()` reports it).
 
 ## Lifecycle
 

@@ -28,11 +28,18 @@ kernel events. Systems reach shared services (assets, logging, frame time) throu
   `ctx.log` and `ctx.env` are on every plugin context.
 - **ECS data model.** `app.ecs` returns the `World` facade directly (no wrapper). Components are
   registered with `defineComponent(create, opts?)` and are themselves callable: `Position({x,y})`
-  produces a `ComponentInit` spawn payload. Storage is archetype object-SoA by default
-  (`"archetype"`) with a per-component `"sparse"` opt-out for high-churn tags. `Entity` is a
-  generational handle (`(generation << 16) | index`), so stale handles are detectably dead via
-  `isAlive`. Typed variadic `query(...)` covers arities 1–8. Structural mutations during iteration
-  go through a deferred command buffer flushed at each stage boundary.
+  produces a `ComponentInit` spawn payload. `opts.name` makes a component discoverable by name via
+  the introspection facet. Storage is archetype object-SoA by default (`"archetype"`) with a
+  per-component `"sparse"` opt-out for high-churn tags. `Entity` is a generational handle
+  (`(generation << 16) | index`), so stale handles are detectably dead via `isAlive`. Typed
+  variadic `query(...)` covers arities 1–8. Structural mutations during iteration go through a
+  deferred command buffer flushed at each stage boundary.
+- **ECS introspection facet (read-only, for tooling such as mcp).** `liveEntities()`,
+  `entityCount()`, `componentNames()`, `componentsOf(entity)`, and `componentByName(name)` expose
+  the live world without touching layout. `componentByName` resolves a component registered with
+  `opts.name` to its callable token (widened to `Component<Record<string, unknown>>` so callers
+  pass partial values without per-component generics); `undefined` for unknown/anonymous names,
+  first-wins on duplicate names.
 - **World resources (first-class systems access).** The world owns a typed singleton registry —
   `Resource<T>` tokens identify shared services/state systems read through the `world` argument
   with no closure capture. `defineResource(create?)` mints an auto-keyed (`"res:N"`) token and
@@ -45,23 +52,32 @@ kernel events. Systems reach shared services (assets, logging, frame time) throu
 - **Fixed-timestep loop.** The `loop` plugin owns the frame: a `requestAnimationFrame` loop with a
   fixed-timestep accumulator. Each frame it clamps the real delta (`maxFrameDelta`), runs
   `scheduler.tick(fixedDt)` zero-or-more times (capped at `maxStepsPerFrame`), then calls
-  `renderer.render()` once. `step()` advances exactly one deterministic tick + render. Each fixed
-  step it updates the `Time` world resource in place (`{ dt, elapsed, frame }`, seconds; no
-  per-step allocation).
+  `renderer.render()` once. `step()` advances exactly one deterministic tick + render and now
+  RETURNS a `TimeStepResult` (`{ frame, elapsed, dt }`) snapshot of the just-advanced clock
+  (`{ 0, 0, 0 }` before start / after stop; widening from `void` is non-breaking). Each fixed step
+  it updates the `Time` world resource in place (`{ dt, elapsed, frame }`, seconds; no per-step
+  allocation).
 - **Scheduler stages.** Five fixed, ordered stages: `input → update → physics → sync → render`.
   Systems are `(world, dt) => void`. The command buffer is flushed between stages. `scheduler` is a
   thin facade that forwards to `world.addSystem` / `world.tick`.
+- **Polled input + injection.** DOM listeners mutate a live resource; an `"input"`-stage system
+  freezes it into an immutable `InputSnapshot` per frame. Programmatic `keyDown`/`keyUp`/`keyPress`
+  inject keys (for agents/tests); each normalizes a small alias set first — `"Space"`/`"Spacebar"`
+  → `" "`, `"Esc"` → `"Escape"`, all other keys pass through — so the snapshot observes the
+  canonical `KeyboardEvent.key`.
 - **MCP runtime exposure.** The `mcp` plugin attaches a Model Context Protocol server exposing
-  read-only + mutating tools and JSON resources. The transport default is **environment-aware**:
-  `["stdio"]` under Node/Bun, `["inMemory"]` in a browser (an in-page `InMemoryTransport` pair, no
-  socket — reach the client side via `app.mcp.clientTransport()`); Streamable HTTP is opt-in. The
-  stdio transport is guarded on `process?.stdin` so a browser default never crashes. Mutating tools
-  enqueue closures drained on the next `"input"` stage tick (frame-safe).
+  read-only + mutating tools and JSON resources (15 tools total). The transport default is
+  **environment-aware**: `["stdio"]` under Node/Bun, `["inMemory"]` in a browser (an in-page
+  `InMemoryTransport` pair, no socket — reach the client side via `app.mcp.clientTransport()`);
+  Streamable HTTP is opt-in. The stdio transport is guarded on `process?.stdin` so a browser
+  default never crashes. Mutating tools enqueue closures drained on the next `"input"` stage tick
+  (frame-safe). Mutations are honest: unknown component/scene names, dead entities, and headless
+  renderers return MCP `isError` / `{ changed: false }` rather than optimistic success.
 - **Headless renderer.** `renderer.headless` (auto-detected: `true` when `typeof document ===
   "undefined"`, explicitly overridable) skips Pixi/GPU entirely in `onStart` — no `Application` is
-  created, `state.app` stays `undefined`, `render()`/`getView()`/`getStage()` become safe no-ops —
-  but `Transform` is still defined and the `sync` system still registered, so ECS/scene code is
-  identical headless or not. Lets the same framework boot under Bun/Node (tests, simulation, agents).
+  created, `state.app` stays `undefined`, `render()`/`getView()`/`getStage()`/`screenshot()`/
+  `tree()`/`attachPrimitive()` become safe no-ops/`undefined`/`false` — but `Transform` is still
+  defined and the `sync` system still registered, so ECS/scene code is identical headless or not.
 
 ## Quick Reference
 
@@ -89,8 +105,8 @@ await app.stop();           // tears down GPU + listeners
 ### app.ecs — the World facade (Complex)
 
 ```ts
-defineComponent<T>(create: () => T, opts?: { storage?: "archetype" | "sparse" }): Component<T>
-defineTag(opts?: { storage?: "archetype" | "sparse" }): Tag      // storage default "sparse"
+defineComponent<T>(create: () => T, opts?: { storage?: "archetype" | "sparse"; name?: string }): Component<T>
+defineTag(opts?: { storage?: "archetype" | "sparse"; name?: string }): Tag      // storage default "sparse"
 // component tokens are callable: Position({ x, y }) => ComponentInit
 spawn(...parts: ComponentInit[]): Entity
 despawn(entity: Entity): void
@@ -104,6 +120,12 @@ query(...components): Query<Values>            // overloads arity 1..8
 //   Query: updateEach(cb), count(), first(), [Symbol.iterator]
 addSystem(stage: Stage, system: System): () => void
 tick(dt: number): void                         // runs all stages in order, flushes buffer between
+// ── Introspection (read-only — for tooling such as the mcp plugin) ──
+liveEntities(): readonly Entity[]              // fresh snapshot of all live entity handles
+entityCount(): number                          // direct count of live entities
+componentNames(): readonly string[]            // names of components defined with opts.name (registration order)
+componentsOf(entity): ReadonlyArray<{ name: string; value: unknown }>  // named components on an entity
+componentByName(name: string): Component<Record<string, unknown>> | undefined  // name → callable token; first-wins on dup
 // ── World resources (typed singletons) — immediate, never command-buffered ──
 defineResource<T>(create?: () => T): Resource<T>   // mints "res:N" key + optional lazy factory
 setResource<T>(resource: Resource<T>, value: T): void
@@ -126,26 +148,35 @@ tick(dt: number): void                                // forwards to world.tick
 
 ```ts
 readonly Transform: Component<{ x; y; rotation; scaleX; scaleY }>   // throws if read before start(); defined even when headless
-attach(entity: Entity, view: Container): void  // Container/Sprite/Graphics
+attach(entity: Entity, view: Container): void  // Container/Sprite/Graphics — caller owns stage.addChild
+attachPrimitive(entity: Entity, spec: PrimitiveSpec): boolean  // builds a Pixi Graphics from plain data, ADDS it to the stage; false when headless/before start
 detach(entity: Entity): void                   // destroy()s view, idempotent
 render(): void                                 // draws one frame; no-op before start AND when headless
+screenshot(): Promise<string | undefined>      // PNG data URL via Pixi extract; undefined when headless/before start
+tree(): SceneNode | undefined                  // JSON scene-graph snapshot; SceneNode.type ∈ Text|Graphics|Sprite|Container
 getView(): HTMLCanvasElement | undefined       // canvas for manual mounting; undefined when headless
 getStage(): Container | undefined              // root Pixi stage; undefined when headless
 markDirty(entity: Entity): void                // re-sync view next "sync" tick
+// PrimitiveStyle = { fill?: number; stroke?: number; strokeWidth?: number; alpha?: number; label?: string }  // hex-int colors, no Pixi types
+// PrimitiveSpec = discriminated union on `shape`:
+//   { shape:"rect"; width; height } | { shape:"circle"; radius }
+//   | { shape:"line"; x2; y2 } | { shape:"polygon"; points: ReadonlyArray<{x;y}> }  (each & PrimitiveStyle)
 // Config.headless: boolean — @default detectHeadless() (true when typeof document === "undefined").
-//   When true, onStart skips Pixi/GPU entirely (no Application, state.app stays undefined) but still
-//   defines Transform + registers the sync system, so ECS/scene code is identical in both modes.
 ```
 
-### app.input (Standard) — polled
+### app.input (Standard) — polled + injectable
 
 ```ts
 snapshot(): InputSnapshot
+keyDown(key: string): void    // hold a key (alias-normalized: "Space"/"Spacebar"→" ", "Esc"→"Escape")
+keyUp(key: string): void      // release a key (alias-normalized)
+keyPress(key: string): void   // one-frame tap: justPressed + justReleased, never sticks (alias-normalized)
 // InputSnapshot:
 //   isDown(key: string): boolean
 //   justPressed(key: string): boolean         // one frame only
 //   justReleased(key: string): boolean         // one frame only
 //   readonly pointer: { x: number; y: number; buttons: number }  // buttons: 1=L 2=R 4=M
+// Injection is immediate (between frames, NOT command-buffered); the snapshot observes the canonical key.
 ```
 
 ### app.loop (Standard) — fixed-timestep rAF + Time resource
@@ -154,12 +185,13 @@ snapshot(): InputSnapshot
 start(): void          // begin/resume rAF loop (no-op if running)
 stop(): void           // pause; cancels pending frame
 isRunning(): boolean
-step(): void           // one deterministic fixed tick + render, no real-time accumulation
+step(): TimeStepResult // one deterministic fixed tick + render; returns { frame, elapsed, dt }; { 0,0,0 } before start/after stop
 readonly time: Resource<TimeState>   // well-known Time token, also exported as Time from loop/resources
 // TimeState (all readonly to consumers; loop mutates in place each step — no allocation):
 //   dt: number        // fixed step length in SECONDS (== config.fixedDt)
 //   elapsed: number   // total simulated time in SECONDS (sum of all fixed steps)
 //   frame: number     // count of fixed steps since start (not seconds)
+// TimeStepResult = Pick<TimeState, "frame" | "elapsed" | "dt">
 // read from a system: world.resource(app.loop.time) → { dt, elapsed, frame }
 ```
 
@@ -191,6 +223,8 @@ define(name: string, definition: SceneDefinition): void
 load(name: string): Promise<void>     // unload current → preload bundle → run setup → emit scene:loaded
 unload(): void                        // detach + despawn owned entities (if despawnOnUnload)
 currentScene(): string | undefined
+sceneNames(): readonly string[]       // registered scene names (registration order); [] before any define
+ownedEntities(): readonly Entity[]    // snapshot of current scene's owned entities; [] after unload
 ```
 
 ### app.mcp (Complex) — MCP server (env-aware transports)
@@ -201,30 +235,33 @@ httpEndpoint(): string | undefined    // e.g. "http://127.0.0.1:3333/mcp", or un
 toolNames(): readonly string[]
 clientTransport(): InMemoryClientTransportLike | undefined  // in-page client paired with the server when "inMemory" is active
 // Config.transports: ReadonlyArray<"stdio" | "http" | "inMemory">
-//   @default env-aware: ["inMemory"] in a browser, ["stdio"] under Node/Bun. "inMemory" is in-page only (no socket):
-//   built on the SDK's InMemoryTransport.createLinkedPair(); the client side is returned by clientTransport() and
-//   (when inMemoryGlobalKey is non-empty, default "__MOKU_GAME_MCP__") also published on globalThis[key] in a browser.
-//   stdio connect is guarded on process?.stdin (skip+warn in a browser, never an opaque SDK throw).
+//   @default env-aware: ["inMemory"] in a browser, ["stdio"] under Node/Bun. "inMemory" is in-page only (no socket).
+// Config.enableMutations: boolean — @default true. false → only the 4 read-only tools are registered.
 // Config.inMemoryGlobalKey: string — @default "__MOKU_GAME_MCP__" ("" disables the globalThis publish).
 ```
 
-MCP tools (read-only, always): `ecs:query`, `renderer:screenshot`, `scene:getInfo`.
-MCP tools (mutating, when `enableMutations: true`): `ecs:spawn`, `ecs:despawn`, `ecs:setComponent`
-(v1 no-op), `ecs:removeComponent` (v1 no-op), `loop:step`, `loop:pause`, `loop:resume`,
-`scene:load`, `game:reset`.
-MCP resources: `game://world/snapshot`, `game://systems/list`, `game://stats/frame`,
-`game://scene/current`.
+MCP tools — 15 total.
+Read-only (always, 4): `ecs:query`, `renderer:screenshot`, `renderer:tree`, `scene:getInfo`.
+Mutating / play (when `enableMutations: true`, 11): `ecs:spawn` (REAL components resolved via
+`componentByName`), `ecs:despawn`, `ecs:setComponent`, `ecs:removeComponent`, `renderer:attach`
+(visible primitive), `input:key`, `loop:step`, `loop:pause`, `loop:resume`, `scene:load`,
+`game:reset`. Unknown component/scene names + dead entities return `isError`; despawn/remove report
+`{ changed: boolean }`.
+MCP resources: `game://world/snapshot` (every live entity + named values), `game://systems/list`
+(stage names only — systems are anonymous), `game://stats/frame`, `game://scene/current`.
 
 ## Events
 
 The catalog is intentionally tiny — per-frame work is on the hot path, off the event bus.
 
-- `assets:loaded` — `{ alias: string; kind: "asset" | "bundle" }` — after `load()`/`loadBundle()`.
-- `scene:loaded` — `{ name: string }` — after a scene's `setup` completes during `load()`.
+- `assets:loaded` — `{ alias: string; kind: "asset" | "bundle" }` — after `load()`/`loadBundle()`. (framework Events)
+- `scene:loaded` — `{ name: string }` — after a scene's `setup` completes during `load()`. (framework Events)
+- `game:reset` — `{ reason: "mcp" }` — after the mcp `game:reset` tool despawns all MCP-tracked
+  entities and unloads the current scene. (mcp plugin event — declared + emitted by the mcp plugin)
 
-Defined in `src/config.ts` (framework `Events` type). Subscribe from a consumer plugin's `hooks`.
-The `context` plugin exposes the framework emitter to systems via `GameContext.emit`, but owns no
-events of its own.
+`assets:loaded`/`scene:loaded` are declared in `src/config.ts` (framework `Events`); `game:reset` is
+declared on the `mcp` plugin's `Events`. Subscribe from a consumer plugin's `hooks`. The `context`
+plugin exposes the framework emitter to systems via `GameContext.emit`, but owns no events of its own.
 
 ## File Structure
 
@@ -235,10 +272,10 @@ game/
 │   ├── index.ts             # Layer 2: createCore assembles the 9 plugins; exports createApp/createPlugin (+ createCore/createCoreConfig for advanced/headless assembly)
 │   └── plugins/
 │       ├── index.ts         # plugin barrel (instances + type namespaces)
-│       ├── ecs/             # data/runtime core + resource registry (world.ts, types.ts, README.md, __tests__/)
+│       ├── ecs/             # data/runtime core + introspection + resource registry (world.ts, types.ts, README.md, __tests__/)
 │       ├── scheduler/       # stage contract facade
-│       ├── renderer/        # PixiJS v8 backend (api.ts, lifecycle.ts, sync.ts, types.ts)
-│       ├── input/           # polled keyboard/pointer
+│       ├── renderer/        # PixiJS v8 backend (api.ts, lifecycle.ts, sync.ts, primitives.ts, types.ts)
+│       ├── input/           # polled keyboard/pointer + key injection (api.ts)
 │       ├── loop/            # fixed-timestep rAF loop + Time resource (resources.ts)
 │       ├── assets/          # Pixi Assets wrapper
 │       ├── context/         # binds Assets + GameContext world resources (resources.ts, lifecycle.ts)
@@ -256,32 +293,39 @@ game/
 Built/resolved in dependency order. (depends → resolved with `ctx.require`.)
 
 - **ecs** — data/runtime core: generational entities, archetype object-SoA storage, typed queries,
-  deferred command buffer, typed world resource registry, `world.tick`. | Complex |
-  `defineComponent`/`spawn`/`query`/`addSystem`/`defineResource`/`setResource`/`getResource`/
-  `resource`/`hasResource`/`removeResource`/`tick` | events: none | depends: none.
+  deferred command buffer, read-only introspection facet, typed world resource registry,
+  `world.tick`. | Complex | `defineComponent`/`spawn`/`query`/`addSystem`/`liveEntities`/
+  `entityCount`/`componentNames`/`componentsOf`/`componentByName`/`defineResource`/`setResource`/
+  `getResource`/`resource`/`hasResource`/`removeResource`/`tick` | events: none | depends: none.
 - **scheduler** — ordered stage contract; thin facade over the world. | Standard |
   `addSystem(stage,fn)`/`tick`/`stages` | events: none | depends: ecs.
 - **renderer** — PixiJS v8 backend; owns the GPU `Application`, defines `Transform`, syncs
-  ECS→display objects on the `sync` stage. First-class `headless` config (auto-detected; skips
-  Pixi/GPU, still defines `Transform` + sync). | Complex | `Transform`/`attach`/`render`/`getView`/
-  `getStage`/`markDirty` | config: +`headless` | events: none | depends: ecs, scheduler.
+  ECS→display objects on the `sync` stage, attaches plain-data primitives. First-class `headless`
+  config (auto-detected; skips Pixi/GPU, still defines `Transform` + sync). | Complex |
+  `Transform`/`attach`/`attachPrimitive`/`detach`/`render`/`screenshot`/`tree`/`getView`/`getStage`/
+  `markDirty` | new types: `PrimitiveSpec`, `PrimitiveStyle`, `SceneNode` | config: +`headless` |
+  events: none | depends: ecs, scheduler.
 - **input** — polled keyboard/pointer from DOM listeners → per-frame `InputSnapshot` on the `input`
-  stage. | Standard | `snapshot()` | events: none | depends: scheduler.
+  stage; programmatic `keyDown`/`keyUp`/`keyPress` injection with alias normalization
+  (`"Space"`/`"Spacebar"`→`" "`, `"Esc"`→`"Escape"`). | Standard |
+  `snapshot`/`keyDown`/`keyUp`/`keyPress` | events: none | depends: scheduler.
 - **loop** — fixed-timestep rAF loop driving `scheduler.tick` then `renderer.render` each frame
-  (kernel-bypassing hot path); publishes + mutates the `Time` world resource in place each step. |
-  Standard | `start`/`stop`/`step`/`isRunning`/`time` | events: none | depends: scheduler, renderer, ecs.
+  (kernel-bypassing hot path); publishes + mutates the `Time` world resource in place each step;
+  `step()` returns a `TimeStepResult` clock snapshot. | Standard | `start`/`stop`/`step`/
+  `isRunning`/`time` | new type: `TimeStepResult` | events: none | depends: scheduler, renderer, ecs.
 - **assets** — Pixi v8 `Assets` wrapper: load/cache textures + bundles, build sprites. | Standard |
   `load`/`loadBundle`/`sprite`/`get`/`isLoaded` | events: `assets:loaded` | depends: renderer.
 - **context** — binds the well-known `Assets` + `GameContext` world resources at start so systems
   reach framework services via `world.resource(token)`; static API exposes the two tokens. |
   Standard | `app.context` → `assets`/`game` | events: none | depends: ecs, assets.
 - **scene** — named scene lifecycle with entity-ownership tracking, clean transitions, bundle
-  pre-load. | Standard | `define`/`load`/`unload`/`currentScene` | events: `scene:loaded` |
-  depends: ecs, renderer, assets.
+  pre-load. | Standard | `define`/`load`/`unload`/`currentScene`/`sceneNames`/`ownedEntities` |
+  events: `scene:loaded` | depends: ecs, renderer, assets.
 - **mcp** — first-class MCP server exposing the runtime to agents over stdio / Streamable HTTP /
   in-page `inMemory` (env-aware default: `["stdio"]` Node-Bun, `["inMemory"]` browser; stdio guarded
-  on `process?.stdin`). | Complex | `isRunning`/`httpEndpoint`/`toolNames`/`clientTransport` |
-  config: +`inMemoryGlobalKey` | events: none | depends: all eight above.
+  on `process?.stdin`). 15 tools (4 read-only; 11 mutation/play gated by `enableMutations`). |
+  Complex | `isRunning`/`httpEndpoint`/`toolNames`/`clientTransport` | config: +`inMemoryGlobalKey` |
+  events: `game:reset` (`{ reason: "mcp" }`) | depends: all eight above.
 
 ## Requirements
 

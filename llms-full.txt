@@ -154,9 +154,11 @@ ecs            (no deps — foundation, plugin #1)
 
 Build/resolve order: ecs → scheduler → renderer + input → loop + assets → context → scene → mcp.
 Each plugin declares `depends: [...]` and resolves the API at runtime with `ctx.require(...)`.
-There are no dependency cycles. **Cycle 2 changes:** `loop` gained a dependency on `ecs` (to publish
-the `Time` resource), and the new `context` plugin depends on `ecs` + `assets`. `ecs` still depends
-on nothing, so adding it as a `loop`/`context` dependency introduces no cycle.
+There are no dependency cycles. `loop` depends on `ecs` (to publish the `Time` resource), the
+`context` plugin depends on `ecs` + `assets`, and `mcp` depends on all eight other plugins (its
+Cycle 5 tools call into ecs introspection/mutation, the renderer primitive surface, input injection,
+loop control, and scene introspection/control). `ecs` still depends on nothing, so adding it as a
+`loop`/`context`/`mcp` dependency introduces no cycle.
 
 --------------------------------------------------------------------------------
 ## 3. Framework Config & Events (verbatim public types)
@@ -172,18 +174,29 @@ export type Events = {
 };
 ```
 
-Event catalog (complete — only two events):
+The `mcp` plugin additionally declares a **plugin-level** event (not on the framework `Events`):
 
-| Event | Payload | Emitted by | When |
+```ts
+// src/plugins/mcp/types.ts
+export type Events = {
+  "game:reset": { reason: "mcp" };
+};
+```
+
+Event catalog (complete):
+
+| Event | Payload | Declared/Emitted by | When |
 |---|---|---|---|
-| `assets:loaded` | `{ alias: string; kind: "asset" \| "bundle" }` | assets | once per `load()` / `loadBundle()` success; for a bundle `alias` is the bundle name |
-| `scene:loaded` | `{ name: string }` | scene | after a scene's `setup` completes during `load()` (not on `unload`, not per entity) |
+| `assets:loaded` | `{ alias: string; kind: "asset" \| "bundle" }` | framework Events / assets | once per `load()` / `loadBundle()` success; for a bundle `alias` is the bundle name |
+| `scene:loaded` | `{ name: string }` | framework Events / scene | after a scene's `setup` completes during `load()` (not on `unload`, not per entity) |
+| `game:reset` | `{ reason: "mcp" }` | mcp plugin Events / mcp | after the `game:reset` tool's hard-reset closure runs — every MCP-tracked entity despawned and the current scene unloaded; consumers listen to re-init their own state |
 
 Design note: per-frame hot-path work (ticks, sync, render, input, structural mutations, resource
 ops) is **deliberately not emitted** as kernel events — emitting an event per frame would defeat the
-kernel-bypass that keeps the loop fast. ecs, scheduler, renderer, input, loop, context, and mcp emit
-no events and register no hooks. The `context` plugin hands systems a typed `emit` (the framework
-emitter) inside `GameContext`, but owns no event surface of its own.
+kernel-bypass that keeps the loop fast. ecs, scheduler, renderer, input, loop, and context emit no
+events and register no hooks; `mcp` emits exactly one (`game:reset`). The `context` plugin hands
+systems a typed `emit` (the framework emitter) inside `GameContext`, but owns no event surface of
+its own.
 
 --------------------------------------------------------------------------------
 ## 4. ecs — data/runtime core (Complex)
@@ -222,8 +235,12 @@ export type Query<Values extends readonly object[]> = {
 };
 
 export type World = {
-  defineComponent<T extends object>(create: () => T, opts?: { storage?: StorageStrategy }): Component<T>;
-  defineTag(opts?: { storage?: StorageStrategy }): Tag;
+  // `opts.name` makes a component discoverable by name through the introspection facet.
+  defineComponent<T extends object>(
+    create: () => T,
+    opts?: { storage?: StorageStrategy; name?: string }
+  ): Component<T>;
+  defineTag(opts?: { storage?: StorageStrategy; name?: string }): Tag;
   spawn(...parts: ComponentInit[]): Entity;
   despawn(entity: Entity): void;
   isAlive(entity: Entity): boolean;
@@ -236,6 +253,13 @@ export type World = {
   // ... query(c1..c8) ...
   addSystem(stage: Stage, system: System): () => void;
   tick(dt: number): void;
+
+  // ── Introspection (read-only — for tooling such as the mcp plugin) ──
+  liveEntities(): readonly Entity[];                                       // fresh snapshot of all live handles (order unspecified)
+  entityCount(): number;                                                   // direct count (cheaper than liveEntities().length)
+  componentNames(): readonly string[];                                     // names of components defined with opts.name (registration order)
+  componentsOf(entity: Entity): ReadonlyArray<{ name: string; value: unknown }>;  // NAMED components on an entity; [] if dead/unknown
+  componentByName(name: string): Component<Record<string, unknown>> | undefined;  // name → callable token; undefined for unknown/anonymous; first-wins on dup
 
   // ── Resources (typed singletons) ──
   defineResource<T>(create?: () => T): Resource<T>;             // mints "res:N" key + optional lazy factory
@@ -281,6 +305,28 @@ export type Api = World;          // the plugin API contract IS the World facade
 - **Ticking:** `tick(dt)` runs each stage's systems in fixed order `input → update → physics → sync
   → render`, flushing the command buffer between stages. `dt` is the frame delta in seconds.
 
+### Read-only introspection facet
+
+The world exposes five read-only methods so external tooling (notably the `mcp` plugin) can inspect
+the live world without touching archetype layout. None mutate; all are safe between or during
+frames.
+
+| Method | Signature | Semantics |
+|---|---|---|
+| `liveEntities` | `liveEntities(): readonly Entity[]` | Fresh snapshot array of every currently-live handle (order unspecified; includes component-less entities). Mutating it does not affect the world. |
+| `entityCount` | `entityCount(): number` | Direct count of live entities (cheaper than `liveEntities().length`). |
+| `componentNames` | `componentNames(): readonly string[]` | Names of all components defined with `opts.name`, in registration order. Anonymous components are not listed. |
+| `componentsOf` | `componentsOf(entity): ReadonlyArray<{ name: string; value: unknown }>` | The **named** components currently on an entity, paired with live values. Anonymous components omitted; a dead/unknown entity yields `[]`. |
+| `componentByName` | `componentByName(name): Component<Record<string, unknown>> \| undefined` | Resolve a name (set via `opts.name`) to its callable token, **widened** to `Component<Record<string, unknown>>` so callers pass partial values without per-component generics or inline casts. Returns `undefined` for an unknown or anonymous name. On duplicate names, the **first registered** token wins (prefer unique names). |
+
+```ts
+const Position = app.ecs.defineComponent(() => ({ x: 0, y: 0 }), { name: "Position" });
+app.ecs.componentNames();                  // ["Position", ...]
+const token = app.ecs.componentByName("Position");  // same token reference, widened
+if (token) app.ecs.add(entity, token, { x: 5 });    // use with add/set/get/has/remove
+app.ecs.componentByName("Nope");           // undefined
+```
+
 ### World resources (typed singletons) — first-class systems access
 
 World resources are typed singletons attached to the world: shared services and state that systems
@@ -297,8 +343,7 @@ the `loop` plugin's `Time` (`"loop:time"`).
 **Resource ops are IMMEDIATE — never command-buffered.** Unlike `spawn`/`despawn`/`add`/`remove`
 (which defer during iteration), all resource methods apply synchronously even inside `updateEach`
 or a system, because they touch only the resource maps, never archetype layout — so they cannot
-corrupt an in-flight query. The world's internal `iterating` flag is deliberately ignored by every
-resource method, and resource ops are **not** counted by `maxStructuralOpsWarn`.
+corrupt an in-flight query. Resource ops are **not** counted by `maxStructuralOpsWarn`.
 
 | Method | Signature | Semantics |
 |---|---|---|
@@ -309,9 +354,7 @@ resource method, and resource ops are **not** counted by `maxStructuralOpsWarn`.
 | `hasResource` | `hasResource<T>(resource: Resource<T>): boolean` | `true` if a read would succeed — a value is set, **or** a default factory exists. |
 | `removeResource` | `removeResource<T>(resource: Resource<T>): void` | Clear the stored value. A factory, if any, re-initializes it on the next read. Immediate, never buffered. |
 
-`getResource` vs `resource`: both perform the same lazy-init. `getResource` returns `T | undefined`
-(caller handles absence); `resource` returns `T` and **throws** when the resource is unset and no
-factory was registered. The thrown error is:
+The thrown `resource()` error is:
 
 ```
 [game] world.resource() — resource "<key>" is not set.
@@ -320,11 +363,8 @@ factory was registered. The thrown error is:
 ```
 
 ```ts
-// Define once at setup; an optional factory supplies the default (lazy-init + memoize).
 const Score = app.ecs.defineResource(() => ({ value: 0, combo: 1 }));
-
 app.ecs.setResource(Score, { value: 100, combo: 3 });   // immediate, anywhere
-
 app.ecs.addSystem("update", (w) => {
   const score = w.resource(Score);     // asserts present → { value, combo }
   if (score.combo > 5) score.value *= 2;
@@ -336,7 +376,7 @@ app.ecs.addSystem("update", (w) => {
 ### Example
 
 ```ts
-const Position = app.ecs.defineComponent(() => ({ x: 0, y: 0 }));
+const Position = app.ecs.defineComponent(() => ({ x: 0, y: 0 }), { name: "Position" });
 const Velocity = app.ecs.defineComponent(() => ({ dx: 0, dy: 0 }), { storage: "sparse" });
 const Dead = app.ecs.defineTag();
 
@@ -400,12 +440,41 @@ Isolates all of PixiJS v8 behind one plugin. Creates the Pixi `Application` asyn
 `onStart` with `autoStart: false` (Pixi's own ticker never fires — the loop drives every frame),
 registers a `sync`-stage system mirroring ECS `Transform` into Pixi display objects, and destroys
 the `Application` in `onStop` to guard against Pixi v8 VRAM leaks. Pixi types never cross the plugin
-boundary except `HTMLCanvasElement` (getView) and `Container` (attach/getStage).
+boundary except `HTMLCanvasElement` (getView) and `Container` (attach/getStage). `attachPrimitive`,
+`screenshot`, and `tree` exchange **plain data only** (PrimitiveSpec / base64 string / SceneNode) —
+no Pixi types leak.
 
 ### Public types (src/plugins/renderer/types.ts)
 
 ```ts
 export type TransformValue = { x: number; y: number; rotation: number; scaleX: number; scaleY: number };
+
+// JSON-serialisable snapshot of one Pixi display object (returned by tree()).
+export type SceneNode = {
+  label: string;        // the display object's `label`, or "" when unlabelled
+  type: string;         // best-effort kind: "Text" | "Graphics" | "Sprite" | "Container"
+  x: number; y: number; rotation: number; scaleX: number; scaleY: number;
+  visible: boolean; alpha: number; width: number; height: number;
+  text?: string;        // present only for Pixi Text nodes
+  children: SceneNode[];
+};
+
+// Shared style fields for every PrimitiveSpec shape. Plain data — hex-int colors, no Pixi types.
+export type PrimitiveStyle = {
+  fill?: number;         // fill color as a hex int (e.g. 0xff0000), or undefined for no fill
+  stroke?: number;       // stroke color as a hex int, or undefined for no stroke
+  strokeWidth?: number;  // stroke width in px; default 1 when a stroke color is set
+  alpha?: number;        // node opacity 0–1; default 1
+  label?: string;        // Pixi node label so tree() can report it
+};
+
+// JSON-describable primitive shape + style, built into a Pixi Graphics by attachPrimitive.
+// Discriminated union over `shape`; no Pixi types leak.
+export type PrimitiveSpec =
+  | ({ shape: "rect"; width: number; height: number } & PrimitiveStyle)
+  | ({ shape: "circle"; radius: number } & PrimitiveStyle)
+  | ({ shape: "line"; x2: number; y2: number } & PrimitiveStyle)
+  | ({ shape: "polygon"; points: ReadonlyArray<{ x: number; y: number }> } & PrimitiveStyle);
 
 export type Config = {
   width: number;       // @default 800
@@ -419,9 +488,12 @@ export type Config = {
 
 export type Api = {
   readonly Transform: Component<TransformValue>;  // throws if read before app.start()
-  attach(entity: Entity, view: Container): void;  // Container/Sprite/Graphics; marks dirty
+  attach(entity: Entity, view: Container): void;  // Container/Sprite/Graphics; marks dirty — caller owns stage.addChild
+  attachPrimitive(entity: Entity, spec: PrimitiveSpec): boolean;  // builds a Graphics, ADDS it to the stage itself, registers for sync; false when headless/before start
   detach(entity: Entity): void;                   // destroy()s view; idempotent
   render(): void;                                 // draws one frame; no-op before start
+  screenshot(): Promise<string | undefined>;      // PNG data URL via Pixi extract.base64; undefined when headless/before start
+  tree(): SceneNode | undefined;                  // JSON scene-graph snapshot rooted at the stage; undefined when headless/before start
   getView(): HTMLCanvasElement | undefined;       // canvas for manual mounting
   getStage(): Container | undefined;              // root Pixi stage
   markDirty(entity: Entity): void;                // re-sync view on next "sync" tick
@@ -438,54 +510,66 @@ export type Api = {
 | `resolution` | `number` | `0` | Device-pixel-ratio resolution; `0` falls back to `window.devicePixelRatio` (then `1` headless). |
 | `antialias` | `boolean` | `true` | Enable antialiasing. |
 | `mount` | `string \| undefined` | `undefined` | CSS selector to auto-mount the canvas on start. `undefined` = manual mounting via `getView()`. |
-| `headless` | `boolean` | `detectHeadless()` → `true` when `typeof document === "undefined"`, else `false` (explicit value overrides) | Run without Pixi/GPU. `onStart` skips `Application` creation/init, leaves `state.app` undefined, and `render()`/`getView()`/`getStage()` are no-ops — but `Transform` is still defined and `sync` still registered, so ECS/scene code is identical in both modes. |
+| `headless` | `boolean` | `detectHeadless()` → `true` when `typeof document === "undefined"`, else `false` (explicit value overrides) | Run without Pixi/GPU. `onStart` skips `Application` creation/init, leaves `state.app` undefined, and `render()`/`getView()`/`getStage()`/`screenshot()`/`tree()`/`attachPrimitive()` are no-ops (returning `undefined`/`false`) — but `Transform` is still defined and `sync` still registered, so ECS/scene code is identical in both modes. |
+
+### attach vs attachPrimitive
+
+- **`attach(entity, view)`** — registers a Pixi `Container` (or subclass) you constructed and added
+  to the stage yourself. The renderer only tracks + repositions it from `Transform` each `sync`
+  tick; it does **not** call `stage.addChild` for you.
+- **`attachPrimitive(entity, spec)`** — takes a plain-data `PrimitiveSpec`, builds a Pixi `Graphics`
+  from it, **adds it to the stage itself**, and registers it (views + dirty) so the sync system
+  positions it from the entity's `Transform`. Designed so an MCP-spawned entity actually renders
+  without the caller needing a stage handle. Returns `false` when headless / before start (nothing
+  is added). Backed by `src/plugins/renderer/primitives.ts`.
+
+### tree() / SceneNode
+
+`tree()` returns a depth-capped, JSON-serialisable snapshot of the Pixi scene graph rooted at the
+stage — the most direct way for an agent to read on-screen positions and text. `SceneNode.type`
+reports a best-effort kind from the set `"Text" | "Graphics" | "Sprite" | "Container"` (Graphics
+nodes — including those from `attachPrimitive` — now report `"Graphics"` correctly). `text` is
+present only for Pixi `Text` nodes.
 
 ### Lifecycle & design
 
 - **`detectHeadless()`:** a pure env probe (`typeof document === "undefined"`) used as the `headless`
-  config default, computed at module load in `index.ts`. It does NOT import or touch Pixi, so it is
-  safe to evaluate as a default. An explicit `headless` value always overrides it.
-- **`onStart` (headless path, `config.headless === true`):** logs `"[renderer] headless — Pixi not
-  initialised"`, skips Pixi entirely (no `new Application()`, no `init`), defines the `Transform`
-  component and registers the `sync` system (so ECS/scene code is identical to non-headless), then
-  stores `{ app: undefined, views }` in the `WeakMap`.
+  config default, computed at module load in `index.ts`. It does NOT import or touch Pixi. An
+  explicit `headless` value always overrides it.
+- **`onStart` (headless path):** logs, skips Pixi entirely (no `new Application()`, no `init`),
+  defines the `Transform` component and registers the `sync` system, then stores
+  `{ app: undefined, views }` in the `WeakMap`.
 - **`onStart` (non-headless path):** `new Application()` → `await app.init({ width, height,
   background, antialias, autoStart: false, resolution })`. On reject, `app.destroy(...)` then rethrow
   (no half-open GPU context). On success: optionally append `app.canvas` to
-  `document.querySelector(config.mount)` (warns if the selector matches nothing); defines the
-  `Transform` component and registers the sync system; writes `app` into state; stashes `{ app,
-  views }` in a module-level `WeakMap` keyed on `ctx.global`.
-- **`onStop`**: reads `{ app, views }` from the `WeakMap` (teardown ctx is only `{ global }`),
-  `destroy()`s every managed `Container`, then — **only when `app` is present** (non-headless) —
-  `app.destroy(true, { children: true, texture: true, textureSource: true })` for full VRAM cleanup,
-  and deletes the `WeakMap` entry. Idempotent.
-- **Shared `Transform` token:** defined once in `onStart` (both modes), read by both the API getter
-  and the sync system from state, so they can never diverge. Reading `app.renderer.Transform` before
-  `start()` throws.
-- **Dirty-flag sync:** `attach`/`markDirty` add the entity to `state.dirty`; each `sync` tick
-  repositions only dirty views (`container.position`, `rotation`, `scale` from `Transform`) then
-  clears the set. A second pass diffs `state.views` against `world.isAlive(...)` to dispose views of
-  despawned entities — replacing per-despawn events with one liveness diff.
-- **Headless mode + DOM degradation:** with `headless: true` the plugin runs in a Node/Bun host with
-  no GPU at all (the Cycle 3 fix for booting under Bun without `_cancelResize` crashes). In the
-  non-headless path, DOM globals (`document`, `devicePixelRatio`) are still probed structurally.
-  Runtime package: `pixi.js@^8`. Composes with `@moku-labs/web` for DOM mounting when `mount` is a
+  `document.querySelector(config.mount)`; defines `Transform` + registers the sync system; writes
+  `app` into state; stashes `{ app, views }` in a module-level `WeakMap` keyed on `ctx.global`.
+- **`onStop`:** reads `{ app, views }` from the `WeakMap`, `destroy()`s every managed `Container`,
+  then — **only when `app` is present** (non-headless) — `app.destroy(true, { children: true,
+  texture: true, textureSource: true })` for full VRAM cleanup, and deletes the `WeakMap` entry.
+  Idempotent.
+- **Dirty-flag sync:** `attach`/`attachPrimitive`/`markDirty` add the entity to `state.dirty`; each
+  `sync` tick repositions only dirty views (`container.position`, `rotation`, `scale` from
+  `Transform`) then clears the set. A second pass diffs `state.views` against `world.isAlive(...)` to
+  dispose views of despawned entities.
+- Runtime package: `pixi.js@^8`. Composes with `@moku-labs/web` for DOM mounting when `mount` is a
   selector.
 
 --------------------------------------------------------------------------------
-## 7. input — polled keyboard/pointer (Standard)
+## 7. input — polled keyboard/pointer + injection (Standard)
 --------------------------------------------------------------------------------
 
 A **polled** model, not event-driven — nothing about input flows through the kernel event bus. DOM
-listeners mutate a live resource; once per frame an `"input"`-stage system freezes it into an
+listeners mutate live edge-sets; once per frame an `"input"`-stage system freezes them into an
 immutable `InputSnapshot` and clears the edge sets, so every later system in the tick reads a
 consistent, frame-aligned view. `justPressed`/`justReleased` are true for exactly one frame.
+Programmatic `keyDown`/`keyUp`/`keyPress` let an agent or test drive gameplay without DOM events.
 
 ### Public types (src/plugins/input/types.ts)
 
 ```ts
 export type InputSnapshot = {
-  isDown(key: string): boolean;        // held (key matches KeyboardEvent.key, e.g. "ArrowRight", "Space", "a")
+  isDown(key: string): boolean;        // held (key matches KeyboardEvent.key, e.g. "ArrowRight", " ", "a")
   justPressed(key: string): boolean;   // one frame only; key-repeat ignored
   justReleased(key: string): boolean;  // one frame only
   readonly pointer: { readonly x: number; readonly y: number; readonly buttons: number };
@@ -498,7 +582,12 @@ export type Config = {
   preventDefault: boolean; // @default false
 };
 
-export type Api = { snapshot(): InputSnapshot };
+export type Api = {
+  snapshot(): InputSnapshot;
+  keyDown(key: string): void;   // inject a held key (alias-normalized)
+  keyUp(key: string): void;     // inject a release (alias-normalized)
+  keyPress(key: string): void;  // inject a one-frame tap: justPressed + justReleased, never sticks (alias-normalized)
+};
 ```
 
 ### Config
@@ -510,9 +599,31 @@ export type Api = { snapshot(): InputSnapshot };
 | `keyboard` | `boolean` | `true` | Attach `keydown`/`keyup`; track key state. |
 | `preventDefault` | `boolean` | `false` | Call `event.preventDefault()` on tracked key events (e.g. stop arrow/space scrolling). |
 
-`pointer.buttons` is a bitmask: `1` = left, `2` = right, `4` = middle. `snapshot()` is stable for
-the whole tick. Before the first tick, `snapshot()` returns an initial snapshot backed by empty
-sets. Lifecycle attaches/detaches DOM listeners (`onStart`/`onStop`), tracked through a module-level
+### Key injection + alias normalization (Cycle 5)
+
+`keyDown`/`keyUp`/`keyPress` write the input edge-sets directly — **immediately, between frames, NOT
+command-buffered** — exactly as a real DOM event would, so the next input-stage snapshot observes
+them. Each method first **normalizes** its `key` argument through a frozen alias map before touching
+the edge-sets, so injected keys agree with the canonical `KeyboardEvent.key` the DOM handler stores:
+
+| Alias | Canonical `KeyboardEvent.key` |
+|---|---|
+| `"Space"` | `" "` (a single space) |
+| `"Spacebar"` | `" "` |
+| `"Esc"` | `"Escape"` |
+
+All other keys (arrow keys, letters, digits, already-canonical `" "` / `"Escape"`) pass through
+unchanged. So `app.input.keyDown("Space")` is equivalent to `keyDown(" ")`, and `keyPress("Esc")` is
+equivalent to `keyPress("Escape")`. The snapshot taken after injection therefore observes the
+**canonical** key, not the alias: after `keyDown("Space")` the next snapshot reports `isDown(" ")
+=== true` (not `isDown("Space")`). Query the snapshot with the same canonical strings the DOM
+handler uses. (`normalizeKey` is exported for unit testing only and is **not** part of the public
+`Api`.) `keyDown` only records the just-pressed edge when the key was not already down (OS key-repeat
+does not re-fire `justPressed`); `keyPress` adds both edges and never leaves the key in the held set.
+
+`pointer.buttons` is a bitmask: `1` = left, `2` = right, `4` = middle. `snapshot()` is stable for the
+whole tick. Before the first tick, `snapshot()` returns an initial snapshot backed by empty sets.
+Lifecycle attaches/detaches DOM listeners (`onStart`/`onStop`), tracked through a module-level
 `WeakMap` keyed on `ctx.global`. Target resolution is node-safe; falls back to `globalThis`
 headless. Depends only on `scheduler` (which already depends on ecs).
 
@@ -522,11 +633,15 @@ headless. Depends only on `scheduler` (which already depends on ecs).
 app.scheduler.addSystem("update", (world, dt) => {
   const input = app.input.snapshot();
   if (input.isDown("ArrowLeft")) player.x -= player.speed * dt;
-  if (input.justPressed("Space")) player.jump();
-  if (input.justReleased("Space")) player.endChargedJump();
+  if (input.justPressed(" ")) player.jump();          // canonical spacebar key
   const { x, y, buttons } = input.pointer;
   if (buttons & 1) player.aimAt(x, y);
 });
+
+// Drive gameplay programmatically (agent / test):
+app.input.keyDown("ArrowRight");   // hold right (canonical "ArrowRight")
+app.input.keyPress("Space");       // one-frame jump → snapshot sees justPressed(" ")
+app.input.keyUp("ArrowRight");     // stop holding right
 ```
 
 --------------------------------------------------------------------------------
@@ -551,6 +666,10 @@ export type TimeState = {
   readonly frame: number;    // count of fixed steps simulated since start (a count, not seconds)
 };
 
+// Value returned by step(): a snapshot of the just-advanced clock.
+// Equivalent to Pick<TimeState, "frame" | "elapsed" | "dt">.
+export type TimeStepResult = Pick<TimeState, "frame" | "elapsed" | "dt">;
+
 export type Config = {
   fixedDt: number;          // @default 1/60
   maxFrameDelta: number;    // @default 0.25
@@ -562,10 +681,20 @@ export type Api = {
   start(): void;        // begin/resume rAF loop (no-op if running); resets accumulator + lastTime
   stop(): void;         // pause; cancelAnimationFrame, running = false (no-op if not running)
   isRunning(): boolean;
-  step(): void;         // exactly one fixed tick + render, NO real-time accumulation; also advances Time
+  step(): TimeStepResult;  // exactly one fixed tick + render, NO real-time accumulation; also advances Time; returns the clock snapshot
   readonly time: Resource<TimeState>;  // well-known Time token; also exported as `Time` from loop/resources
 };
 ```
+
+### `step()` return value (Cycle 5)
+
+`step()` previously returned `void`; it now returns a `TimeStepResult` snapshot of the clock taken
+immediately after it advances `Time` and calls `render()` — `{ frame, elapsed, dt }`, the values
+visible to systems during that step. After one step from zero it returns `{ frame: 1, elapsed:
+0.016…, dt: 0.016… }`. A **no-runtime** call (before `start` / after `stop`, when there is no loop
+runtime) returns `{ frame: 0, elapsed: 0, dt: 0 }`. Widening from `void` to an object is
+non-breaking — existing void-context callers are unaffected. The `mcp` `loop:step` tool returns this
+snapshot to the agent as `{ stepped: true, frame, elapsed, dt }`.
 
 ### Fixed-timestep model
 
@@ -588,8 +717,7 @@ plugins racing on one clock object.
   and caches that same object on its per-instance `LoopRuntime`. Each fixed step it mutates the cached
   object **in place** immediately before `scheduler.tick(fixedDt)` — so a system running that step
   already sees the updated clock. Because the world's registry holds the same reference,
-  `world.resource(Time)` reflects every update with **no per-frame allocation** and no repeated
-  `setResource`.
+  `world.resource(Time)` reflects every update with **no per-frame allocation**.
 - **Per-step update** (in both the rAF callback and `step()`):
 
 ```ts
@@ -609,11 +737,10 @@ import type { World } from "../ecs/types";
 
 app.scheduler.addSystem("update", (world: World, dt: number) => {
   const t = world.resource(Time);   // → { dt, elapsed, frame }
-  // t.dt === the dt argument === config.fixedDt (seconds)
   if (t.frame % 60 === 0) console.log(`elapsed ${t.elapsed.toFixed(2)}s (frame ${t.frame})`);
 });
 
-const clock = world.resource(app.loop.time);  // → e.g. { dt: 0.016, elapsed: 1.23, frame: 74 }
+const { frame, elapsed, dt } = app.loop.step();  // deterministic single step → { frame, elapsed, dt }
 ```
 
 ### Config
@@ -626,13 +753,12 @@ const clock = world.resource(app.loop.time);  // → e.g. { dt: 0.016, elapsed: 
 | `autoStart` | `boolean` | `true` | Schedule the first frame in `onStart`; `false` → call `app.loop.start()`. |
 
 `start`/`stop` double as resume/pause (mcp `loop:resume`/`loop:pause`). `step()` is what the mcp
-`loop:step` tool drives — deterministic, works whether running or stopped, and advances `Time`
-exactly as a real frame would. Lifecycle: rAF id + `visibilitychange` listener live in a
-module-level `WeakMap` keyed on `ctx.global`; `onStart` also binds the `Time` resource; `onStop`
-cancels the pending rAF and removes the listener (prevents a zombie rAF). Headless: rAF/`document`
-read structurally; scheduling is a no-op while `step()` still works. **Dependencies: scheduler,
-renderer, ecs** — `ecs` is the Cycle 2 addition (needed to call `world.setResource(Time, …)`); no
-cycle, since `ecs` depends on nothing. No package dependencies beyond `@moku-labs/core`.
+`loop:step` tool drives — deterministic, works whether running or stopped, advances `Time` exactly
+as a real frame would, and returns its `TimeStepResult` snapshot. Lifecycle: rAF id +
+`visibilitychange` listener live in a module-level `WeakMap` keyed on `ctx.global`; `onStart` also
+binds the `Time` resource; `onStop` cancels the pending rAF and removes the listener. **Dependencies:
+scheduler, renderer, ecs** (`ecs` needed to call `world.setResource(Time, …)`; no cycle). No package
+dependencies beyond `@moku-labs/core`.
 
 --------------------------------------------------------------------------------
 ## 9. assets — Pixi v8 Assets wrapper (Standard)
@@ -738,30 +864,24 @@ export const GameContext: Resource<GameContextValue> = { __key: "ctx:game" };
 
 ### Lifecycle & design
 
-- **`onStart`-only:** the single managed concern is the world-resource bindings, set up once before
-  the first frame. `start(ctx)` does three things: (1) `const world = ctx.require(ecsPlugin)`;
+- **`onStart`-only:** `start(ctx)` does three things: (1) `const world = ctx.require(ecsPlugin)`;
   (2) `world.setResource(Assets, ctx.require(assetsPlugin))` — **always**; (3) if
   `ctx.config.bindGameContext`, `world.setResource(GameContext, { log: ctx.log, emit: ctx.emit, env: ctx.env })`.
-  No `onInit` (binding needs the started `assets` API + world, resolved by `ctx.require` at start)
-  and no `onStop` (the bindings are released with the world). The `onStart` reference carries a
-  `// @no-resource-check` — the world-level binding itself satisfies the "no lifecycle without a
-  resource" rule, mirroring how `renderer.onStart` mints the shared `Transform` token.
+  No `onInit`, no `onStop` (the bindings are released with the world).
 - **Static API, fixed-key tokens:** `createApi` returns the two token consts (`{ assets: Assets,
   game: GameContext }`). The tokens are plain module consts (fixed keys `"ctx:assets"` /
   `"ctx:game"`), valid to reference/capture immediately — only their *values* are unset until
-  `start`. This differs from `world.defineResource`, which mints auto-keyed (`"res:N"`) tokens.
-  `app.context.assets` is the same object as the exported `Assets`; `app.context.game` is the same
-  as `GameContext`.
+  `start`. `app.context.assets` is the same object as the exported `Assets`; `app.context.game` is
+  the same as `GameContext`.
 - **Curated `GameContext`:** exactly `{ log, emit, env }` — `log`/`env` are the *same references* as
   `ctx.log`/`ctx.env`; `emit` forwards `ctx.emit`. It deliberately **excludes** kernel escape
-  hatches (`require`/`has`/`global`) so systems can't re-enter the kernel mid-frame. Frame time is
-  delivered separately as the loop's `Time` resource, not here.
-- **`depends: [ecs, assets]` only:** the global `Events` declared in `createCoreConfig` are visible
-  to every plugin's `ctx.emit`, so `scene:loaded` is emittable through `GameContext.emit` without
-  depending on `scene` — avoiding a runtime-unused dependency.
+  hatches (`require`/`has`/`global`). Frame time is delivered separately as the loop's `Time`
+  resource, not here.
+- **`depends: [ecs, assets]` only:** the global `Events` are visible to every plugin's `ctx.emit`,
+  so `scene:loaded` is emittable through `GameContext.emit` without depending on `scene`.
 - **Ordering:** `context.onStart` runs after `assets.onStart` (start runs in dependency order), and
-  the loop's first tick fires on the next animation frame — after `app.start()` has awaited every
-  `onStart` — so `Assets`/`GameContext` are always bound before any system runs.
+  the loop's first tick fires after `app.start()` has awaited every `onStart` — so
+  `Assets`/`GameContext` are always bound before any system runs.
 
 ### Example
 
@@ -776,8 +896,7 @@ app.ecs.addSystem("render", (world, _dt) => {
 });
 ```
 
-`world.resource(token)` throws the ecs "resource is not set" error if read **before** `start` (the
-tokens are valid immediately, but their values are unset until `onStart` binds them). With
+`world.resource(token)` throws the ecs "resource is not set" error if read **before** `start`. With
 `bindGameContext: false`, `Assets` is still bound but reading `game` throws.
 
 --------------------------------------------------------------------------------
@@ -789,12 +908,14 @@ A scene is a registered `setup(world)` that spawns the entities for one screen/l
 world whose `spawn` is intercepted — every spawned entity is recorded as owned. Transitioning (or
 `unload`) detaches each owned entity's renderer view and despawns it, so nothing leaks between
 scenes. If a scene declares a `bundle`, it is pre-loaded via the assets plugin before `setup` runs.
-(The tracking wrapper delegates the world resource methods through to the real world, so its public
-API is unchanged.)
+(The tracking wrapper delegates the world resource + introspection methods through to the real world,
+so its public API is unchanged.)
 
 ### Public types (src/plugins/scene/types.ts)
 
 ```ts
+import type { Entity, World } from "../ecs/types";
+
 export type Events = { "scene:loaded": { name: string } };
 
 export type SceneDefinition = {
@@ -812,8 +933,20 @@ export type Api = {
   load(name: string): Promise<void>;                        // throws if name was never defined
   unload(): void;                                            // no-op if no scene; does NOT emit scene:loaded
   currentScene(): string | undefined;
+  sceneNames(): readonly string[];      // all registered scene names in registration order; [] before any define
+  ownedEntities(): readonly Entity[];   // snapshot of current scene's owned entity handles; [] after unload
 };
 ```
+
+### New read-only methods (Cycle 5)
+
+| Method | Signature | Semantics |
+|---|---|---|
+| `sceneNames` | `sceneNames(): readonly string[]` | All registered scene names, in registration order (equivalent to `[...state.scenes.keys()]`). Returns `[]` before any `define`. |
+| `ownedEntities` | `ownedEntities(): readonly Entity[]` | A fresh snapshot of the entity handles owned by the current scene (equivalent to `[...state.owned]`). Returns `[]` after `unload`. Mutating the returned array does NOT affect `state.owned`. |
+
+Both back the `mcp` `scene:getInfo` tool and the `scene:load` name-validation. (`mcp` reads
+`sceneNames()` to reject unknown scene names with an error listing the known ones.)
 
 ### Config
 
@@ -826,8 +959,7 @@ export type Api = {
 
 1. **Unload current** — despawn the previous scene's owned entities + detach renderer views (subject
    to `despawnOnUnload`), reset `current`.
-2. **Pre-load bundle** — if `definition.bundle` is set, `await assets.loadBundle(name, bundle)`
-   (keyed by scene name).
+2. **Pre-load bundle** — if `definition.bundle` is set, `await assets.loadBundle(name, bundle)`.
 3. **Run setup** — `await definition.setup(wrappedWorld)`; every `spawn` is tracked as owned.
 4. **Commit + emit** — `current = name`, emit `scene:loaded` with `{ name }`.
 
@@ -840,9 +972,10 @@ part-way still has its spawned entities cleaned up on the next transition. Depen
 --------------------------------------------------------------------------------
 
 Attaches a Model Context Protocol server to the running framework. Agent clients (Claude, Cursor,
-etc.) query live state, control the loop, spawn/despawn entities, trigger scene loads, and capture
-screenshots — without touching game code. Depends on all eight other plugins. The default transport
-is **environment-aware** (`["inMemory"]` in a browser, `["stdio"]` under Node/Bun), so a default
+etc.) query live state, control the loop, spawn/despawn entities with real components, mutate
+components, attach visible primitives, inject keys, trigger scene loads, and capture screenshots —
+without touching game code. Depends on all eight other plugins. The default transport is
+**environment-aware** (`["inMemory"]` in a browser, `["stdio"]` under Node/Bun), so a default
 `createApp().start()` runs in-page without a socket and never crashes on a missing `process.stdin`.
 
 ### Public types (src/plugins/mcp/types.ts)
@@ -856,6 +989,11 @@ export type Config = {
   bearerToken: string;                          // @default ""  (required + non-empty when httpAuth==="bearer")
   enableMutations: boolean;                     // @default true
   inMemoryGlobalKey: string;                    // @default "__MOKU_GAME_MCP__" ("" disables the globalThis publish)
+};
+
+// Plugin event: emitted after the game:reset tool's hard-reset closure runs.
+export type Events = {
+  "game:reset": { reason: "mcp" };
 };
 
 // Structural subset of the SDK Transport interface — no @modelcontextprotocol/sdk type leaks into the public surface.
@@ -886,66 +1024,80 @@ export type Api = {
 | `httpPort` | `number` | `3333` | HTTP server port. |
 | `httpAuth` | `"none" \| "bearer"` | `"none"` | `"none"` trusts the local network; `"bearer"` requires a token on every request. |
 | `bearerToken` | `string` | `""` | Required (non-empty, validated at startup) when `httpAuth === "bearer"`. |
-| `enableMutations` | `boolean` | `true` | `false` → only the three read-only tools are registered. |
+| `enableMutations` | `boolean` | `true` | `false` → only the four read-only tools are registered. |
 | `inMemoryGlobalKey` | `string` | `"__MOKU_GAME_MCP__"` | `globalThis` property name on which the in-page client transport is published when `"inMemory"` is active in a browser. `""` disables the publish (`clientTransport()` still works). |
 
-### MCP tool catalog
+### MCP tool catalog — 15 tools
 
-Read-only (always registered):
-
-| Tool | Description |
-|---|---|
-| `ecs:query` | MCP-tracked entity ids and count. v1: `componentNames` filter not applied (tokens are opaque). |
-| `renderer:screenshot` | Current frame as a raw base64 PNG string (data-URI prefix stripped). Error result if the renderer hasn't started. |
-| `scene:getInfo` | Current scene name, or `undefined`. |
-
-Mutating (registered when `enableMutations: true`):
+Read-only (always registered — 4):
 
 | Tool | Description |
 |---|---|
-| `ecs:spawn` | Spawn an entity with no components. Returns `{ entity: number }`; adds it to the MCP-tracked set. |
-| `ecs:despawn` | Despawn an entity by numeric id; removes it from the tracked set. |
-| `ecs:setComponent` | v1 no-op (tokens not addressable by string name). Returns `{ status: "v1-noop" }`. |
-| `ecs:removeComponent` | v1 no-op. Returns `{ status: "v1-noop" }`. |
-| `loop:step` | Advance the loop one fixed step (deterministic). |
-| `loop:pause` | Pause the rAF loop. |
-| `loop:resume` | Resume the rAF loop. |
-| `scene:load` | Load a named scene (enqueued; unloads current first). |
-| `game:reset` | Despawn all tracked entities, clear the set, call `scene.unload()`. Deferred to the next input-stage tick. |
+| `ecs:query` | Query ALL live entities (via the ecs introspection facet), optionally filtered to those having every named component in `componentNames` (empty/omitted = all). Returns each entity's id + named components with values, plus `count`. Unknown filter names return an error listing the known component names. |
+| `renderer:screenshot` | Current frame as raw base64 PNG (data-URI prefix stripped) via Pixi `extract.base64` (reliable while paused). Error result when headless / not started. |
+| `renderer:tree` | The Pixi scene-graph snapshot (`SceneNode`) rooted at the stage — labels, positions, rotation/scale, visibility, `text` for Text nodes; `type` ∈ Container/Sprite/Text/Graphics. Error result when headless / not started. |
+| `scene:getInfo` | `{ current, scenes, owned }` — current scene name, all registered scene names (`sceneNames()`), and the current scene's owned entity handles (`ownedEntities()`). |
 
-### MCP resource catalog
+Mutating / play (registered when `enableMutations: true` — 11):
+
+| Tool | Description |
+|---|---|
+| `ecs:spawn` | Spawn an entity with **optional named components** (`components`: map of name → partial value). Components are resolved via `componentByName` and applied with `world.add`. ALL names must be known — any unknown name returns an error (listing known names) and aborts before creating any entity. Returns `{ entity }` (and `components` when supplied); adds the entity to the MCP-tracked set. |
+| `ecs:despawn` | Despawn an entity by id. Returns `{ despawned: id, changed }` — `changed` is `false` when the entity was already dead. Removes it from the tracked set. |
+| `ecs:setComponent` | **Upsert** a component value on an entity: `set` (shallow-merge) if present, else `add` (value merged over defaults). Requires the component to have been defined with `opts.name`. Unknown name or dead entity → `isError` (validated before enqueue). Returns `{ id, component, changed: true, value }`. |
+| `ecs:removeComponent` | Remove a named component from an entity. Returns `{ id, component, changed }` — `false` when the component was not present. Unknown name or dead entity → `isError`. |
+| `renderer:attach` | Attach a primitive shape (rect/circle/line/polygon, validated by a zod `PrimitiveSpec` schema) to an entity via `renderer.attachPrimitive` — builds a Pixi Graphics and adds it to the stage so the sync system positions it from `Transform`. Dead entity → `isError`; headless / before start → error (`attached` was `false`). Returns `{ id, attached: true }`. |
+| `input:key` | Inject a key so an agent can play: `action` `"down"` holds, `"up"` releases, `"press"` is a one-frame tap. Applied immediately between frames (the input plugin normalizes `"Space"` → `" "` etc.). Returns `{ key, action }`. |
+| `loop:step` | Advance the loop one fixed step + render (deterministic). Returns the clock snapshot `{ stepped: true, frame, elapsed, dt }` from `loop.step()`. |
+| `loop:pause` | Pause the rAF loop (`loop.stop()`). Returns `{ paused: true }`. |
+| `loop:resume` | Resume the rAF loop (`loop.start()`). Returns `{ resumed: true }`. |
+| `scene:load` | Load a named scene (unloads current first). Validates the name against `sceneNames()` — unknown name returns an error listing known scenes. The load is fire-and-forget (scheduled on the next tick); returns `{ scheduled: name }`. Poll `game://scene/current` for completion. |
+| `game:reset` | Hard reset: despawn all MCP-tracked entities, clear the tracked set, call `scene.unload()`, then **emit the `game:reset` event** (`{ reason: "mcp" }`). Deferred to the next input-stage tick. Returns `{ reset: true }`. |
+
+### MCP resource catalog (4 read-only resources)
 
 | URI | Description |
 |---|---|
-| `game://world/snapshot` | JSON of all MCP-tracked entity ids. v1: only entities spawned via `ecs:spawn`. |
-| `game://systems/list` | JSON list of registered scheduler stage names. |
-| `game://stats/frame` | JSON with current `frame`, `lastDt` (s), MCP-tracked `entityCount`. |
-| `game://scene/current` | JSON with the `current` scene name, or `undefined`. |
+| `game://world/snapshot` | JSON `{ entities, count }` — **every** live entity (via `liveEntities()`) with its named component values (`componentsOf`). |
+| `game://systems/list` | JSON `{ stages }` — registered scheduler **stage names only**; systems are anonymous functions, so per-stage system names/counts are not tracked. |
+| `game://stats/frame` | JSON `{ frame, lastDt, entityCount }` — current frame number, last delta (s), live entity count (all entities in the world). |
+| `game://scene/current` | JSON `{ current }` — the current scene name, or `undefined` when none is loaded. |
 
 ### Design notes
 
 - **Frame-safe mutations:** mutating tools push closures into a `pending: Array<() => void>` queue
-  drained on each `"input"` stage tick by a registered ECS system. Read-only tools and loop controls
-  run directly between frames.
+  drained on each `"input"` stage tick by a registered ECS system, via `enqueueMutation` (the closure
+  is awaited and its return value resolved to the caller). `input:key` is the exception — it injects
+  directly between frames (NOT command-buffered) so the input-stage snapshot observes correct edge
+  timing. Read-only tools and loop controls run directly between frames.
+- **Honest results (Cycle 5):** unknown component names (`componentByName` miss), dead/non-live
+  entities (`isAlive` false), and unknown scene names (`sceneNames()` miss) return MCP `isError`
+  (error text lists the known names) instead of optimistic success; `ecs:despawn` /
+  `ecs:removeComponent` report `{ changed: boolean }` honestly. Validation runs **before**
+  enqueueing the mutation.
+- **`ecs:spawn` spawns REAL entities with components** resolved via `componentByName` (no longer a
+  bare-entity stub). `ecs:setComponent` / `ecs:removeComponent` are the real ECS mutation triad
+  alongside it (no longer v1 no-ops).
 - **Environment-aware default + `inMemory` transport:** `defaultTransports()` (a pure env probe in
   `transport.ts`, no SDK call) picks `["inMemory"]` in a browser and `["stdio"]` under Node/Bun. The
   `inMemory` transport is built on the SDK's `InMemoryTransport.createLinkedPair()` — the server side
-  is connected, the client side is retained on the handle and returned by `clientTransport()`. It is
-  in-page only (reachable solely by code in the same realm), so it carries no network surface. When
+  is connected, the client side is retained on the handle and returned by `clientTransport()`. When
   `"inMemory"` is active in a browser and `inMemoryGlobalKey` is non-empty, the client transport is
   also published on `globalThis[inMemoryGlobalKey]` (removed on `onStop`).
 - **stdio guard:** before constructing the stdio transport the plugin checks `typeof process !==
   "undefined" && process.stdin`; in a browser it skips stdio and emits a `ctx.log.warn` instead of
   letting the SDK throw an opaque `reading 'on'` error.
-- **Tracked entities:** only entities spawned through `ecs:spawn` are tracked (the world has no
-  public enumerate-all API in v1).
+- **Tracked entities:** the `trackedEntities` Set scopes **mutation cleanup** (`ecs:despawn`,
+  `game:reset`) to MCP-created entities; reads (`ecs:query`, `game://world/snapshot`) enumerate the
+  whole world via the ecs introspection facet.
 - **SDK isolation:** all `@modelcontextprotocol/sdk` imports are confined to `transport.ts` (incl.
-  `InMemoryTransport`); `clientTransport()` returns the SDK-free structural `InMemoryClientTransportLike`.
+  `InMemoryTransport`); `clientTransport()` returns the SDK-free structural
+  `InMemoryClientTransportLike`. `zod` is imported in `tools.ts` for input schemas (a schema lib, not
+  the SDK — allowed by the seam rule), including the `PrimitiveSpec` discriminated-union schema.
 - **Tool naming:** tools use `domain:action` (`ecs:spawn`, `loop:step`). The MCP SDK warns `:` is
-  non-standard (SEP-986 permits `A–Z a–z 0–9 _ - .`); registration still proceeds, but strict
-  clients may reject/mis-display — front them with a name-mapping adapter if needed.
-- **Bearer auth:** when `httpAuth: "bearer"`, the HTTP handler compares the `Authorization` header
-  in constant time (`node:crypto` `timingSafeEqual`).
+  non-standard; registration still proceeds, but strict clients may need a name-mapping adapter.
+- **Bearer auth:** when `httpAuth: "bearer"`, the HTTP handler compares the `Authorization` header in
+  constant time (`node:crypto` `timingSafeEqual`).
 - **WeakMap pattern:** per-instance `McpHandle` lives in a module-level `WeakMap` keyed on
   `ctx.global`, mirroring the loop plugin.
 
@@ -972,8 +1124,8 @@ const app = createApp({
 
 await app.start();   // boots Pixi Application, attaches input listeners, binds resources, connects MCP
 
-// Components.
-const Velocity = app.ecs.defineComponent(() => ({ dx: 0, dy: 0 }));
+// Named components → discoverable by the mcp tools via componentByName.
+const Velocity = app.ecs.defineComponent(() => ({ dx: 0, dy: 0 }), { name: "Velocity" });
 
 // Capture the well-known resource tokens once.
 const { assets, game } = app.context;
@@ -1004,48 +1156,98 @@ app.scheduler.addSystem("update", (world, dt) => {
 
 await app.scene.load("level1");   // emits scene:loaded { name: "level1" }; loop is already driving frames
 
-// The MCP server is live: an agent can now hit app.mcp.httpEndpoint() to
-// loop:pause / loop:step / ecs:spawn / scene:load / renderer:screenshot, etc.
+// Drive it deterministically (also what mcp loop:step does):
+const { frame, elapsed, dt } = app.loop.step();              // → { frame, elapsed, dt }
+
+// The MCP server is live: an agent can now (over app.mcp.httpEndpoint() or clientTransport()):
+//   ecs:spawn { components: { Velocity: { dx: 80 } } }      // real components via componentByName
+//   renderer:attach { id, spec: { shape: "circle", radius: 10, fill: 0xff0000 } }  // visible primitive
+//   ecs:setComponent / ecs:removeComponent / input:key / loop:step / scene:load
+//   renderer:tree / renderer:screenshot / scene:getInfo / ecs:query
+//   game:reset  → emits the game:reset { reason: "mcp" } event
 console.log(app.mcp.isRunning(), app.mcp.httpEndpoint(), app.mcp.toolNames());
 
 await app.stop();   // destroys the Pixi Application (frees VRAM), removes listeners, closes MCP
 ```
 
+**Listening for `game:reset`** (a consumer plugin re-initializing after an agent hard reset):
+
+```ts
+import { createPlugin, mcpPlugin } from "game";
+
+const reinit = createPlugin("reinit", {
+  depends: [mcpPlugin],
+  hooks: (ctx) => ({
+    "game:reset": ({ reason }) => {
+      ctx.log.info(`game reset (${reason}) — reloading default scene`);
+      // e.g. ctx.require(scenePlugin).load("level1")
+    }
+  })
+});
+```
+
 --------------------------------------------------------------------------------
-## 14. Error handling & gotchas
+## 14. Extension patterns
+--------------------------------------------------------------------------------
+
+- **Add a gameplay plugin:** `createPlugin("name", { depends: [ecsPlugin, schedulerPlugin], api, lifecycle })`.
+  Resolve deps lazily with `ctx.require(...)` inside methods/lifecycle. Register systems via
+  `ctx.require(schedulerPlugin).addSystem(stage, fn)` (or `ctx.require(ecsPlugin).addSystem`).
+- **Share singletons with systems:** mint a `Resource<T>` with `world.defineResource(() => …)` and
+  read it via `world.resource(token)` inside systems — no closure over `app`. Framework tokens
+  (`Assets`, `GameContext`, `Time`) follow the same pattern.
+- **Make components agent-addressable:** pass `opts.name` to `defineComponent` / `defineTag` so they
+  appear in `componentNames()` / `componentsOf()` and are resolvable via `componentByName()` (and
+  thus usable from the mcp `ecs:spawn` / `ecs:setComponent` / `ecs:removeComponent` tools).
+- **Render without a Pixi handle:** use `renderer.attachPrimitive(entity, spec)` to add a visible
+  rect/circle/line/polygon driven by the entity's `Transform` (this is what the mcp `renderer:attach`
+  tool does).
+- **React to milestones:** subscribe to `assets:loaded` / `scene:loaded` (framework) or `game:reset`
+  (mcp) from a consumer plugin's `hooks` map.
+- **Headless / agent-only host:** force `renderer: { headless: true }` (auto-detected under Node/Bun)
+  to boot without a GPU; `loop.step()` still advances `Time` deterministically and returns its
+  snapshot.
+
+--------------------------------------------------------------------------------
+## 15. Error handling & gotchas
 --------------------------------------------------------------------------------
 
 - `createApp(...)` is synchronous; `app.start()` / `app.stop()` are async and must be awaited.
 - `app.renderer.Transform` throws if read **before** `app.start()` — the token is defined in
-  `onStart`. Spawn renderable entities only after start (e.g. in a scene `setup`, or after `await
-  app.start()`).
+  `onStart`. Spawn renderable entities only after start (e.g. in a scene `setup`).
 - `world.resource(token)` **throws** an actionable error when the resource is unset and has no
   factory; `world.getResource(token)` returns `undefined` instead. Framework resources (`Assets`,
-  `GameContext`, `Time`) are unset until `app.start()` binds them — reading them before start throws.
-  With `context: { bindGameContext: false }`, `Assets` is still bound but reading `GameContext`
-  throws. Resource ops are immediate (never command-buffered) and not counted by
-  `maxStructuralOpsWarn`.
+  `GameContext`, `Time`) are unset until `app.start()` binds them. With
+  `context: { bindGameContext: false }`, `Assets` is still bound but reading `GameContext` throws.
+  Resource ops are immediate (never command-buffered) and not counted by `maxStructuralOpsWarn`.
+- `world.componentByName(name)` returns `undefined` for unknown or anonymous names; on duplicate
+  names the first-registered token wins. Prefer unique `opts.name` values.
 - `app.scheduler.addSystem(stage, …)` with an unknown stage throws by default (`strictStages: true`);
   set `false` to downgrade to a logged warning + no-op.
 - `app.assets.load(...)` rejects on failure by default; set `throwOnError: false` to log and resolve
   `undefined` instead (still typed `Texture` — do not rely on the value).
-- `app.scene.load(name)` throws if `name` was never `define`d.
+- `app.scene.load(name)` throws if `name` was never `define`d. (The mcp `scene:load` tool instead
+  returns an `isError` listing `sceneNames()`.)
+- `app.loop.step()` returns `{ frame, elapsed, dt }`; before `start` / after `stop` (no runtime) it
+  returns `{ 0, 0, 0 }`. The return value is additive — void-context callers are unaffected.
+- `app.input.keyDown/keyUp/keyPress` normalize aliases (`"Space"`/`"Spacebar"` → `" "`, `"Esc"` →
+  `"Escape"`); query the snapshot with the canonical key. Injection is immediate, not buffered.
 - `mcp` with `httpAuth: "bearer"` validates `bearerToken` as non-empty at startup; an empty token
   fails fast.
 - `mcp` transports default by environment: `["inMemory"]` in a browser (in-page, no socket — reach
   the client via `app.mcp.clientTransport()`), `["stdio"]` under Node/Bun. The stdio transport is
-  guarded on `process?.stdin`, so a browser default skips it with a warning instead of an opaque SDK
-  throw. `httpEndpoint()` is `undefined` unless the `"http"` transport is enabled.
+  guarded on `process?.stdin`. `httpEndpoint()` is `undefined` unless the `"http"` transport is
+  enabled. mcp mutating tools return `isError` on unknown component/scene names and dead entities.
 - Headless renderer: `renderer.headless` (auto-detected `true` when there is no DOM, overridable)
   skips Pixi/GPU entirely — `state.app` stays `undefined`; `render()`/`getView()`/`getStage()` are
-  no-ops; `Transform` is still defined and `sync` still runs. The same framework boots under Bun/Node
-  without a GPU. `input` and `loop` likewise degrade gracefully when DOM/rAF globals are absent — loop
-  scheduling is a no-op while `step()` still ticks deterministically (and still advances `Time`).
-- Structural mutations during iteration (`updateEach` / inside a system) are deferred to the command
-  buffer and applied at stage boundaries; outside iteration they apply immediately.
+  no-ops; `screenshot()`/`tree()` resolve/return `undefined`; `attachPrimitive()` returns `false`;
+  `Transform` is still defined and `sync` still runs. `input` and `loop` likewise degrade gracefully
+  when DOM/rAF globals are absent.
+- Structural mutations during iteration are deferred to the command buffer and applied at stage
+  boundaries; outside iteration they apply immediately. Resource ops are always immediate.
 
 --------------------------------------------------------------------------------
-## 15. Scripts, requirements, layout
+## 16. Scripts, requirements, layout
 --------------------------------------------------------------------------------
 
 Scripts (package.json, run with `bun`):
@@ -1072,7 +1274,7 @@ Layout:
 src/config.ts              # Layer 1 — createCoreConfig, Config = {}, Events, createPlugin/createCore
 src/index.ts               # Layer 2 — createCore(9 plugins); exports createApp/createPlugin (+ createCore/createCoreConfig)
 src/plugins/index.ts       # plugin barrel (instances + Ecs/Scheduler/Context/... type namespaces)
-src/plugins/<name>/        # api.ts, types.ts, index.ts, lifecycle.ts / resources.ts (where applicable), README.md, __tests__/
+src/plugins/<name>/        # api.ts, types.ts, index.ts, lifecycle.ts / resources.ts / primitives.ts (where applicable), README.md, __tests__/
 tests/                     # framework-level unit + integration tests
 .planning/specs/           # design specs (intent)
 ```

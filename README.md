@@ -111,15 +111,15 @@ The framework is nine plugins, built and resolved in dependency order: `ecs` →
 
 | Plugin | Tier | Responsibility | Key API |
 |---|---|---|---|
-| [ecs](src/plugins/ecs/README.md) | Complex | Generational entities, archetype object-SoA storage, typed queries, deferred command buffer, world resource registry, `world.tick`. | `app.ecs.defineComponent` · `spawn` · `query(...).updateEach` · `addSystem` · `defineResource` · `resource` · `tick` |
+| [ecs](src/plugins/ecs/README.md) | Complex | Generational entities, archetype object-SoA storage, typed queries, deferred command buffer, world resource registry, read-only introspection facet, `world.tick`. | `app.ecs.defineComponent` · `spawn` · `query(...).updateEach` · `addSystem` · `defineResource` · `resource` · `componentByName` · `tick` |
 | [scheduler](src/plugins/scheduler/README.md) | Standard | The ordered stage contract; thin facade forwarding to the ECS world. | `app.scheduler.addSystem(stage, fn)` · `tick(dt)` · `stages` |
-| [renderer](src/plugins/renderer/README.md) | Complex | PixiJS v8 backend — owns the GPU `Application`, defines `Transform`, syncs ECS → display objects. First-class `headless` mode (no Pixi/GPU). | `app.renderer.Transform` · `attach` · `render` · `getView` · `getStage` |
-| [input](src/plugins/input/README.md) | Standard | Polled keyboard/pointer captured from DOM, frozen into a per-frame snapshot. | `app.input.snapshot()` → `isDown` · `justPressed` · `pointer` |
-| [loop](src/plugins/loop/README.md) | Standard | Fixed-timestep rAF loop driving `scheduler.tick` then `renderer.render` each frame; publishes the `Time` world resource. | `app.loop.start` · `stop` · `step` · `isRunning` · `time` |
+| [renderer](src/plugins/renderer/README.md) | Complex | PixiJS v8 backend — owns the GPU `Application`, defines `Transform`, syncs ECS → display objects, attaches plain-data primitives. First-class `headless` mode (no Pixi/GPU). | `app.renderer.Transform` · `attach` · `attachPrimitive` · `render` · `screenshot` · `tree` · `getView` · `getStage` |
+| [input](src/plugins/input/README.md) | Standard | Polled keyboard/pointer captured from DOM, frozen into a per-frame snapshot; programmatic key injection with alias normalization. | `app.input.snapshot()` → `isDown` · `justPressed` · `pointer`; `keyDown` · `keyUp` · `keyPress` |
+| [loop](src/plugins/loop/README.md) | Standard | Fixed-timestep rAF loop driving `scheduler.tick` then `renderer.render` each frame; publishes the `Time` world resource. | `app.loop.start` · `stop` · `step` (→ `TimeStepResult`) · `isRunning` · `time` |
 | [assets](src/plugins/assets/README.md) | Standard | Thin wrapper over Pixi v8 `Assets` — load/cache textures + bundles by alias, build sprites. | `app.assets.load` · `loadBundle` · `sprite` · `get` · `isLoaded` |
 | [context](src/plugins/context/README.md) | Standard | Binds the well-known `Assets` + `GameContext` world resources so systems reach them via `world.resource(token)`. | `app.context` → `assets` · `game` |
-| [scene](src/plugins/scene/README.md) | Standard | Named scene lifecycle with entity-ownership tracking, clean transitions, bundle pre-load. | `app.scene.define` · `load` · `unload` · `currentScene` |
-| [mcp](src/plugins/mcp/README.md) | Complex | First-class MCP server exposing the runtime to agents over stdio / Streamable HTTP / in-page `inMemory` (env-aware default). | `app.mcp.isRunning` · `httpEndpoint` · `toolNames` · `clientTransport` |
+| [scene](src/plugins/scene/README.md) | Standard | Named scene lifecycle with entity-ownership tracking, clean transitions, bundle pre-load. | `app.scene.define` · `load` · `unload` · `currentScene` · `sceneNames` · `ownedEntities` |
+| [mcp](src/plugins/mcp/README.md) | Complex | First-class MCP server exposing the runtime to agents over stdio / Streamable HTTP / in-page `inMemory` (env-aware default); 15 registered tools (4 read-only, the rest mutation/play gated by `enableMutations`). | `app.mcp.isRunning` · `httpEndpoint` · `toolNames` · `clientTransport` |
 
 ## Events
 
@@ -129,8 +129,9 @@ The event catalog is intentionally tiny — hot-path frame work (ticks, sync, re
 |---|---|---|
 | `assets:loaded` | `{ alias: string; kind: "asset" \| "bundle" }` | After `app.assets.load()` or `loadBundle()` succeeds (once per call, not per texture). |
 | `scene:loaded` | `{ name: string }` | After a scene's `setup` completes during `app.scene.load()`. |
+| `game:reset` | `{ reason: "mcp" }` | After the `mcp` `game:reset` tool despawns all MCP-tracked entities and unloads the current scene — listen to re-initialize consumer state. |
 
-Subscribe from a consumer plugin via the `hooks` map (`depends: [assetsPlugin]`, then `hooks: _ctx => ({ "assets:loaded": ({ alias, kind }) => { … } })`).
+`assets:loaded` and `scene:loaded` are declared on the framework `Events` (`src/config.ts`); `game:reset` is a plugin-level event declared and emitted by the `mcp` plugin. Subscribe from a consumer plugin via the `hooks` map (`depends: [assetsPlugin]`, then `hooks: _ctx => ({ "assets:loaded": ({ alias, kind }) => { … } })`).
 
 ## Scripts
 

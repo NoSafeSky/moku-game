@@ -43,6 +43,27 @@ Unload the current scene. When `despawnOnUnload` is `true` (default) and entitie
 
 Returns the active scene name, or `undefined` before the first load and after `unload`.
 
+### `sceneNames(): readonly string[]`
+
+Read-only introspection — returns the names of all registered scenes in **registration (insertion) order**, equivalent to `[...state.scenes.keys()]`. Returns `[]` before any `define`. Useful for tooling (and the `mcp` plugin) that needs to enumerate what scenes are available to `load`.
+
+```ts
+app.scene.define("menu", { setup });
+app.scene.define("game", { setup });
+app.scene.sceneNames(); // ["menu", "game"]
+```
+
+### `ownedEntities(): readonly Entity[]`
+
+Read-only introspection — returns a **snapshot** of the entity handles owned by the current scene, equivalent to `[...state.owned]`. Because it spreads into a fresh array, mutating the returned value does **not** affect the internal `state.owned` set. Returns `[]` after `unload` (or before any `load`).
+
+```ts
+await app.scene.load("game");
+app.scene.ownedEntities(); // [42, 43, 44] (entity handles spawned in setup)
+app.scene.unload();
+app.scene.ownedEntities(); // []
+```
+
 ### `SceneDefinition` shape
 
 ```ts

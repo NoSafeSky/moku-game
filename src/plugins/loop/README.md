@@ -48,15 +48,21 @@ Returns `true` while the loop is running, `false` otherwise.
 if (app.loop.isRunning()) app.loop.stop();
 ```
 
-### `step(): void`
+### `step(): TimeStepResult`
 
-Advances exactly one fixed step and renders once — calls `scheduler.tick(fixedDt)` then `renderer.render()` with **no real-time accumulation**. Deterministic; intended for tests, frame-stepping tools, and the mcp `loop:step` command. Works whether the loop is running or stopped.
+Advances exactly one fixed step and renders once — updates the `Time` resource (`dt = fixedDt`, `elapsed += fixedDt`, `frame += 1`) immediately before `scheduler.tick(fixedDt)`, then calls `renderer.render()`, with **no real-time accumulation**. Deterministic; intended for tests, frame-stepping tools, and the mcp `loop:step` command. Works whether the loop is running or stopped.
+
+Returns a `TimeStepResult` — a snapshot `{ frame, elapsed, dt }` of the just-advanced clock, reflecting the values systems saw during that step. A no-runtime call (before `start()` / after `stop()`) returns `{ frame: 0, elapsed: 0, dt: 0 }`. **Cycle 5:** widening the return from `void` to an object is non-breaking — existing callers that ignore the return value are unaffected.
 
 ```ts
 app.loop.stop();   // pause
 app.loop.step();   // advance one deterministic frame
 app.loop.step();   // ...and another
 app.loop.start();  // resume real-time
+
+// The return value is the just-advanced frame clock.
+const { frame, elapsed, dt } = app.loop.step();
+// After one step from zero: { frame: 1, elapsed: 0.016, dt: 0.016 }
 ```
 
 ### `time: Resource<TimeState>`
@@ -97,6 +103,17 @@ runtime.time.frame += 1;                // step counter
 ```
 
 This happens both inside the fixed-step `while` loop of the rAF frame callback (`lifecycle.ts`) and inside `step()` (`api.ts`), so deterministic single-stepping advances `Time` exactly as a real frame would.
+
+### `TimeStepResult` (Cycle 5)
+
+`step()` returns a **`TimeStepResult`** — a snapshot of the just-advanced clock, equivalent to `Pick<TimeState, "frame" | "elapsed" | "dt">`:
+
+```ts
+export type TimeStepResult = Pick<TimeState, "frame" | "elapsed" | "dt">;
+// { frame: number; elapsed: number; dt: number }
+```
+
+The snapshot is taken immediately after `step()` advances `Time` and calls `render()`, so it carries the same `frame` / `elapsed` / `dt` values systems observed during that step. A no-runtime call (before `start()` / after `stop()`) returns `{ frame: 0, elapsed: 0, dt: 0 }`. Widening the previous `void` return to this object is non-breaking — callers that ignore the value are unaffected.
 
 ### Reading `Time` from a system
 

@@ -168,6 +168,7 @@ A small read-only facet for tooling — used by the `mcp` plugin to expose the l
 | `entityCount` | `entityCount(): number` | Count of live entities (O(1) — not `liveEntities().length`). |
 | `componentNames` | `componentNames(): readonly string[]` | Names of all components defined with `opts.name`, in registration order. Anonymous components are not listed. |
 | `componentsOf` | `componentsOf(entity): ReadonlyArray<{ name: string; value: unknown }>` | The **named** components currently on an entity, with their live values. Anonymous components are omitted; a dead entity yields `[]`. |
+| `componentByName` | `componentByName(name): Component<Record<string, unknown>> \| undefined` | Resolve a component registered with `opts.name` back to its callable token. `undefined` if no component has that exact name or it was anonymous; on duplicate names the **first** registered token wins. The token's value type is widened to `Record<string, unknown>`, so callers pass partial values without per-component generics. Use it with the existing `add` / `set` / `get` / `has` / `remove`. |
 
 ```ts
 const Health = app.ecs.defineComponent(() => ({ hp: 100 }), { name: "Health" });
@@ -176,6 +177,11 @@ const e = app.ecs.spawn(Health({ hp: 75 }));
 app.ecs.entityCount();        // e.g. 1
 app.ecs.componentNames();     // ["Health"]
 app.ecs.componentsOf(e);      // [{ name: "Health", value: { hp: 75 } }]
+
+// Resolve a name back to its token, then drive the normal mutation methods.
+const token = app.ecs.componentByName("Health"); // same token reference as Health
+if (token) app.ecs.add(e, token, { hp: 50 });
+app.ecs.componentByName("Nope"); // undefined (unknown or anonymous name)
 ```
 
 ## Configuration
