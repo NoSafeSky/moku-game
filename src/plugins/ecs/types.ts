@@ -212,6 +212,32 @@ export type World = {
    */
   componentsOf(entity: Entity): ReadonlyArray<{ name: string; value: unknown }>;
 
+  /**
+   * Resolve a component registered with `opts.name` to its callable component token.
+   *
+   * The token's value type is widened to `Record<string, unknown>` so callers can pass
+   * partial values without per-component generics or inline casts. Use the returned token
+   * with the existing `add` / `set` / `get` / `has` / `remove` methods.
+   *
+   * Returns `undefined` when:
+   * - No component with that exact name has been registered.
+   * - The component was defined without `opts.name` (anonymous).
+   *
+   * **Duplicate names:** if two components share the same `opts.name`, the first one
+   * registered is returned. Prefer unique names to avoid ambiguity.
+   *
+   * @param name - The `opts.name` value passed to `defineComponent` or `defineTag`.
+   * @returns The matching component token, widened to `Component<Record<string, unknown>>`,
+   *   or `undefined` if no named component with that name is found.
+   * @example
+   * ```ts
+   * const Position = world.defineComponent(() => ({ x: 0, y: 0 }), { name: "Position" });
+   * const token = world.componentByName("Position"); // same token reference
+   * if (token) world.add(entity, token, { x: 5 });
+   * ```
+   */
+  componentByName(name: string): Component<Record<string, unknown>> | undefined;
+
   // ── Resources (typed singletons) ──────────────────────────────────────────
 
   /**

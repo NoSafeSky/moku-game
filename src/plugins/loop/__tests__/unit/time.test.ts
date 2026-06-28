@@ -111,7 +111,8 @@ const makeMockWorld = (): MockWorld => {
     liveEntities: vi.fn() as unknown as World["liveEntities"],
     entityCount: vi.fn() as unknown as World["entityCount"],
     componentNames: vi.fn() as unknown as World["componentNames"],
-    componentsOf: vi.fn() as unknown as World["componentsOf"]
+    componentsOf: vi.fn() as unknown as World["componentsOf"],
+    componentByName: vi.fn() as unknown as World["componentByName"]
   };
 
   return mockWorld;

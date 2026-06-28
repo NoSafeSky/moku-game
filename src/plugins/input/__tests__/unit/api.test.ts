@@ -131,19 +131,20 @@ describe("createApi", () => {
       const ctx = makeCtx();
       const api = createApi(ctx);
 
+      // Cycle 5: "Space" normalises to " " before touching edge sets.
       api.keyPress("Space");
       rollFrame(ctx);
 
       const snap = api.snapshot();
-      expect(snap.justPressed("Space")).toBe(true);
-      expect(snap.justReleased("Space")).toBe(true);
-      expect(snap.isDown("Space")).toBe(false);
+      expect(snap.justPressed(" ")).toBe(true);
+      expect(snap.justReleased(" ")).toBe(true);
+      expect(snap.isDown(" ")).toBe(false);
 
       // The tap does not persist into the following frame.
       rollFrame(ctx);
       const next = api.snapshot();
-      expect(next.justPressed("Space")).toBe(false);
-      expect(next.isDown("Space")).toBe(false);
+      expect(next.justPressed(" ")).toBe(false);
+      expect(next.isDown(" ")).toBe(false);
     });
   });
 

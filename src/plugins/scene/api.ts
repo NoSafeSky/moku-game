@@ -135,6 +135,10 @@ const makeTrackingWorld = (world: World, owned: Set<Entity>): World => ({
   componentNames: () => world.componentNames(),
   // eslint-disable-next-line jsdoc/require-jsdoc -- delegation property
   componentsOf: entity => world.componentsOf(entity),
+  // NEW (Cycle 5) — name→token resolver delegation: forward so tooling reading the
+  // tracked world during setup can resolve components by name.
+  // eslint-disable-next-line jsdoc/require-jsdoc -- delegation property
+  componentByName: name => world.componentByName(name),
   // NEW (Cycle 2) — resource delegations: forward the six world-resource methods
   // straight through so the tracked wrapper remains a complete `World` and a scene
   // `setup` can read/write resources (e.g. `world.resource(app.context.assets)`).

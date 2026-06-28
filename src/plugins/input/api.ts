@@ -4,6 +4,39 @@
 import type { Api, InputContext } from "./types";
 
 /**
+ * Frozen alias map: friendly key names → canonical `KeyboardEvent.key` values.
+ *
+ * Covers the three aliases specified in Cycle 5:
+ * - `"Space"` and `"Spacebar"` → `" "` (the real `.key` for the spacebar)
+ * - `"Esc"` → `"Escape"`
+ */
+const KEY_ALIASES: Readonly<Record<string, string>> = Object.freeze({
+  Space: " ",
+  Spacebar: " ",
+  Esc: "Escape"
+});
+
+/**
+ * Normalises a friendly key alias to its canonical `KeyboardEvent.key` value.
+ *
+ * Known aliases (see {@link KEY_ALIASES}) are mapped to their canonical form;
+ * all other keys pass through unchanged. This ensures that injection methods
+ * and DOM handlers agree on the same key strings for the edge sets.
+ *
+ * Exported for unit-testing only — it is NOT part of the public {@link Api}.
+ *
+ * @param key - The raw key string to normalise (e.g. `"Space"`, `"Esc"`).
+ * @returns The canonical `KeyboardEvent.key` string (e.g. `" "`, `"Escape"`).
+ * @example
+ * ```ts
+ * normalizeKey("Space");    // " "
+ * normalizeKey("Esc");      // "Escape"
+ * normalizeKey("ArrowLeft"); // "ArrowLeft"
+ * ```
+ */
+export const normalizeKey = (key: string): string => KEY_ALIASES[key] ?? key;
+
+/**
  * Creates the input plugin API surface.
  *
  * Returns a single `snapshot()` method that returns the current frame's
@@ -40,45 +73,60 @@ export const createApi = (ctx: InputContext): Api => ({
    * snapshot observes the held key (and the just-pressed edge if it was not
    * already down). Mutates live state directly between frames (not buffered).
    *
-   * @param key - The key identifier to press.
+   * Cycle 5: key is normalised before touching the edge sets
+   * (e.g. `"Space"` → `" "`, `"Esc"` → `"Escape"`).
+   *
+   * @param key - The key identifier to press (aliases accepted, e.g. `"Space"`).
    * @example
    * ```ts
    * app.input.keyDown("ArrowRight");
+   * app.input.keyDown("Space"); // equivalent to keyDown(" ")
    * ```
    */
   keyDown: (key: string): void => {
+    const canonical = normalizeKey(key);
     // Only flag the just-pressed edge on a genuine down transition (ignores repeats).
-    if (!ctx.state.down.has(key)) ctx.state.pressed.add(key);
-    ctx.state.down.add(key);
+    if (!ctx.state.down.has(canonical)) ctx.state.pressed.add(canonical);
+    ctx.state.down.add(canonical);
   },
 
   /**
    * Inject a key-up — mirrors the DOM keyup handler. Clears the held key and
    * records the just-released edge for the next snapshot.
    *
-   * @param key - The key identifier to release.
+   * Cycle 5: key is normalised before touching the edge sets
+   * (e.g. `"Space"` → `" "`, `"Esc"` → `"Escape"`).
+   *
+   * @param key - The key identifier to release (aliases accepted, e.g. `"Esc"`).
    * @example
    * ```ts
    * app.input.keyUp("ArrowRight");
+   * app.input.keyUp("Esc"); // equivalent to keyUp("Escape")
    * ```
    */
   keyUp: (key: string): void => {
-    ctx.state.down.delete(key);
-    ctx.state.released.add(key);
+    const canonical = normalizeKey(key);
+    ctx.state.down.delete(canonical);
+    ctx.state.released.add(canonical);
   },
 
   /**
    * Inject a one-frame tap — flags both just-pressed and just-released for the
    * next snapshot without ever holding the key, so it cannot get stuck down.
    *
-   * @param key - The key identifier to tap.
+   * Cycle 5: key is normalised before touching the edge sets
+   * (e.g. `"Space"` → `" "`, `"Esc"` → `"Escape"`).
+   *
+   * @param key - The key identifier to tap (aliases accepted, e.g. `"Space"`).
    * @example
    * ```ts
-   * app.input.keyPress("Space");
+   * app.input.keyPress("Space"); // equivalent to keyPress(" ")
+   * app.input.keyPress("Esc");   // equivalent to keyPress("Escape")
    * ```
    */
   keyPress: (key: string): void => {
-    ctx.state.pressed.add(key);
-    ctx.state.released.add(key);
+    const canonical = normalizeKey(key);
+    ctx.state.pressed.add(canonical);
+    ctx.state.released.add(canonical);
   }
 });

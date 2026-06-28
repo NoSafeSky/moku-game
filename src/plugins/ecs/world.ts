@@ -31,6 +31,15 @@ interface ComponentEntry {
   readonly storage: StorageStrategy;
   /** Optional introspection name (from defineComponent/defineTag `opts.name`); undefined when anonymous. */
   readonly name: string | undefined;
+  /**
+   * The original callable token returned to the caller of defineComponent/defineTag.
+   * Stored here (value-type-erased to `Component<Record<string, unknown>>`) so
+   * `componentByName` can return the exact same reference without a per-call cast.
+   * The single widening cast lives at the registry-store boundary in defineComponent/
+   * defineTag — `Component<T>` is invariant in its value param, so a uniform registry
+   * type necessarily erases the concrete `T`.
+   */
+  readonly token: Component<Record<string, unknown>>;
 }
 
 // ─── Stage execution order ────────────────────────────────────
@@ -399,9 +408,18 @@ export function createWorld(config: Config): World {
     ): Component<T> {
       const id = nextComponentId++;
       const storage = opts?.storage ?? "archetype";
-      componentRegistry.set(id, { id, create, storage, name: opts?.name });
+      const token = makeToken<T>(id);
+      // Widen to the type-erased registry token here (the store boundary) — Component<T>
+      // is invariant in its value param, so the uniform registry necessarily erases T.
+      componentRegistry.set(id, {
+        id,
+        create,
+        storage,
+        name: opts?.name,
+        token: token as unknown as Component<Record<string, unknown>>
+      });
       if (storage === "sparse") sparseStorage.set(id, new Map());
-      return makeToken<T>(id);
+      return token;
     },
 
     /**
@@ -433,9 +451,17 @@ export function createWorld(config: Config): World {
        * ```
        */
       const createTag = (): Record<never, never> => ({});
-      componentRegistry.set(id, { id, create: createTag, storage, name: opts?.name });
+      const token = makeToken<Record<never, never>>(id);
+      // Widen to the type-erased registry token here (the store boundary) — see defineComponent.
+      componentRegistry.set(id, {
+        id,
+        create: createTag,
+        storage,
+        name: opts?.name,
+        token: token as unknown as Component<Record<string, unknown>>
+      });
       if (storage === "sparse") sparseStorage.set(id, new Map());
-      return makeToken<Record<never, never>>(id);
+      return token;
     },
 
     /**
@@ -743,6 +769,36 @@ export function createWorld(config: Config): World {
         result.push({ name: entry.name, value });
       }
       return result;
+    },
+
+    /**
+     * Resolve a component registered with `opts.name` to its callable component token.
+     *
+     * The token's value type is widened to `Record<string, unknown>` so callers can pass
+     * partial values without per-component generics or inline casts. Use the returned token
+     * with the existing `add` / `set` / `get` / `has` / `remove` methods.
+     *
+     * **Read-only** — mutates nothing.
+     *
+     * **Duplicate names:** if two components share the same `opts.name`, the first registered
+     * is returned. Prefer unique names to avoid ambiguity.
+     *
+     * @param name - The `opts.name` value passed to `defineComponent` or `defineTag`.
+     * @returns The matching component token widened to `Component<Record<string, unknown>>`,
+     *   or `undefined` if no named component matches.
+     * @example
+     * ```ts
+     * const token = world.componentByName("Position");
+     * if (token) world.add(entity, token, { x: 5 });
+     * ```
+     */
+    componentByName(name: string): Component<Record<string, unknown>> | undefined {
+      // Linear scan; returns the FIRST entry matching `name` (duplicate names resolve to
+      // the first registered). The stored token is already value-type-erased — no cast here.
+      for (const entry of componentRegistry.values()) {
+        if (entry.name === name) return entry.token;
+      }
+      return undefined;
     },
 
     // ─── Resources ───────────────────────────────────────────
