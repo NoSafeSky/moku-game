@@ -45,4 +45,32 @@ export type Api = {
   unload(): void;
   /** The currently loaded scene name, or undefined. */
   currentScene(): string | undefined;
+  /**
+   * Return the names of all registered scenes in registration order.
+   * Equivalent to `[...state.scenes.keys()]`. Returns `[]` before any `define`.
+   *
+   * @returns A readonly array of registered scene names.
+   * @example
+   * ```ts
+   * api.define("menu", { setup });
+   * api.define("game", { setup });
+   * api.sceneNames(); // ["menu", "game"]
+   * ```
+   */
+  sceneNames(): readonly string[];
+  /**
+   * Return a readonly snapshot of the entity handles owned by the current scene.
+   * Equivalent to `[...state.owned]`. Returns `[]` after `unload`.
+   * Mutating the returned array does NOT affect `state.owned`.
+   *
+   * @returns A readonly snapshot array of owned entity handles.
+   * @example
+   * ```ts
+   * await api.load("game");
+   * api.ownedEntities(); // [42, 43, 44] (entity handles spawned in setup)
+   * api.unload();
+   * api.ownedEntities(); // []
+   * ```
+   */
+  ownedEntities(): readonly Entity[];
 };

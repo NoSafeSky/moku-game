@@ -772,6 +772,124 @@ describe("createApi", () => {
   });
 
   // ──────────────────────────────────────────────────────────────────────────
+  // sceneNames (Cycle 5)
+  // ──────────────────────────────────────────────────────────────────────────
+
+  describe("sceneNames", () => {
+    it("returns [] before any define", () => {
+      const { ctx } = createMockCtx();
+      const api = createApi(ctx);
+
+      expect(api.sceneNames()).toStrictEqual([]);
+    });
+
+    it("returns the registered scene key after a single define", () => {
+      const { ctx } = createMockCtx();
+      const api = createApi(ctx);
+
+      api.define("menu", { setup: vi.fn() });
+
+      expect(api.sceneNames()).toStrictEqual(["menu"]);
+    });
+
+    it("returns all keys in registration order after multiple defines", () => {
+      const { ctx } = createMockCtx();
+      const api = createApi(ctx);
+
+      api.define("menu", { setup: vi.fn() });
+      api.define("game", { setup: vi.fn() });
+      api.define("credits", { setup: vi.fn() });
+
+      expect(api.sceneNames()).toStrictEqual(["menu", "game", "credits"]);
+    });
+
+    it("does not include scene names that were never defined", () => {
+      const { ctx } = createMockCtx();
+      const api = createApi(ctx);
+
+      api.define("menu", { setup: vi.fn() });
+
+      expect(api.sceneNames()).not.toContain("game");
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // ownedEntities (Cycle 5)
+  // ──────────────────────────────────────────────────────────────────────────
+
+  describe("ownedEntities", () => {
+    it("returns [] before any scene is loaded", () => {
+      const { ctx } = createMockCtx();
+      const api = createApi(ctx);
+
+      expect(api.ownedEntities()).toStrictEqual([]);
+    });
+
+    it("returns [] after unload", async () => {
+      const { ctx } = createMockCtx();
+      const api = createApi(ctx);
+
+      api.define("game", {
+        setup: w => {
+          w.spawn();
+        }
+      });
+      await api.load("game");
+      api.unload();
+
+      expect(api.ownedEntities()).toStrictEqual([]);
+    });
+
+    it("returns a snapshot matching the entities spawned in setup after load", async () => {
+      const { ctx, world, state } = createMockCtx();
+      const api = createApi(ctx);
+      const e1 = makeEntity();
+      const e2 = makeEntity();
+
+      (world.spawn as ReturnType<typeof vi.fn>).mockReturnValueOnce(e1).mockReturnValueOnce(e2);
+
+      api.define("game", {
+        setup: w => {
+          w.spawn();
+          w.spawn();
+        }
+      });
+      await api.load("game");
+
+      const snapshot = api.ownedEntities();
+      expect(snapshot).toHaveLength(2);
+      expect(snapshot).toContain(e1);
+      expect(snapshot).toContain(e2);
+      // Must reflect the current owned set
+      expect(snapshot).toStrictEqual([...state.owned]);
+    });
+
+    it("returns a fresh snapshot — mutating the returned array does not affect state.owned", async () => {
+      const { ctx, world, state } = createMockCtx();
+      const api = createApi(ctx);
+      const entity = makeEntity();
+
+      (world.spawn as ReturnType<typeof vi.fn>).mockReturnValueOnce(entity);
+
+      api.define("game", {
+        setup: w => {
+          w.spawn();
+        }
+      });
+      await api.load("game");
+
+      const snapshot = api.ownedEntities() as Entity[];
+      const originalSize = state.owned.size;
+
+      // Mutate the snapshot by clearing it
+      snapshot.length = 0;
+
+      // state.owned must be untouched
+      expect(state.owned.size).toBe(originalSize);
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
   // Type-level tests
   // ──────────────────────────────────────────────────────────────────────────
 
@@ -844,6 +962,20 @@ describe("createApi", () => {
       // Prove the setup callback's world param satisfies the full World contract.
       type SetupWorld = Parameters<SceneDefinition["setup"]>[0];
       expectTypeOf<SetupWorld>().toEqualTypeOf<World>();
+    });
+
+    it("sceneNames() return type is () => readonly string[]", () => {
+      const { ctx } = createMockCtx();
+      const api = createApi(ctx);
+
+      expectTypeOf(api.sceneNames).toEqualTypeOf<() => readonly string[]>();
+    });
+
+    it("ownedEntities() return type is () => readonly Entity[]", () => {
+      const { ctx } = createMockCtx();
+      const api = createApi(ctx);
+
+      expectTypeOf(api.ownedEntities).toEqualTypeOf<() => readonly Entity[]>();
     });
   });
 });

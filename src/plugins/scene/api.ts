@@ -296,6 +296,42 @@ export const createApi = (ctx: SceneContext): Api => {
      */
     currentScene(): string | undefined {
       return ctx.state.current;
+    },
+
+    /**
+     * Return the names of all registered scenes in registration order.
+     * Reads `state.scenes.keys()` and materialises them into a fresh array.
+     * Returns `[]` before any `define` call has been made.
+     *
+     * @returns A readonly array of registered scene names in insertion order.
+     * @example
+     * ```ts
+     * api.define("menu", { setup });
+     * api.define("game", { setup });
+     * api.sceneNames(); // ["menu", "game"]
+     * ```
+     */
+    sceneNames(): readonly string[] {
+      return [...ctx.state.scenes.keys()];
+    },
+
+    /**
+     * Return a readonly snapshot of the entity handles owned by the current
+     * scene. Spreads `state.owned` into a new array so mutations to the
+     * returned array cannot affect the ownership set. Returns `[]` after
+     * `unload` (or before any `load`).
+     *
+     * @returns A readonly snapshot array of owned entity handles.
+     * @example
+     * ```ts
+     * await api.load("game");
+     * api.ownedEntities(); // [42, 43, 44] — handles spawned in setup
+     * api.unload();
+     * api.ownedEntities(); // []
+     * ```
+     */
+    ownedEntities(): readonly Entity[] {
+      return [...ctx.state.owned];
     }
   };
 };
