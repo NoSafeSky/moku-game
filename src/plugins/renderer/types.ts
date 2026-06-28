@@ -17,7 +17,7 @@ import type { Component, Entity } from "../ecs/types";
 export type SceneNode = {
   /** The display object's `label` (user-set name), or "" when unlabelled. */
   label: string;
-  /** Best-effort node kind: "Text", "Sprite", or "Container". */
+  /** Best-effort node kind: "Text", "Graphics", "Sprite", or "Container". */
   type: string;
   /** Local X position in pixels. */
   x: number;
@@ -191,6 +191,23 @@ export type Api = {
    * @returns The root {@link SceneNode}, or `undefined`.
    */
   tree(): SceneNode | undefined;
+  /**
+   * Build a Pixi `Graphics` from `spec`, add it to the stage, and register it
+   * (views + dirty) so the sync system positions it from the entity's `Transform`.
+   *
+   * Unlike {@link attach}, this method does the `stage.addChild` itself so an
+   * MCP-spawned entity actually renders without the caller needing a stage handle.
+   * Returns `false` when headless / before start (no app) — nothing is added.
+   *
+   * @param entity - The entity to associate the primitive view with.
+   * @param spec - Plain JSON-describable shape + style (no Pixi types).
+   * @returns `true` when the primitive was added to the stage; `false` when headless.
+   * @example
+   * ```ts
+   * const ok = api.attachPrimitive(entity, { shape: "circle", radius: 10, fill: 0xff0000 });
+   * ```
+   */
+  attachPrimitive(entity: Entity, spec: PrimitiveSpec): boolean;
 };
 
 /**

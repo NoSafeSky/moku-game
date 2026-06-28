@@ -16,7 +16,7 @@ import { createApi, type LoopContext } from "../../api";
 import { loopRegistry, start } from "../../lifecycle";
 import { Time } from "../../resources";
 import { createState } from "../../state";
-import type { Api, Config, State, TimeState } from "../../types";
+import type { Api, Config, State, TimeState, TimeStepResult } from "../../types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fake rAF / cancelAF / document  (mirrors api.test.ts setup)
@@ -452,5 +452,21 @@ describe("loop: Time type-level", () => {
     const state = createState({ global: Object.freeze({}), config: defaultConfig });
     // State does not have a 'time' field — Time lives in the World registry
     expect("time" in state).toBe(false);
+  });
+
+  it("Api.step returns TimeStepResult (Cycle 5 — type-level)", () => {
+    expectTypeOf<Api["step"]>().toEqualTypeOf<() => TimeStepResult>();
+  });
+
+  it("TimeStepResult.frame is number", () => {
+    expectTypeOf<TimeStepResult["frame"]>().toEqualTypeOf<number>();
+  });
+
+  it("TimeStepResult.elapsed is number", () => {
+    expectTypeOf<TimeStepResult["elapsed"]>().toEqualTypeOf<number>();
+  });
+
+  it("TimeStepResult.dt is number", () => {
+    expectTypeOf<TimeStepResult["dt"]>().toEqualTypeOf<number>();
   });
 });

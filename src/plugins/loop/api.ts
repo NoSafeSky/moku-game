@@ -14,7 +14,7 @@ import type { rendererPlugin } from "../renderer";
 import type { schedulerPlugin } from "../scheduler";
 import { loopRegistry } from "./lifecycle";
 import { Time } from "./resources";
-import type { Api, Config, State } from "./types";
+import type { Api, Config, State, TimeStepResult } from "./types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Context type (structural — only fields actually accessed)
@@ -129,25 +129,31 @@ export const createApi = (ctx: LoopContext): Api => {
     /**
      * Advance exactly one fixed step and render once.
      *
-     * Advances the `Time` resource (`dt = fixedDt`, `elapsed += fixedDt`, `frame += 1`)
+     * Updates the `Time` resource (`dt = fixedDt`, `elapsed += fixedDt`, `frame += 1`)
      * immediately before calling `scheduler.tick(fixedDt)`, then calls `renderer.render()`.
      * Bypasses real-time accumulation — useful for tests, frame-stepping tools, and the
      * mcp `loop:step` command.
      *
+     * Returns a snapshot of the just-advanced clock `{ frame, elapsed, dt }`. A no-runtime
+     * call (before `start()` / after `stop()`) returns `{ frame: 0, elapsed: 0, dt: 0 }`.
+     *
+     * @returns The {@link TimeStepResult} snapshot of the frame clock after this step.
      * @example
      * ```ts
-     * api.step(); // deterministic single-step advance
+     * const { frame, elapsed, dt } = api.step(); // deterministic single-step advance
      * ```
      */
-    step(): void {
+    step(): TimeStepResult {
       const runtime = loopRegistry.get(ctx.global);
-      if (!runtime) return;
+      if (!runtime) return { frame: 0, elapsed: 0, dt: 0 };
 
       runtime.time.dt = ctx.config.fixedDt;
       runtime.time.elapsed += ctx.config.fixedDt;
       runtime.time.frame += 1;
       runtime.tickFunction(ctx.config.fixedDt);
       runtime.renderFunction();
+
+      return { frame: runtime.time.frame, elapsed: runtime.time.elapsed, dt: runtime.time.dt };
     },
 
     /**

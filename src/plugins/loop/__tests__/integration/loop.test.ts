@@ -5,7 +5,7 @@
  * and a fake rAF queue. Tests autoStart, manual start/stop, step(), multi-instance
  * WeakMap isolation, and scheduler.tick forwarding.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Hoisted Pixi mock (mirrors renderer integration test exactly)
@@ -61,6 +61,7 @@ import { rendererPlugin } from "../../../renderer";
 import { schedulerPlugin } from "../../../scheduler";
 import { loopPlugin } from "../../index";
 import { Time } from "../../resources";
+import type { TimeStepResult } from "../../types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fake rAF queue
@@ -426,6 +427,50 @@ describe("loop plugin integration", () => {
       await app.start();
 
       expect(app.loop.time).toBe(Time);
+
+      await app.stop();
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Cycle 5 — step() return value (integration)
+  // ──────────────────────────────────────────────────────────────────────────
+
+  describe("step() return value (Cycle 5)", () => {
+    it("step() returns { frame, elapsed, dt } matching world.resource(app.loop.time)", async () => {
+      const app = createTestApp({ autoStart: false });
+      await app.start();
+
+      const result = app.loop.step();
+
+      const time = app.ecs.resource(app.loop.time);
+      expect(result.frame).toBe(time.frame);
+      expect(result.elapsed).toBe(time.elapsed);
+      expect(result.dt).toBe(time.dt);
+
+      await app.stop();
+    });
+
+    it("step() returns incrementing frame on successive calls", async () => {
+      const app = createTestApp({ autoStart: false });
+      await app.start();
+
+      const r1 = app.loop.step();
+      const r2 = app.loop.step();
+      const r3 = app.loop.step();
+
+      expect(r1.frame).toBe(1);
+      expect(r2.frame).toBe(2);
+      expect(r3.frame).toBe(3);
+
+      await app.stop();
+    });
+
+    it("step() return type is TimeStepResult (type-level)", async () => {
+      const app = createTestApp({ autoStart: false });
+      await app.start();
+
+      expectTypeOf(app.loop.step()).toEqualTypeOf<TimeStepResult>();
 
       await app.stop();
     });

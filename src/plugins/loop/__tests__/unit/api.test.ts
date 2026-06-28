@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "v
 import { createApi, type LoopContext } from "../../api";
 import { loopRegistry } from "../../lifecycle";
 import { createState } from "../../state";
-import type { Api, Config, State } from "../../types";
+import type { Api, Config, State, TimeStepResult } from "../../types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fake rAF / cancelAF / document
@@ -523,7 +523,68 @@ describe("loop: types", () => {
     expectTypeOf<Api["isRunning"]>().toEqualTypeOf<() => boolean>();
   });
 
-  it("Api.step is () => void", () => {
-    expectTypeOf<Api["step"]>().toEqualTypeOf<() => void>();
+  it("Api.step returns TimeStepResult", () => {
+    expectTypeOf<Api["step"]>().toEqualTypeOf<() => TimeStepResult>();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cycle 5 — step() return value
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("loop: step() returns TimeStepResult (Cycle 5)", () => {
+  it("step() returns { frame: 1, elapsed: fixedDt, dt: fixedDt } after one step from zero", async () => {
+    const { ctx } = await bootCtx({ fixedDt: 1 / 60 });
+    const api = createApi(ctx);
+
+    const result = api.step();
+
+    expect(result.frame).toBe(1);
+    expect(result.elapsed).toBeCloseTo(1 / 60, 10);
+    expect(result.dt).toBe(1 / 60);
+  });
+
+  it("step() returned values track accumulated clock after N steps", async () => {
+    const fixedDt = 0.02;
+    const { ctx } = await bootCtx({ fixedDt });
+    const api = createApi(ctx);
+
+    api.step();
+    api.step();
+    const result = api.step();
+
+    expect(result.frame).toBe(3);
+    expect(result.elapsed).toBeCloseTo(3 * fixedDt, 10);
+    expect(result.dt).toBe(fixedDt);
+  });
+
+  it("step() no-runtime path returns { frame: 0, elapsed: 0, dt: 0 } without throwing", () => {
+    // No lifecycle.start called — WeakMap has no entry for this global
+    const base = makeCtx();
+    const ctx = base as unknown as LoopContext;
+    expect(loopRegistry.has(ctx.global)).toBe(false);
+
+    const api = createApi(ctx);
+    const result = api.step();
+
+    expect(result).toStrictEqual({ frame: 0, elapsed: 0, dt: 0 });
+  });
+
+  it("step() return value has the TimeStepResult shape at runtime", async () => {
+    const { ctx } = await bootCtx();
+    const api = createApi(ctx);
+
+    const result = api.step();
+
+    expect(typeof result.frame).toBe("number");
+    expect(typeof result.elapsed).toBe("number");
+    expect(typeof result.dt).toBe("number");
+  });
+
+  it("expectTypeOf step() result matches TimeStepResult", async () => {
+    const { ctx } = await bootCtx();
+    const api = createApi(ctx);
+
+    expectTypeOf(api.step()).toEqualTypeOf<TimeStepResult>();
   });
 });

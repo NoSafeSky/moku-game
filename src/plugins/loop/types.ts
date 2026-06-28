@@ -29,6 +29,22 @@ export type TimeState = {
   readonly frame: number;
 };
 
+/**
+ * Value returned by `step()`: a snapshot of the just-advanced frame clock.
+ *
+ * Equivalent to `Pick<TimeState, "frame" | "elapsed" | "dt">`. Taken immediately
+ * after `step()` advances `Time` and calls `render()`, so it reflects the values
+ * visible to systems during that step. Callers that ignore the return value are
+ * unaffected — widening `void` to an object is non-breaking.
+ *
+ * @example
+ * ```ts
+ * const { frame, elapsed, dt } = app.loop.step();
+ * // After one step from zero: { frame: 1, elapsed: 0.016, dt: 0.016 }
+ * ```
+ */
+export type TimeStepResult = Pick<TimeState, "frame" | "elapsed" | "dt">;
+
 /** loop plugin configuration. */
 export type Config = {
   /** Fixed simulation step (seconds). `@default 1/60` */
@@ -61,9 +77,17 @@ export type Api = {
   isRunning(): boolean;
   /**
    * Advance exactly one fixed step + render (tests / mcp loop:step).
-   * Also advances the `Time` resource: `dt = fixedDt`, `elapsed += fixedDt`, `frame += 1`.
+   *
+   * Updates the `Time` resource (`dt = fixedDt`, `elapsed += fixedDt`, `frame += 1`)
+   * immediately before calling `scheduler.tick(fixedDt)`, then calls `renderer.render()`.
+   *
+   * Returns a snapshot of the just-advanced clock `{ frame, elapsed, dt }`.
+   * A no-runtime call (before `start` / after `stop`) returns `{ frame: 0, elapsed: 0, dt: 0 }`.
+   * Existing void-context callers are unaffected — widening is non-breaking.
+   *
+   * @returns The {@link TimeStepResult} snapshot of the frame clock after this step.
    */
-  step(): void;
+  step(): TimeStepResult;
   /**
    * Well-known `Time` resource token.
    *

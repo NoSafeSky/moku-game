@@ -13,7 +13,8 @@ import type { Container } from "pixi.js";
 import type { ecsPlugin } from "../ecs";
 import type { Component, Entity, World } from "../ecs/types";
 import type { schedulerPlugin } from "../scheduler";
-import type { Api, Config, SceneNode, State, TransformValue } from "./types";
+import { buildPrimitive } from "./primitives";
+import type { Api, Config, PrimitiveSpec, SceneNode, State, TransformValue } from "./types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Scene-graph walk (Pixi → plain SceneNode data — keeps Pixi types out of the result)
@@ -48,22 +49,34 @@ type DisplayNodeLike = {
   children: readonly DisplayNodeLike[];
   /** Present (string) on Pixi `Text` nodes. */
   text?: unknown;
-  /** Present on Pixi `Sprite` nodes. */
+  /** Present (object `_GraphicsContext`) on Pixi `Graphics` nodes. */
+  context?: unknown;
+  /** Present on Pixi `Sprite` nodes (absent on `Graphics`, which has `context` instead). */
   texture?: unknown;
 };
 
 /**
  * Classify a display object by duck-typing the fields Pixi subclasses add.
  *
+ * Classification order:
+ *   1. `Text`     — carries a string `text` field.
+ *   2. `Graphics` — carries a `context` field (a `_GraphicsContext` object).
+ *                   Checked BEFORE Sprite because Pixi v8 `Graphics` also has
+ *                   a `texture` getter, which would otherwise mislabel it.
+ *   3. `Sprite`   — carries `texture` but no `context`.
+ *   4. `Container` — the default fallback.
+ *
  * @param node - The display object to classify.
- * @returns "Text" when it carries string `text`, "Sprite" when it has a `texture`, else "Container".
+ * @returns "Text", "Graphics", "Sprite", or "Container".
  * @example
  * ```ts
  * nodeType(stage); // "Container"
+ * nodeType(new Graphics()); // "Graphics"
  * ```
  */
 const nodeType = (node: DisplayNodeLike): string => {
   if (typeof node.text === "string") return "Text";
+  if (typeof node.context === "object" && node.context !== null) return "Graphics";
   if (node.texture !== undefined) return "Sprite";
   return "Container";
 };
@@ -315,6 +328,34 @@ export const createApi = (ctx: RendererContext): Api => {
       const app = ctx.state.app;
       if (!app) return undefined;
       return buildSceneNode(app.stage as unknown as DisplayNodeLike, 0);
+    },
+
+    /**
+     * Build a Pixi Graphics from `spec`, add it to `app.stage`, and register it
+     * (views + dirty) so the sync system positions it from the entity's Transform.
+     *
+     * Unlike `attach()`, this method calls `stage.addChild` itself so an
+     * MCP-spawned entity actually appears on screen without the caller holding a
+     * stage reference. Returns `false` when headless / before start (no app) —
+     * nothing is added.
+     *
+     * @param entity - The entity to associate the primitive view with.
+     * @param spec - Plain JSON-describable shape + style spec.
+     * @returns `true` when the primitive was staged; `false` when headless.
+     * @example
+     * ```ts
+     * const ok = api.attachPrimitive(entity, { shape: "circle", radius: 10, fill: 0xff0000 });
+     * ```
+     */
+    attachPrimitive(entity: Entity, spec: PrimitiveSpec): boolean {
+      const app = ctx.state.app;
+      if (!app) return false;
+
+      const view = buildPrimitive(spec);
+      app.stage.addChild(view);
+      ctx.state.views.set(entity, view);
+      ctx.state.dirty.add(entity);
+      return true;
     }
   };
 };
