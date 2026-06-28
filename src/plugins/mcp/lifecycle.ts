@@ -24,7 +24,7 @@ import { schedulerPlugin } from "../scheduler";
 import { registerResources } from "./resources";
 import { registerTools } from "./tools";
 import { buildMcpHandle } from "./transport";
-import type { Config, McpHandle, McpServerLike, State } from "./types";
+import type { Config, Events, McpHandle, McpServerLike, State } from "./types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Module-level WeakMap (mirrors loop's loopRegistry pattern)
@@ -59,6 +59,8 @@ type StartContext = {
     /** Log an error. */
     error(message: string): void;
   };
+  /** Emit a typed plugin event. Typed to the declared events only. */
+  readonly emit: <K extends keyof Events>(event: K, payload: Events[K]) => void;
   /** Require a dependency's API by plugin instance. */
   require: ((plugin: typeof ecsPlugin) => import("../ecs/types").World) &
     ((plugin: typeof schedulerPlugin) => import("../scheduler/types").Api) &
@@ -211,7 +213,24 @@ export const start = async (ctx: StartContext): Promise<void> => {
   const registerAllTools = (server: McpServerLike): void => {
     registerTools(
       server,
-      { world, loop, scene, renderer, input, trackedEntities },
+      {
+        world,
+        loop,
+        scene,
+        renderer,
+        input,
+        trackedEntities,
+        /**
+         * Emits the game:reset event after tracked-entity despawn + scene unload.
+         *
+         * @returns void
+         * @example
+         * ```ts
+         * emitReset(); // ctx.emit("game:reset", { reason: "mcp" })
+         * ```
+         */
+        emitReset: () => ctx.emit("game:reset", { reason: "mcp" })
+      },
       { enableMutations: ctx.config.enableMutations, enqueueMutation }
     );
   };

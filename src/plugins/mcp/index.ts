@@ -2,7 +2,9 @@
  * MCP plugin — Complex tier.
  *
  * First-class MCP server exposing the whole runtime to agent clients over stdio +
- * Streamable HTTP. Mutations route through the ECS command buffer. Emits no events.
+ * Streamable HTTP. Mutations route through the ECS command buffer.
+ * Emits `game:reset` after a hard reset despawns MCP-tracked entities and unloads
+ * the scene.
  *
  * @see README.md
  */
@@ -18,7 +20,7 @@ import { createApi } from "./api";
 import { start, stop } from "./lifecycle";
 import { createState } from "./state";
 import { defaultTransports } from "./transport";
-import type { Config } from "./types";
+import type { Config, Events } from "./types";
 
 const defaultConfig: Config = {
   transports: defaultTransports(),
@@ -30,6 +32,15 @@ const defaultConfig: Config = {
   inMemoryGlobalKey: "__MOKU_GAME_MCP__"
 };
 
+/**
+ * MCP plugin instance — Complex tier.
+ *
+ * Exposes the full game runtime (ECS world, renderer, scene, loop, input) to MCP
+ * agent clients via stdio / Streamable HTTP / in-page inMemory transports.
+ * Mutating tools are frame-safe (command-buffered). Emits `game:reset` on hard reset.
+ *
+ * @see README.md
+ */
 export const mcpPlugin = createPlugin("mcp", {
   depends: [
     ecsPlugin,
@@ -47,6 +58,32 @@ export const mcpPlugin = createPlugin("mcp", {
   config: defaultConfig,
   createState,
   api: createApi,
-  onStart: start, // @no-resource-check — connects the MCP server transports (spec/06 §3)
+  /**
+   * Registers the mcp plugin's typed event map.
+   *
+   * @param register - The event registration helper from createPlugin.
+   * @returns The typed event map for this plugin.
+   * @example
+   * ```ts
+   * events: register => register.map<Events>({ "game:reset": "…" })
+   * ```
+   */
+  events: register =>
+    register.map<Events>({
+      "game:reset": "Emitted after game:reset despawns tracked entities + unloads the scene"
+    }),
+  /**
+   * Starts the MCP server: validates config, wires systems, registers tools and
+   * resources, connects transports. Inline lambda so declared events infer into
+   * ctx.emit (mirrors scene plugin pattern).
+   *
+   * @param ctx - Plugin execution context providing config, state, global, log, emit, and require.
+   * @returns A Promise that resolves once the server is connected.
+   * @example
+   * ```ts
+   * // Called automatically by the framework during app.start()
+   * ```
+   */
+  onStart: ctx => start(ctx), // @no-resource-check — connects the MCP server transports (spec/06 §3)
   onStop: stop // @no-resource-check — closes the server via the ctx.global WeakMap (spec/06 §4)
 });

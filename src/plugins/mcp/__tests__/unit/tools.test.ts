@@ -2,16 +2,17 @@
  * @file mcp plugin — unit tests for tools.ts
  *
  * Tests that:
- * - The full catalog (14 tools) registers; enableMutations:false leaves only read-only tools
+ * - The full catalog (15 tools) registers; enableMutations:false leaves only read-only tools
  * - Mutating ECS tools enqueue (drained, not synchronous); loop + input tools call directly
  * - ecs:query reads the WHOLE world by component name (Cycle 4), with values + unknown-name error
  * - renderer:screenshot (extract) and renderer:tree degrade to not-available results
  * - input:key injects via the input API directly (not command-buffered)
+ * - Cycle 5: real ECS mutation triad, renderer:attach, honest results, polish
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Entity } from "../../../ecs/types";
-import type { SceneNode } from "../../../renderer/types";
-import type { RendererDep } from "../../tools";
+import type { PrimitiveSpec, SceneNode } from "../../../renderer/types";
+import type { RendererDep, ToolDeps } from "../../tools";
 import { registerTools } from "../../tools";
 import type { McpServerLike, McpToolResult } from "../../types";
 
@@ -42,38 +43,64 @@ const createFakeServer = (): McpServerLike & { tools: ToolRecord[] } => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Fake world / deps — typed to match ToolDeps exactly (Cycle 4 introspection)
+// Fake world / deps — typed to match ToolDeps exactly (Cycle 5 — adds componentByName/has/add/set/remove)
 // ─────────────────────────────────────────────────────────────────────────────
 
-const createFakeWorld = () => ({
-  spawn: vi.fn(() => 42 as unknown as Entity),
-  despawn: vi.fn<(entity: Entity) => void>(),
-  isAlive: vi.fn(() => true),
-  liveEntities: vi.fn((): readonly Entity[] => []),
-  entityCount: vi.fn(() => 0),
-  componentNames: vi.fn((): readonly string[] => []),
-  componentsOf: vi.fn((_entity: Entity): ReadonlyArray<{ name: string; value: unknown }> => [])
-});
+/** Typed fake world — casts the generic World methods to their structural equivalents. */
+type FakeWorld = {
+  spawn: ReturnType<typeof vi.fn>;
+  despawn: ReturnType<typeof vi.fn>;
+  isAlive: ReturnType<typeof vi.fn>;
+  has: ReturnType<typeof vi.fn>;
+  add: ReturnType<typeof vi.fn>;
+  set: ReturnType<typeof vi.fn>;
+  remove: ReturnType<typeof vi.fn>;
+  componentByName: ReturnType<typeof vi.fn>;
+  liveEntities: ReturnType<typeof vi.fn>;
+  entityCount: ReturnType<typeof vi.fn>;
+  componentNames: ReturnType<typeof vi.fn>;
+  componentsOf: ReturnType<typeof vi.fn>;
+} & ToolDeps["world"];
+
+const createFakeWorld = (): FakeWorld =>
+  ({
+    spawn: vi.fn(() => 42 as unknown as Entity),
+    despawn: vi.fn<(entity: Entity) => void>(),
+    isAlive: vi.fn(() => true),
+    has: vi.fn(() => false),
+    add: vi.fn(),
+    set: vi.fn(),
+    remove: vi.fn(),
+    componentByName: vi.fn(() => undefined),
+    liveEntities: vi.fn((): readonly Entity[] => []),
+    entityCount: vi.fn(() => 0),
+    componentNames: vi.fn((): readonly string[] => []),
+    componentsOf: vi.fn((_entity: Entity): ReadonlyArray<{ name: string; value: unknown }> => [])
+  }) as unknown as FakeWorld;
 
 const createFakeLoop = () => ({
   start: vi.fn(),
   stop: vi.fn(),
-  step: vi.fn()
+  step: vi.fn(() => ({ frame: 1, elapsed: 0.016, dt: 0.016 }))
 });
 
 const createFakeScene = () => ({
   load: vi.fn(() => Promise.resolve()),
   unload: vi.fn(),
-  currentScene: vi.fn((): string | undefined => undefined)
+  currentScene: vi.fn((): string | undefined => undefined),
+  sceneNames: vi.fn((): readonly string[] => []),
+  ownedEntities: vi.fn((): readonly Entity[] => [])
 });
 
-// RendererDep-typed fake — screenshot (extract) + scene tree
+// RendererDep-typed fake — screenshot (extract) + scene tree + attachPrimitive
 const createFakeRenderer = (): RendererDep & {
   screenshot: ReturnType<typeof vi.fn>;
   tree: ReturnType<typeof vi.fn>;
+  attachPrimitive: ReturnType<typeof vi.fn>;
 } => ({
   screenshot: vi.fn(async (): Promise<string | undefined> => undefined),
-  tree: vi.fn((): SceneNode | undefined => undefined)
+  tree: vi.fn((): SceneNode | undefined => undefined),
+  attachPrimitive: vi.fn((_entity: Entity, _spec: PrimitiveSpec): boolean => true)
 });
 
 // InputDep fake — injection methods (typed vi.fn so .toHaveBeenCalledWith works)
@@ -116,6 +143,7 @@ describe("registerTools", () => {
   let trackedEntities: Set<Entity>;
   let pending: Array<() => void>;
   let enqueueMutation: <T>(fn: () => T) => Promise<T>;
+  let emitReset: ReturnType<typeof vi.fn<() => void>>;
 
   beforeEach(() => {
     server = createFakeServer();
@@ -126,6 +154,7 @@ describe("registerTools", () => {
     input = createFakeInput();
     trackedEntities = new Set<Entity>();
     pending = [];
+    emitReset = vi.fn<() => void>();
     enqueueMutation = <T>(fn: () => T): Promise<T> =>
       new Promise(resolve => {
         pending.push(() => {
@@ -137,10 +166,10 @@ describe("registerTools", () => {
   // ── Catalog registration ───────────────────────────────────────────────────
 
   describe("catalog", () => {
-    it("registers all 14 tools when enableMutations=true", () => {
+    it("registers all 15 tools when enableMutations=true", () => {
       registerTools(
         server,
-        { world, loop, scene, renderer, input, trackedEntities },
+        { world, loop, scene, renderer, input, trackedEntities, emitReset },
         { enableMutations: true, enqueueMutation }
       );
       const names = server.tools.map(t => t.name);
@@ -152,6 +181,7 @@ describe("registerTools", () => {
         "ecs:query",
         "input:key",
         "renderer:tree",
+        "renderer:attach",
         "loop:step",
         "loop:pause",
         "loop:resume",
@@ -162,13 +192,13 @@ describe("registerTools", () => {
       ]) {
         expect(names).toContain(expected);
       }
-      expect(server.tools).toHaveLength(14);
+      expect(server.tools).toHaveLength(15);
     });
 
     it("registers only read-only tools when enableMutations=false", () => {
       registerTools(
         server,
-        { world, loop, scene, renderer, input, trackedEntities },
+        { world, loop, scene, renderer, input, trackedEntities, emitReset },
         { enableMutations: false, enqueueMutation }
       );
       const names = server.tools.map(t => t.name);
@@ -183,21 +213,23 @@ describe("registerTools", () => {
       expect(names).not.toContain("input:key");
       expect(names).not.toContain("loop:step");
       expect(names).not.toContain("game:reset");
+      expect(names).not.toContain("renderer:attach");
     });
 
     it("annotates mutating tools with destructiveHint:true", () => {
       registerTools(
         server,
-        { world, loop, scene, renderer, input, trackedEntities },
+        { world, loop, scene, renderer, input, trackedEntities, emitReset },
         { enableMutations: true, enqueueMutation }
       );
       expect(getToolRecord(server, "ecs:spawn").annotations.destructiveHint).toBe(true);
+      expect(getToolRecord(server, "renderer:attach").annotations.destructiveHint).toBe(true);
     });
 
     it("annotates read-only tools with readOnlyHint:true", () => {
       registerTools(
         server,
-        { world, loop, scene, renderer, input, trackedEntities },
+        { world, loop, scene, renderer, input, trackedEntities, emitReset },
         { enableMutations: true, enqueueMutation }
       );
       expect(getToolRecord(server, "ecs:query").annotations.readOnlyHint).toBe(true);
@@ -211,7 +243,7 @@ describe("registerTools", () => {
     beforeEach(() => {
       registerTools(
         server,
-        { world, loop, scene, renderer, input, trackedEntities },
+        { world, loop, scene, renderer, input, trackedEntities, emitReset },
         { enableMutations: true, enqueueMutation }
       );
     });
@@ -252,7 +284,7 @@ describe("registerTools", () => {
     beforeEach(() => {
       registerTools(
         server,
-        { world, loop, scene, renderer, input, trackedEntities },
+        { world, loop, scene, renderer, input, trackedEntities, emitReset },
         { enableMutations: true, enqueueMutation }
       );
     });
@@ -291,7 +323,7 @@ describe("registerTools", () => {
     beforeEach(() => {
       registerTools(
         server,
-        { world, loop, scene, renderer, input, trackedEntities },
+        { world, loop, scene, renderer, input, trackedEntities, emitReset },
         { enableMutations: true, enqueueMutation }
       );
     });
@@ -363,15 +395,30 @@ describe("registerTools", () => {
     beforeEach(() => {
       registerTools(
         server,
-        { world, loop, scene, renderer, input, trackedEntities },
+        { world, loop, scene, renderer, input, trackedEntities, emitReset },
         { enableMutations: true, enqueueMutation }
       );
     });
 
-    it("loop:step calls loop.step() directly", async () => {
+    it("loop:step calls loop.step() directly and does not enqueue", async () => {
       await getToolHandler(server, "loop:step")({});
       expect(loop.step).toHaveBeenCalledOnce();
       expect(pending).toHaveLength(0);
+    });
+
+    it("loop:step echoes frame/elapsed/dt from the step() return value", async () => {
+      loop.step.mockReturnValue({ frame: 5, elapsed: 0.08, dt: 0.016 });
+      const result = await getToolHandler(server, "loop:step")({});
+      const parsed = parseText(result) as {
+        stepped: boolean;
+        frame: number;
+        elapsed: number;
+        dt: number;
+      };
+      expect(parsed.stepped).toBe(true);
+      expect(parsed.frame).toBe(5);
+      expect(parsed.elapsed).toBeCloseTo(0.08);
+      expect(parsed.dt).toBeCloseTo(0.016);
     });
 
     it("loop:pause calls loop.stop() directly", async () => {
@@ -391,7 +438,7 @@ describe("registerTools", () => {
     beforeEach(() => {
       registerTools(
         server,
-        { world, loop, scene, renderer, input, trackedEntities },
+        { world, loop, scene, renderer, input, trackedEntities, emitReset },
         { enableMutations: true, enqueueMutation }
       );
     });
@@ -424,7 +471,7 @@ describe("registerTools", () => {
     beforeEach(() => {
       registerTools(
         server,
-        { world, loop, scene, renderer, input, trackedEntities },
+        { world, loop, scene, renderer, input, trackedEntities, emitReset },
         { enableMutations: true, enqueueMutation }
       );
     });
@@ -469,26 +516,415 @@ describe("registerTools", () => {
       expect(result.content[0]?.text).toMatch(/not available|headless|not started/i);
     });
 
-    it("scene:getInfo returns current scene", async () => {
+    it("scene:getInfo returns current, scenes, and owned", async () => {
       scene.currentScene.mockReturnValue("menu");
+      scene.sceneNames.mockReturnValue(["menu", "game"]);
+      scene.ownedEntities.mockReturnValue([10, 20] as unknown as Entity[]);
       const result = await getToolHandler(server, "scene:getInfo")({});
-      expect(result.content[0]?.text).toContain("menu");
+      const parsed = parseText(result) as {
+        current: string | undefined;
+        scenes: readonly string[];
+        owned: readonly number[];
+      };
+      expect(parsed.current).toBe("menu");
+      expect(parsed.scenes).toEqual(["menu", "game"]);
+      expect(parsed.owned).toEqual([10, 20]);
     });
   });
 
   // ── scene:load enqueues ────────────────────────────────────────────────────
 
   describe("scene:load", () => {
-    it("scene:load calls scene.load after drain", async () => {
+    it("scene:load calls scene.load after drain when name is known", async () => {
+      scene.sceneNames.mockReturnValue(["level1", "menu"]);
       registerTools(
         server,
-        { world, loop, scene, renderer, input, trackedEntities },
+        { world, loop, scene, renderer, input, trackedEntities, emitReset },
         { enableMutations: true, enqueueMutation }
       );
       const resultPromise = getToolHandler(server, "scene:load")({ name: "level1" });
       for (const fn of pending) fn();
       await resultPromise;
       expect(scene.load).toHaveBeenCalledWith("level1");
+    });
+
+    it("scene:load returns an error and does not enqueue when scene name is unknown", async () => {
+      scene.sceneNames.mockReturnValue(["menu", "game"]);
+      registerTools(
+        server,
+        { world, loop, scene, renderer, input, trackedEntities, emitReset },
+        { enableMutations: true, enqueueMutation }
+      );
+      const result = await getToolHandler(server, "scene:load")({ name: "bogus" });
+      expect(result.isError).toBe(true);
+      expect(result.content[0]?.text).toContain("bogus");
+      expect(result.content[0]?.text).toMatch(/menu|game/);
+      // Nothing enqueued
+      expect(pending).toHaveLength(0);
+      expect(scene.load).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── Cycle 5: ecs:setComponent — real upsert ────────────────────────────────
+
+  describe("ecs:setComponent (Cycle 5 — real upsert)", () => {
+    beforeEach(() => {
+      registerTools(
+        server,
+        { world, loop, scene, renderer, input, trackedEntities, emitReset },
+        { enableMutations: true, enqueueMutation }
+      );
+    });
+
+    it("returns an error listing known names when component name is unknown", async () => {
+      world.componentNames.mockReturnValue(["Transform", "Velocity"]);
+      world.componentByName.mockReturnValue(undefined);
+      const result = await getToolHandler(
+        server,
+        "ecs:setComponent"
+      )({
+        id: 42,
+        component: "Bogus",
+        value: { x: 1 }
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0]?.text).toContain("Bogus");
+      expect(result.content[0]?.text).toMatch(/Transform|Velocity/);
+    });
+
+    it("returns an error when entity is not alive", async () => {
+      const fakeToken = { __id: 1, __value: {} };
+      world.componentByName.mockReturnValue(fakeToken);
+      world.isAlive.mockReturnValue(false);
+      const result = await getToolHandler(
+        server,
+        "ecs:setComponent"
+      )({
+        id: 99,
+        component: "Transform",
+        value: { x: 5 }
+      });
+      expect(result.isError).toBe(true);
+    });
+
+    it("calls world.set when entity has the component (update path)", async () => {
+      const fakeToken = { __id: 1, __value: {} };
+      world.componentByName.mockReturnValue(fakeToken);
+      world.isAlive.mockReturnValue(true);
+      world.has.mockReturnValue(true);
+      const resultPromise = getToolHandler(
+        server,
+        "ecs:setComponent"
+      )({
+        id: 42,
+        component: "Transform",
+        value: { x: 10 }
+      });
+      for (const fn of pending) fn();
+      const result = await resultPromise;
+      expect(world.set).toHaveBeenCalledWith(42 as unknown as Entity, fakeToken, { x: 10 });
+      expect(world.add).not.toHaveBeenCalled();
+      const parsed = parseText(result) as { id: number; component: string; changed: boolean };
+      expect(parsed.changed).toBe(true);
+      expect(parsed.id).toBe(42);
+      expect(parsed.component).toBe("Transform");
+    });
+
+    it("calls world.add when entity does not have the component (add path)", async () => {
+      const fakeToken = { __id: 1, __value: {} };
+      world.componentByName.mockReturnValue(fakeToken);
+      world.isAlive.mockReturnValue(true);
+      world.has.mockReturnValue(false);
+      const resultPromise = getToolHandler(
+        server,
+        "ecs:setComponent"
+      )({
+        id: 42,
+        component: "Transform",
+        value: { x: 5 }
+      });
+      for (const fn of pending) fn();
+      const result = await resultPromise;
+      expect(world.add).toHaveBeenCalledWith(42 as unknown as Entity, fakeToken, { x: 5 });
+      expect(world.set).not.toHaveBeenCalled();
+      const parsed = parseText(result) as { changed: boolean };
+      expect(parsed.changed).toBe(true);
+    });
+
+    it("does not include status:v1-noop in the result", async () => {
+      const fakeToken = { __id: 1, __value: {} };
+      world.componentByName.mockReturnValue(fakeToken);
+      world.isAlive.mockReturnValue(true);
+      world.has.mockReturnValue(true);
+      const resultPromise = getToolHandler(
+        server,
+        "ecs:setComponent"
+      )({
+        id: 42,
+        component: "Transform",
+        value: {}
+      });
+      for (const fn of pending) fn();
+      const result = await resultPromise;
+      expect(result.content[0]?.text).not.toContain("v1-noop");
+    });
+  });
+
+  // ── Cycle 5: ecs:removeComponent — real remove ────────────────────────────
+
+  describe("ecs:removeComponent (Cycle 5 — real remove)", () => {
+    beforeEach(() => {
+      registerTools(
+        server,
+        { world, loop, scene, renderer, input, trackedEntities, emitReset },
+        { enableMutations: true, enqueueMutation }
+      );
+    });
+
+    it("returns an error when component name is unknown", async () => {
+      world.componentNames.mockReturnValue(["Transform"]);
+      world.componentByName.mockReturnValue(undefined);
+      const result = await getToolHandler(
+        server,
+        "ecs:removeComponent"
+      )({
+        id: 42,
+        component: "Bogus"
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0]?.text).toContain("Bogus");
+    });
+
+    it("returns an error when entity is not alive", async () => {
+      const fakeToken = { __id: 1, __value: {} };
+      world.componentByName.mockReturnValue(fakeToken);
+      world.isAlive.mockReturnValue(false);
+      const result = await getToolHandler(
+        server,
+        "ecs:removeComponent"
+      )({
+        id: 99,
+        component: "Transform"
+      });
+      expect(result.isError).toBe(true);
+    });
+
+    it("returns changed:false when entity does not have the component", async () => {
+      const fakeToken = { __id: 1, __value: {} };
+      world.componentByName.mockReturnValue(fakeToken);
+      world.isAlive.mockReturnValue(true);
+      world.has.mockReturnValue(false);
+      const resultPromise = getToolHandler(
+        server,
+        "ecs:removeComponent"
+      )({
+        id: 42,
+        component: "Transform"
+      });
+      for (const fn of pending) fn();
+      const result = await resultPromise;
+      const parsed = parseText(result) as { changed: boolean };
+      expect(parsed.changed).toBe(false);
+      expect(world.remove).not.toHaveBeenCalled();
+    });
+
+    it("calls world.remove and returns changed:true when entity has the component", async () => {
+      const fakeToken = { __id: 1, __value: {} };
+      world.componentByName.mockReturnValue(fakeToken);
+      world.isAlive.mockReturnValue(true);
+      world.has.mockReturnValue(true);
+      const resultPromise = getToolHandler(
+        server,
+        "ecs:removeComponent"
+      )({
+        id: 42,
+        component: "Transform"
+      });
+      for (const fn of pending) fn();
+      const result = await resultPromise;
+      expect(world.remove).toHaveBeenCalledWith(42 as unknown as Entity, fakeToken);
+      const parsed = parseText(result) as { changed: boolean };
+      expect(parsed.changed).toBe(true);
+    });
+
+    it("does not include status:v1-noop in the result", async () => {
+      const fakeToken = { __id: 1, __value: {} };
+      world.componentByName.mockReturnValue(fakeToken);
+      world.isAlive.mockReturnValue(true);
+      world.has.mockReturnValue(true);
+      const resultPromise = getToolHandler(
+        server,
+        "ecs:removeComponent"
+      )({
+        id: 42,
+        component: "Transform"
+      });
+      for (const fn of pending) fn();
+      const result = await resultPromise;
+      expect(result.content[0]?.text).not.toContain("v1-noop");
+    });
+  });
+
+  // ── Cycle 5: ecs:spawn with optional components map ──────────────────────
+
+  describe("ecs:spawn with components map (Cycle 5)", () => {
+    beforeEach(() => {
+      registerTools(
+        server,
+        { world, loop, scene, renderer, input, trackedEntities, emitReset },
+        { enableMutations: true, enqueueMutation }
+      );
+    });
+
+    it("bare spawn (no components) still returns { entity } and tracks", async () => {
+      const resultPromise = getToolHandler(server, "ecs:spawn")({});
+      for (const fn of pending) fn();
+      const result = await resultPromise;
+      const parsed = parseText(result) as { entity: number };
+      expect(parsed.entity).toBe(42);
+      expect(trackedEntities.size).toBe(1);
+    });
+
+    it("rejects all unknown names before spawning — spawn NOT called", async () => {
+      world.componentNames.mockReturnValue(["Transform"]);
+      world.componentByName.mockReturnValue(undefined);
+      const result = await getToolHandler(
+        server,
+        "ecs:spawn"
+      )({
+        components: { Bogus: { x: 1 } }
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0]?.text).toContain("Bogus");
+      expect(world.spawn).not.toHaveBeenCalled();
+    });
+
+    it("calls spawn then add for each component in the map", async () => {
+      const transformToken = { __id: 1, __value: {} };
+      world.componentNames.mockReturnValue(["Transform"]);
+      world.componentByName.mockImplementation((name: string) =>
+        name === "Transform" ? transformToken : undefined
+      );
+      world.isAlive.mockReturnValue(true);
+      const resultPromise = getToolHandler(
+        server,
+        "ecs:spawn"
+      )({
+        components: { Transform: { x: 10, y: 5 } }
+      });
+      for (const fn of pending) fn();
+      const result = await resultPromise;
+      expect(world.spawn).toHaveBeenCalledOnce();
+      expect(world.add).toHaveBeenCalledWith(42 as unknown as Entity, transformToken, {
+        x: 10,
+        y: 5
+      });
+      const parsed = parseText(result) as { entity: number; components: string[] };
+      expect(parsed.entity).toBe(42);
+      expect(parsed.components).toEqual(["Transform"]);
+    });
+  });
+
+  // ── Cycle 5: renderer:attach ───────────────────────────────────────────────
+
+  describe("renderer:attach (Cycle 5)", () => {
+    beforeEach(() => {
+      registerTools(
+        server,
+        { world, loop, scene, renderer, input, trackedEntities, emitReset },
+        { enableMutations: true, enqueueMutation }
+      );
+    });
+
+    it("returns an error when entity is not alive (before enqueue)", async () => {
+      world.isAlive.mockReturnValue(false);
+      const result = await getToolHandler(
+        server,
+        "renderer:attach"
+      )({
+        id: 99,
+        spec: { shape: "rect", width: 10, height: 10 }
+      });
+      expect(result.isError).toBe(true);
+      expect(renderer.attachPrimitive).not.toHaveBeenCalled();
+    });
+
+    it("calls renderer.attachPrimitive inside mutation and returns attached:true", async () => {
+      world.isAlive.mockReturnValue(true);
+      renderer.attachPrimitive.mockReturnValue(true);
+      const resultPromise = getToolHandler(
+        server,
+        "renderer:attach"
+      )({
+        id: 42,
+        spec: { shape: "circle", radius: 5, fill: 0xff_00_00 }
+      });
+      for (const fn of pending) fn();
+      const result = await resultPromise;
+      expect(renderer.attachPrimitive).toHaveBeenCalledWith(42 as unknown as Entity, {
+        shape: "circle",
+        radius: 5,
+        fill: 0xff_00_00
+      });
+      const parsed = parseText(result) as { id: number; attached: boolean };
+      expect(parsed.attached).toBe(true);
+      expect(parsed.id).toBe(42);
+    });
+
+    it("returns an error when attachPrimitive returns false (headless/not-started)", async () => {
+      world.isAlive.mockReturnValue(true);
+      renderer.attachPrimitive.mockReturnValue(false);
+      const resultPromise = getToolHandler(
+        server,
+        "renderer:attach"
+      )({
+        id: 42,
+        spec: { shape: "rect", width: 20, height: 10 }
+      });
+      for (const fn of pending) fn();
+      const result = await resultPromise;
+      expect(result.isError).toBe(true);
+    });
+  });
+
+  // ── Cycle 5: honest results ────────────────────────────────────────────────
+
+  describe("honest results (Cycle 5)", () => {
+    beforeEach(() => {
+      registerTools(
+        server,
+        { world, loop, scene, renderer, input, trackedEntities, emitReset },
+        { enableMutations: true, enqueueMutation }
+      );
+    });
+
+    it("ecs:despawn returns changed:false when entity was not alive", async () => {
+      world.isAlive.mockReturnValue(false);
+      const resultPromise = getToolHandler(server, "ecs:despawn")({ id: 999 });
+      for (const fn of pending) fn();
+      const result = await resultPromise;
+      const parsed = parseText(result) as { despawned: number; changed: boolean };
+      expect(parsed.changed).toBe(false);
+      expect(parsed.despawned).toBe(999);
+    });
+
+    it("ecs:despawn returns changed:true when entity was alive", async () => {
+      world.isAlive.mockReturnValue(true);
+      const resultPromise = getToolHandler(server, "ecs:despawn")({ id: 42 });
+      for (const fn of pending) fn();
+      const result = await resultPromise;
+      const parsed = parseText(result) as { despawned: number; changed: boolean };
+      expect(parsed.changed).toBe(true);
+      expect(world.despawn).toHaveBeenCalledOnce();
+    });
+
+    it("game:reset calls emitReset after despawning and unloading", async () => {
+      trackedEntities.add(10 as unknown as Entity);
+      const resultPromise = getToolHandler(server, "game:reset")({});
+      for (const fn of pending) fn();
+      await resultPromise;
+      expect(emitReset).toHaveBeenCalledOnce();
+      expect(scene.unload).toHaveBeenCalledBefore(emitReset);
     });
   });
 });

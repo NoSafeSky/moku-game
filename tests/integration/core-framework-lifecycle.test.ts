@@ -229,12 +229,12 @@ describe("core framework lifecycle (integration)", () => {
     await app.stop();
   });
 
-  it("registers all 14 mcp tools with default (mutations-enabled) config", async () => {
+  it("registers all 15 mcp tools with default (mutations-enabled) config", async () => {
     // Contrast with the read-only app above: default config exposes the full catalog.
     const app = createFullApp();
     await app.start();
 
-    expect(app.mcp.toolNames()).toHaveLength(14);
+    expect(app.mcp.toolNames()).toHaveLength(15);
 
     await app.stop();
   });

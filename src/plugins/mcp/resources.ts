@@ -102,7 +102,7 @@ export const registerResources = (server: McpServerLike, deps: ResourceDeps): vo
     {
       title: "Systems list",
       description:
-        "Registered execution stages. v1 limitation: system counts per stage are not tracked.",
+        "Stage names only (systems are anonymous functions; per-stage system names/counts are not tracked).",
       mimeType: "application/json"
     },
     (_uri: URL): McpResourceResult => ({
@@ -123,7 +123,8 @@ export const registerResources = (server: McpServerLike, deps: ResourceDeps): vo
     URI_STATS_FRAME,
     {
       title: "Frame stats",
-      description: "Current frame number, last delta time, and MCP-tracked entity count.",
+      description:
+        "Current frame number, last delta time, and live entity count (all entities in the world, not just MCP-tracked).",
       mimeType: "application/json"
     },
     (_uri: URL): McpResourceResult => ({

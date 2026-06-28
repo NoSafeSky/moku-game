@@ -211,7 +211,8 @@ describe("mcp plugin integration", () => {
       expect(names).toContain("scene:load");
       expect(names).toContain("scene:getInfo");
       expect(names).toContain("game:reset");
-      expect(names).toHaveLength(14);
+      expect(names).toContain("renderer:attach");
+      expect(names).toHaveLength(15);
 
       await app.stop();
     });

@@ -6,7 +6,7 @@
  * mocked so onStart does not attach to the real process.stdin.
  *
  * Two themes:
- *  1. MCP agent-control surface — the registered tool catalog (14 default / 4
+ *  1. MCP agent-control surface — the registered tool catalog (15 default / 4
  *     read-only), lifecycle (`isRunning`), the stdio-only `httpEndpoint`, and
  *     that the input-stage drain system coexists with the loop without throwing.
  *  2. EDGE cases — loading an undefined scene rejects, empty-world queries are
@@ -164,7 +164,7 @@ describe("mcp agent-control surface + edge cases (root integration)", () => {
   // ── 1. Full default tool catalog ───────────────────────────────────────────
 
   describe("tool catalog", () => {
-    it("registers all 14 default tools after start", async () => {
+    it("registers all 15 default tools after start", async () => {
       const app = createFullApp();
       await app.start();
 
@@ -177,6 +177,7 @@ describe("mcp agent-control surface + edge cases (root integration)", () => {
         "ecs:query",
         "input:key",
         "renderer:tree",
+        "renderer:attach",
         "loop:step",
         "loop:pause",
         "loop:resume",
@@ -188,7 +189,7 @@ describe("mcp agent-control surface + edge cases (root integration)", () => {
       for (const tool of expected) {
         expect(names).toContain(tool);
       }
-      expect(names).toHaveLength(14);
+      expect(names).toHaveLength(15);
 
       await app.stop();
     });

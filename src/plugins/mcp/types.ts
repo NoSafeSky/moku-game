@@ -153,6 +153,25 @@ export type Api = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Plugin events
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Events emitted by the mcp plugin.
+ *
+ * `game:reset` is emitted after `game:reset` despawns all MCP-tracked entities
+ * and unloads the current scene. Consumers can listen to coordinate post-reset
+ * state initialisation (e.g. re-loading a default scene).
+ */
+export type Events = {
+  /**
+   * Emitted once the hard reset closure has run: all MCP-tracked entities have
+   * been despawned and the current scene has been unloaded.
+   */
+  "game:reset": { reason: "mcp" };
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Internal structural types (transport seam — no SDK imports here)
 // ─────────────────────────────────────────────────────────────────────────────
 
