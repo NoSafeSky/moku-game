@@ -7,6 +7,7 @@
  * does not try to call addEventListener on globalThis (which lacks it in Node).
  * Covers: lifecycle, isRunning, toolNames, stop, multi-instance isolation.
  */
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -108,6 +109,7 @@ vi.mock("@modelcontextprotocol/sdk/server/stdio.js", () => ({
 // Framework imports (after mocks)
 // ─────────────────────────────────────────────────────────────────────────────
 
+import type { Container } from "pixi.js";
 import { coreConfig } from "../../../../config";
 import { assetsPlugin } from "../../../assets";
 import { ecsPlugin } from "../../../ecs";
@@ -139,6 +141,35 @@ const createTestApp = () => {
     pluginConfigs: {
       mcp: {
         transports: ["stdio"],
+        httpAuth: "none"
+      }
+    }
+  });
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Test app factory — inMemory transport, so a real MCP Client can drive tool
+// calls end-to-end (Cycle 6, issue #4). connectInMemory() runs regardless of
+// whether `document` is defined; only the globalThis-publish step is browser-gated.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const createInMemoryTestApp = () => {
+  const { createApp } = coreConfig.createCore(coreConfig, {
+    plugins: [
+      ecsPlugin,
+      schedulerPlugin,
+      rendererPlugin,
+      assetsPlugin,
+      inputPlugin,
+      loopPlugin,
+      scenePlugin,
+      mcpPlugin
+    ]
+  });
+  return createApp({
+    pluginConfigs: {
+      mcp: {
+        transports: ["inMemory"],
         httpAuth: "none"
       }
     }
@@ -341,6 +372,91 @@ describe("mcp plugin integration", () => {
       await app.start();
       expectTypeOf(app.mcp.toolNames).toEqualTypeOf<() => readonly string[]>();
       await app.stop();
+    });
+  });
+
+  // ── Cycle 6 (issue #4) — paused mutation + Transform repaint ───────────────
+  //
+  // Drives real MCP tool calls through a real in-memory Client (mirrors
+  // mcp-browser.test.ts's round-trip pattern) to prove both bugs end-to-end:
+  //   Bug 2 — a mutating tool call resolves WITHOUT hanging while the loop is
+  //           paused (no loop:step needed first — pre-fix this awaited forever).
+  //   Bug 1 — after the paused write, a loop:step repositions the entity's
+  //           attached view (renderer.markDirty flagged it) from the new
+  //           Transform. This harness's renderer is headless (no `document`),
+  //           so renderer:tree is not-available here — attach() and markDirty()
+  //           operate on state.views/dirty regardless of headless (mirrors
+  //           renderer.test.ts's own "repositions container after markDirty +
+  //           tick" pattern), so the mock view's position.set is the direct
+  //           observable proxy for Bug 1. ecs:query confirms the write itself.
+  describe("Cycle 6 — paused mutation + Transform repaint (issue #4)", () => {
+    it("ecs:setComponent resolves without hanging while paused, and loop:step repositions the attached view", async () => {
+      const app = createInMemoryTestApp();
+      await app.start();
+
+      const entity = app.ecs.spawn(
+        app.renderer.Transform({ x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 })
+      );
+      const view = {
+        position: { set: vi.fn() },
+        rotation: 0,
+        scale: { set: vi.fn() },
+        destroy: vi.fn()
+      } as unknown as Container;
+      app.renderer.attach(entity, view);
+
+      const transport = app.mcp.clientTransport();
+      expect(transport).toBeDefined();
+      const client = new Client({ name: "in-page-agent", version: "0.0.0" });
+      await client.connect(transport as never);
+
+      try {
+        // Pause the loop via the MCP tool — no tick will ever drain `pending` now.
+        await client.callTool({ name: "loop:pause", arguments: {} });
+        expect(app.loop.isRunning()).toBe(false);
+
+        // Bug 2 regression proof: this mutating tool call must resolve WITHOUT a
+        // prior loop:step. Pre-fix, enqueueMutation always deferred to the
+        // input-stage drain, which never runs while paused — this await hung forever.
+        const setResult = await client.callTool({
+          name: "ecs:setComponent",
+          arguments: {
+            id: entity as unknown as number,
+            component: "Transform",
+            value: { x: 50, y: 60 }
+          }
+        });
+        const setContent = setResult.content as Array<{ type: string; text: string }>;
+        expect(JSON.parse(setContent[0]?.text ?? "{}")).toMatchObject({ changed: true });
+
+        // The write applied immediately (paused path) — observable before any tick.
+        const queryResult = await client.callTool({
+          name: "ecs:query",
+          arguments: { componentNames: ["Transform"] }
+        });
+        const queryContent = queryResult.content as Array<{ type: string; text: string }>;
+        const parsed = JSON.parse(queryContent[0]?.text ?? "{}") as {
+          entities: Array<{
+            id: number;
+            components: Array<{ name: string; value: { x: number; y: number } }>;
+          }>;
+        };
+        const transform = parsed.entities
+          .find(e => e.id === (entity as unknown as number))
+          ?.components.find(c => c.name === "Transform");
+        expect(transform?.value.x).toBe(50);
+        expect(transform?.value.y).toBe(60);
+
+        // Bug 1 regression proof: no reposition has happened yet (no tick ran).
+        expect(view.position.set).not.toHaveBeenCalled();
+
+        // Advance one tick — the sync stage repositions the dirty (markDirty-flagged) view.
+        await client.callTool({ name: "loop:step", arguments: {} });
+        expect(view.position.set).toHaveBeenCalledWith(50, 60);
+      } finally {
+        await client.close();
+        await app.stop();
+      }
     });
   });
 });

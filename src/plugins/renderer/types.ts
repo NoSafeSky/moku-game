@@ -65,6 +65,20 @@ export type PrimitiveStyle = {
  * JSON-describable primitive shape + style, built into a Pixi `Graphics` by the
  * renderer's `attachPrimitive`. A discriminated union over `shape`; no Pixi types
  * leak past the renderer boundary.
+ *
+ * **Anchor contract** — where the entity's `Transform { x, y }` lands relative to
+ * the drawn geometry, per shape:
+ * - `rect` — drawn CENTERED on the local origin; `Transform` is the rect's CENTER
+ *   (not its top-left corner).
+ * - `circle` — drawn CENTERED on the local origin; `Transform` is the circle's CENTER.
+ * - `polygon` — `points` are already in the entity's local space, with the local
+ *   origin (i.e. `Transform`) wherever the caller's own point coordinates place it.
+ * - `line` — drawn FROM the local origin (`Transform`) TO `(x2, y2)`; `Transform`
+ *   is the line's start point, not its center.
+ *
+ * All four shapes share one rule: the local origin `(0, 0)` — where `Transform`
+ * positions the entity — is the same point every shape is drawn relative to;
+ * only `rect`/`circle` center on it while `line`/`polygon` do not.
  */
 export type PrimitiveSpec =
   | ({ shape: "rect"; width: number; height: number } & PrimitiveStyle)

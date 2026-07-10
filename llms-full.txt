@@ -475,6 +475,8 @@ export type PrimitiveSpec =
   | ({ shape: "circle"; radius: number } & PrimitiveStyle)
   | ({ shape: "line"; x2: number; y2: number } & PrimitiveStyle)
   | ({ shape: "polygon"; points: ReadonlyArray<{ x: number; y: number }> } & PrimitiveStyle);
+// Anchor contract: `rect` & `circle` are drawn CENTERED on the entity's Transform; `polygon` points are
+// in the entity's local space with the origin at the Transform; `line` runs from the local origin to (x2, y2).
 
 export type Config = {
   width: number;       // @default 800

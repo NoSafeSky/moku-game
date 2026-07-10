@@ -27,7 +27,9 @@ import type { PrimitiveSpec } from "./types";
 const drawShape = (g: Graphics, spec: PrimitiveSpec): void => {
   switch (spec.shape) {
     case "rect": {
-      g.rect(0, 0, spec.width, spec.height);
+      // Centered on the local origin — matches the circle/polygon anchor contract
+      // (the entity's Transform is the shape's CENTER, not its top-left corner).
+      g.rect(-spec.width / 2, -spec.height / 2, spec.width, spec.height);
       if (spec.fill !== undefined) {
         g.fill({ color: spec.fill });
       }

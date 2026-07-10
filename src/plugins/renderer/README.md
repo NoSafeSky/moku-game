@@ -109,12 +109,32 @@ type PrimitiveSpec =
 
 | Shape | Geometry fields | Notes |
 |---|---|---|
-| `rect` | `width`, `height` | Drawn from the local origin `(0, 0)`. |
+| `rect` | `width`, `height` | Drawn CENTERED on the local origin `(0, 0)`. |
 | `circle` | `radius` | Centred on the local origin. |
 | `line` | `x2`, `y2` | From the local origin to `(x2, y2)`. Stroke only — `fill` is ignored. |
-| `polygon` | `points` | A closed polygon through the given points. |
+| `polygon` | `points` | A closed polygon through the given points, in the entity's local space. |
 
 Style fields apply to every shape: `fill` (skipped for `line`), `stroke` (with `strokeWidth`, default `1`), `alpha` (default `1`), and `label` (sets the Pixi node label so `tree()` reports it).
+
+#### Primitive anchor contract
+
+Every shape is drawn relative to the local origin `(0, 0)` — the point the entity's
+`Transform { x, y }` places in world space — but shapes differ in *where* that origin
+sits relative to their own geometry (Cycle 6, issue #4):
+
+- **`rect`** — CENTERED on the origin. `Transform` is the rect's CENTER, so
+  `{ shape: "rect", width: 40, height: 20 }` spans `x: -20..20`, `y: -10..10` in
+  local space.
+- **`circle`** — CENTERED on the origin. `Transform` is the circle's CENTER.
+- **`polygon`** — `points` are already in the entity's local space; the origin
+  (`Transform`) sits wherever the caller's own coordinates place it — there is no
+  implicit centering.
+- **`line`** — drawn FROM the origin (`Transform`) TO `(x2, y2)`; `Transform` is
+  the line's start point, not its midpoint.
+
+`rect` and `circle` share the same centered contract so same-size shapes are
+interchangeable without an offset correction (prior to Cycle 6, `rect` was drawn
+top-left-anchored, which diverged from `circle`).
 
 ## Lifecycle
 

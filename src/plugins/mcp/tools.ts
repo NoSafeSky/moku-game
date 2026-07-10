@@ -13,6 +13,10 @@
  * Cycle 5: Real ECS mutation triad (setComponent/removeComponent/spawn-with-components),
  * renderer:attach primitive tool, honest results (despawn changed flag, scene:load
  * validation, loop:step clock echo, scene:getInfo enriched, game:reset emits event).
+ *
+ * Cycle 6 (issue #4, Bug 1): `ecs:setComponent` now calls `renderer.markDirty(entity)`
+ * after the upsert so a Transform write repositions the view on the next sync tick
+ * instead of leaving the on-screen node stale.
  */
 import { z } from "zod";
 import type { Component, Entity, World } from "../ecs/types";
@@ -47,6 +51,13 @@ export type RendererDep = {
    * @returns true when attached; false when headless.
    */
   attachPrimitive(entity: Entity, spec: PrimitiveSpec): boolean;
+  /**
+   * Flag the entity's view dirty so the sync system repositions it from its
+   * Transform on the next frame. Idempotent; a no-op when the entity has no view.
+   *
+   * @param entity - The entity whose Transform has changed.
+   */
+  markDirty(entity: Entity): void;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -481,6 +492,9 @@ export const registerTools = (server: McpServerLike, deps: ToolDeps, opts: ToolO
         } else {
           world.add(entity, token, value);
         }
+        // Flag the view dirty so the sync system repositions it next tick — a
+        // no-op when the entity has no view (or the write wasn't a Transform).
+        renderer.markDirty(entity);
       });
 
       return textResult({ id, component: componentName, changed: true, value });

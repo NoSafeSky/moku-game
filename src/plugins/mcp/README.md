@@ -8,7 +8,7 @@ Mutating tools return **honest results**: inputs are validated up front, so an u
 
 The default transport is **environment-aware**: under Node/Bun it is `["stdio"]`; in a browser (where `document` is present) it is `["inMemory"]`, so a default `createApp().start()` runs in-page without a socket and never crashes on a missing `process.stdin`.
 
-Mutations are frame-safe: every mutating tool enqueues a closure that is drained on the next `"input"` stage tick, so ECS operations never interrupt an active iteration. Read-only tools and loop controls are called directly between frames.
+Mutations are frame-safe and loop-aware: while the loop is **running**, every mutating tool enqueues a closure drained on the next `"input"` stage tick, so ECS operations never interrupt an active iteration. While the loop is **paused** (no tick will come to drain the queue), the mutation is applied immediately and the tool call resolves at once — so a *pause → inspect → mutate → `loop:step` → observe* agent flow never deadlocks on the mutate. Read-only tools and loop controls are called directly between frames.
 
 ## API
 

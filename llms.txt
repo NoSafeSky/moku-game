@@ -161,6 +161,7 @@ markDirty(entity: Entity): void                // re-sync view next "sync" tick
 // PrimitiveSpec = discriminated union on `shape`:
 //   { shape:"rect"; width; height } | { shape:"circle"; radius }
 //   | { shape:"line"; x2; y2 } | { shape:"polygon"; points: ReadonlyArray<{x;y}> }  (each & PrimitiveStyle)
+//   Anchor: rect & circle are CENTERED on the entity's Transform; polygon points are local (origin at Transform); line runs from the origin to (x2,y2).
 // Config.headless: boolean — @default detectHeadless() (true when typeof document === "undefined").
 ```
 

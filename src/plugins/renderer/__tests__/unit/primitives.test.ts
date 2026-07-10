@@ -95,3 +95,36 @@ describe("buildPrimitive — Graphics structural marker", () => {
     expect(typeof (view as unknown as Record<string, unknown>).context).toBe("object");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Anchor contract — rect is CENTERED on the local origin (Cycle 6, issue #4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("buildPrimitive — rect anchor (centered, Cycle 6)", () => {
+  it("a rect's local bounds straddle the origin, centered on it", () => {
+    const width = 40;
+    const height = 20;
+    const view = buildPrimitive({ shape: "rect", width, height, fill: 0xff_ff_ff });
+    const bounds = (view as unknown as Graphics).getLocalBounds();
+
+    expect(bounds.minX).toBeCloseTo(-width / 2);
+    expect(bounds.maxX).toBeCloseTo(width / 2);
+    expect(bounds.minY).toBeCloseTo(-height / 2);
+    expect(bounds.maxY).toBeCloseTo(height / 2);
+  });
+
+  it("matches the circle anchor contract: both are centered on the local origin", () => {
+    const radius = 15;
+    const rectView = buildPrimitive({ shape: "rect", width: radius * 2, height: radius * 2 });
+    const circleView = buildPrimitive({ shape: "circle", radius });
+
+    const rectBounds = (rectView as unknown as Graphics).getLocalBounds();
+    const circleBounds = (circleView as unknown as Graphics).getLocalBounds();
+
+    // Same-diameter rect and circle should have the same centered bounds extents.
+    expect(rectBounds.minX).toBeCloseTo(circleBounds.minX);
+    expect(rectBounds.maxX).toBeCloseTo(circleBounds.maxX);
+    expect(rectBounds.minY).toBeCloseTo(circleBounds.minY);
+    expect(rectBounds.maxY).toBeCloseTo(circleBounds.maxY);
+  });
+});

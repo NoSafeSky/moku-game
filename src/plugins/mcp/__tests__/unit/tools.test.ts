@@ -92,15 +92,17 @@ const createFakeScene = () => ({
   ownedEntities: vi.fn((): readonly Entity[] => [])
 });
 
-// RendererDep-typed fake — screenshot (extract) + scene tree + attachPrimitive
+// RendererDep-typed fake — screenshot (extract) + scene tree + attachPrimitive + markDirty
 const createFakeRenderer = (): RendererDep & {
   screenshot: ReturnType<typeof vi.fn>;
   tree: ReturnType<typeof vi.fn>;
   attachPrimitive: ReturnType<typeof vi.fn>;
+  markDirty: ReturnType<typeof vi.fn>;
 } => ({
   screenshot: vi.fn(async (): Promise<string | undefined> => undefined),
   tree: vi.fn((): SceneNode | undefined => undefined),
-  attachPrimitive: vi.fn((_entity: Entity, _spec: PrimitiveSpec): boolean => true)
+  attachPrimitive: vi.fn((_entity: Entity, _spec: PrimitiveSpec): boolean => true),
+  markDirty: vi.fn<(entity: Entity) => void>()
 });
 
 // InputDep fake — injection methods (typed vi.fn so .toHaveBeenCalledWith works)
@@ -630,6 +632,24 @@ describe("registerTools", () => {
       expect(parsed.component).toBe("Transform");
     });
 
+    it("calls renderer.markDirty(entity) in the update path (Cycle 6, issue #4 Bug 1)", async () => {
+      const fakeToken = { __id: 1, __value: {} };
+      world.componentByName.mockReturnValue(fakeToken);
+      world.isAlive.mockReturnValue(true);
+      world.has.mockReturnValue(true);
+      const resultPromise = getToolHandler(
+        server,
+        "ecs:setComponent"
+      )({
+        id: 42,
+        component: "Transform",
+        value: { x: 10 }
+      });
+      for (const fn of pending) fn();
+      await resultPromise;
+      expect(renderer.markDirty).toHaveBeenCalledWith(42 as unknown as Entity);
+    });
+
     it("calls world.add when entity does not have the component (add path)", async () => {
       const fakeToken = { __id: 1, __value: {} };
       world.componentByName.mockReturnValue(fakeToken);
@@ -649,6 +669,24 @@ describe("registerTools", () => {
       expect(world.set).not.toHaveBeenCalled();
       const parsed = parseText(result) as { changed: boolean };
       expect(parsed.changed).toBe(true);
+    });
+
+    it("calls renderer.markDirty(entity) in the add path (Cycle 6, issue #4 Bug 1)", async () => {
+      const fakeToken = { __id: 1, __value: {} };
+      world.componentByName.mockReturnValue(fakeToken);
+      world.isAlive.mockReturnValue(true);
+      world.has.mockReturnValue(false);
+      const resultPromise = getToolHandler(
+        server,
+        "ecs:setComponent"
+      )({
+        id: 42,
+        component: "Transform",
+        value: { x: 5 }
+      });
+      for (const fn of pending) fn();
+      await resultPromise;
+      expect(renderer.markDirty).toHaveBeenCalledWith(42 as unknown as Entity);
     });
 
     it("does not include status:v1-noop in the result", async () => {

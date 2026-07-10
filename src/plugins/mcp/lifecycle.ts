@@ -13,6 +13,11 @@
  *   Idempotent: a second call is a no-op.
  *
  * validateConfig: exported for unit tests.
+ *
+ * Cycle 6 (issue #4, Bug 2): `enqueueMutation` is loop-aware — while paused it
+ * flushes any already-queued closures then applies its own fn() immediately
+ * (synchronous resolve), instead of hanging forever waiting for a tick that
+ * will never come.
  */
 import { ecsPlugin } from "../ecs";
 import type { Entity, Stage } from "../ecs/types";
@@ -133,11 +138,20 @@ export const start = async (ctx: StartContext): Promise<void> => {
   const pending: Array<() => void> = [];
 
   /**
-   * Enqueues a mutation closure to be drained on the next input-stage tick.
-   * This keeps all structural ECS ops outside the world's iteration window.
+   * Enqueues a mutation closure. This keeps all structural ECS ops outside the
+   * world's iteration window.
    *
-   * @param fn - The mutation to run when the drain system executes.
-   * @returns A Promise that resolves with fn's return value after the drain.
+   * Loop-aware (Cycle 6, issue #4 Bug 2): while the loop is RUNNING, `fn` is
+   * deferred to the next input-stage drain tick (frame-safe, unchanged
+   * behavior). While the loop is PAUSED, no tick will ever drain `pending`, so
+   * `fn` would hang forever — instead any already-queued closures are flushed
+   * FIFO first (preserving order), then `fn` runs immediately and the returned
+   * promise resolves synchronously. `loop:step` still drains `pending` on the
+   * tick it runs, so a closure stranded by a mid-tick pause also flushes on the
+   * next step — no path can deadlock.
+   *
+   * @param fn - The mutation to run (immediately when paused, on drain when running).
+   * @returns A Promise that resolves with fn's return value.
    * @example
    * ```ts
    * const id = await enqueueMutation(() => world.spawn());
@@ -145,6 +159,15 @@ export const start = async (ctx: StartContext): Promise<void> => {
    */
   const enqueueMutation = <T>(fn: () => T): Promise<T> =>
     new Promise(resolve => {
+      // Loop paused: no tick will drain `pending`, so apply immediately. Flush any
+      // already-queued closures FIFO first to preserve order, then run fn() and resolve.
+      if (!loop.isRunning()) {
+        const batch = pending.splice(0);
+        for (const queued of batch) queued();
+        resolve(fn());
+        return;
+      }
+      // Loop running: defer to the input-stage drain (frame-safe).
       pending.push(() => {
         resolve(fn());
       });
