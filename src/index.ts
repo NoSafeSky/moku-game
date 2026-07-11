@@ -11,6 +11,7 @@ import {
   inputPlugin,
   loopPlugin,
   mcpPlugin,
+  platformPlugin,
   rendererPlugin,
   scenePlugin,
   schedulerPlugin,
@@ -29,6 +30,7 @@ const framework = createCore(coreConfig, {
     scenePlugin,
     audioPlugin,
     storagePlugin,
+    platformPlugin,
     mcpPlugin
   ],
   // Framework default plugin configuration. Consumers override via createApp({ pluginConfigs }).

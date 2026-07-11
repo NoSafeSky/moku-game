@@ -2,7 +2,7 @@
 
 > An ECS game framework for Moku — Spark-style public API and memory layout, PixiJS v8 rendering, built on @moku-labs/core, composable with @moku-labs/web, with a first-class MCP plugin exposing the live runtime to agent clients.
 
-`game` is a typed Entity-Component-System runtime composed of eleven plugins. It is unpublished
+`game` is a typed Entity-Component-System runtime composed of twelve plugins. It is unpublished
 (version 0.0.0) and not a game engine UI or editor — it owns the data model (archetype object-SoA
 storage), the fixed-timestep frame, and the GPU lifecycle; you write components and systems in
 TypeScript. Hot-path frame work bypasses the Moku kernel for performance and is NOT emitted as
@@ -290,6 +290,24 @@ setBackend(backend: StorageBackend): void          // inject platform's CrazyGam
 // Safe by construction: the default backend probes localStorage and falls back to an in-memory Map (persistent=false) when partitioned/blocked/absent — get/set never crash the game. No events, no hooks, no lifecycle.
 ```
 
+### app.platform (Complex) — portal-SDK adapter layer (zero new deps)
+
+```ts
+getPortal(): Portal                              // "crazygames" | "poki" | "newgrounds" | "none" — resolved at onStart
+gameplayStart(): void                            // signal active gameplay started (portals gate ad timing/analytics on it)
+gameplayStop(): void                             // signal gameplay stopped (menu/pause/game-over)
+loadingStart(): void                             // signal loading started (usually driven by onStart)
+loadingFinished(): void                          // signal loading finished (game interactive)
+commercialBreak(): Promise<void>                 // interstitial; pauses loop + mutes audio, restores on settle; frequency-capped; never rejects
+rewardedAd(): Promise<boolean>                   // rewarded; same coordination; true = watched-to-completion (grant reward); noop adapter → true
+isAdPlaying(): boolean
+// Portal = "crazygames" | "poki" | "newgrounds" | "none". Active adapter selected per build via ctx.env: config.portal "auto" → ctx.env.get(portalEnvVar) (default GAME_PORTAL, case-insensitive); explicit config overrides; unknown/headless → none.
+// Ads are capture-then-restore: capture loop.isRunning()+audio.isMuted() before pausing+muting, restore only what changed on settle (resolve OR reject); re-entrancy guard (state.adPlaying); minInterstitialSeconds cap on interstitials. The same coordination drives window focus/blur + visibilitychange listeners.
+// One PortalAdapter interface, four implementations in adapters/. CrazyGames provides a native StorageBackend over its async data API (synchronous, non-throwing facade over an init-hydrated write-through snapshot) injected via storage.setBackend() when useNativeStorage; Poki/Newgrounds keep storage's localStorage default.
+// persistAudioPrefs (default): hooks audio:muteChanged/audio:volumeChanged → storage.set("audio.muted"/"audio.volume.<channel>"); rehydrates audio mute/volume at onStart. Iframe-safe (own window, never window.top). onStart/onStop own the loaded SDK + focus/visibility listeners in a ctx.global WeakMap. No new package deps (SDKs runtime-injected, globals typed structurally, shipped .d.ts SDK-ambient-free).
+// Config: portal (@default "auto"), portalEnvVar (@default "GAME_PORTAL"), pauseOnAd (@default true), minInterstitialSeconds (@default 60), useNativeStorage (@default true), persistAudioPrefs (@default true).
+```
+
 ## Events
 
 The catalog is intentionally tiny — per-frame work is on the hot path, off the event bus.
@@ -302,9 +320,16 @@ The catalog is intentionally tiny — per-frame work is on the hot path, off the
   mute state. (audio plugin event — a storage/platform plugin persists it)
 - `audio:volumeChanged` — `{ channel: "master" | "sfx" | "music"; value: number }` — after
   `setVolume()` changes a channel volume. (audio plugin event)
+- `platform:ready` — `{ portal: Portal }` — once the active portal adapter is initialised and loading
+  is signalled finished. (platform plugin event)
+- `platform:adStart` — `{ type: "interstitial" | "rewarded" }` — when an ad begins, after `loop` is
+  paused + `audio` muted. (platform plugin event)
+- `platform:adEnd` — `{ type: "interstitial" | "rewarded"; rewarded?: boolean }` — when an ad ends,
+  after `loop` + `audio` are restored; `rewarded` set for rewarded ads. (platform plugin event)
 
 `assets:loaded`/`scene:loaded` are declared in `src/config.ts` (framework `Events`); `game:reset`
-(mcp) and `audio:muteChanged`/`audio:volumeChanged` (audio) are declared on their plugins' `Events`.
+(mcp), `audio:muteChanged`/`audio:volumeChanged` (audio), and `platform:ready`/`platform:adStart`/`platform:adEnd`
+(platform) are declared on their plugins' `Events`.
 Subscribe from a consumer plugin's `hooks`. The `context` plugin exposes the framework emitter to
 systems via `GameContext.emit`, but owns no events of its own.
 
@@ -314,7 +339,7 @@ systems via `GameContext.emit`, but owns no events of its own.
 game/
 ├── src/
 │   ├── config.ts            # Layer 1: createCoreConfig, Config = {}, Events, createPlugin/createCore
-│   ├── index.ts             # Layer 2: createCore assembles the 11 plugins; exports createApp/createPlugin (+ createCore/createCoreConfig for advanced/headless assembly)
+│   ├── index.ts             # Layer 2: createCore assembles the 12 plugins; exports createApp/createPlugin (+ createCore/createCoreConfig for advanced/headless assembly)
 │   └── plugins/
 │       ├── index.ts         # plugin barrel (instances + type namespaces)
 │       ├── ecs/             # data/runtime core + introspection + resource registry (world.ts, types.ts, README.md, __tests__/)
@@ -327,7 +352,8 @@ game/
 │       ├── scene/           # named scene lifecycle + ownership
 │       ├── mcp/             # MCP server (transport.ts, tools.ts, resources.ts)
 │       ├── audio/           # native WebAudio SFX + music, mute bus (engine.ts, lifecycle.ts)
-│       └── storage/         # versioned key/value save persistence (backend.ts, migrate.ts)
+│       ├── storage/         # versioned key/value save persistence (backend.ts, migrate.ts)
+│       └── platform/        # portal-SDK adapter layer (api.ts, lifecycle.ts, prefs.ts, adapters/{crazygames,poki,newgrounds,noop})
 ├── tests/                   # framework-level unit + integration tests
 ├── .planning/specs/         # design specs (intent)
 ├── README.md
@@ -375,7 +401,7 @@ Built/resolved in dependency order. (depends → resolved with `ctx.require`.)
   events: `game:reset` (`{ reason: "mcp" }`) | depends: ecs, scheduler, renderer, input, loop, assets, scene.
 - **audio** — native WebAudio SFX + music (zero runtime deps, no Howler/Pixi). Owns a small gain
   graph `source → channelGain(sfx|music) → masterGain → destination` whose `masterGain` is the
-  **mute bus** a future `platform` adapter ducks on ad breaks. Pooled one-shots (decoded-buffer
+  **mute bus** the `platform` adapter ducks on ad breaks. Pooled one-shots (decoded-buffer
   cache), looping music with fade, per-channel + master volume, user-gesture `unlock()` (no
   autoplay). Headless-safe (every method no-ops without an `AudioContext`); owns the `AudioContext`
   via onStart/onStop. | Standard | `unlock`/`load`/`play`/`playMusic`/`stopMusic`/`mute`/`unmute`/
@@ -385,10 +411,23 @@ Built/resolved in dependency order. (depends → resolved with `ctx.require`.)
 - **storage** — namespaced, versioned key/value save persistence with a migration chain behind a
   pluggable synchronous `StorageBackend` seam. Safe default: probes `localStorage`, falls back to an
   in-memory `Map` (partitioned/blocked/absent) — get/set never throw. Migration runs lazily on first
-  access, once (memoized); `setBackend()` (the future `platform` CrazyGames adapter) resets it. No
+  access, once (memoized); `setBackend()` (the `platform` CrazyGames adapter) resets it. No
   events, no hooks, no lifecycle. | Standard | `get`/`set`/`has`/`remove`/`clear`/`keys`/
   `isPersistent`/`getVersion`/`setBackend` | new types: `StorageBackend`, `Migration`, `Snapshot` |
   config: `namespace`/`version`/`migrations` | events: none | depends: none (foundational, Wave 1).
+- **platform** — portal-SDK adapter layer (CrazyGames / Poki / Newgrounds / no-op) selected per build
+  via `ctx.env` (`config.portal "auto"` → `ctx.env.get(portalEnvVar)`; explicit config overrides;
+  unknown/headless → `none`). Promise-based ads that **capture-then-restore-pause** `loop` + mute
+  `audio` on settle (frequency-capped interstitials, re-entrancy guard, never reject); one
+  `PortalAdapter` interface + four `adapters/` implementations. Injects a portal-native
+  `StorageBackend` into `storage` via `setBackend()` (CrazyGames async data API bridged behind a sync
+  facade; Poki/Newgrounds keep localStorage). Persists + rehydrates `audio` mute/volume through
+  `storage` (hooks `audio:muteChanged`/`audio:volumeChanged`). Iframe-safe; owns the loaded SDK +
+  focus/visibility listeners via onStart/onStop (`ctx.global` WeakMap). No new package deps. | Complex |
+  `getPortal`/`gameplayStart`/`gameplayStop`/`loadingStart`/`loadingFinished`/`commercialBreak`/
+  `rewardedAd`/`isAdPlaying` | new types: `Portal`, `AdType`, `PortalAdapter`, `AdapterContext` |
+  config: `portal`/`portalEnvVar`/`pauseOnAd`/`minInterstitialSeconds`/`useNativeStorage`/`persistAudioPrefs` |
+  events: `platform:ready`, `platform:adStart`, `platform:adEnd` | depends: audio, loop, storage (Wave 2).
 
 ## Requirements
 

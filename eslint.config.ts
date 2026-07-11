@@ -126,11 +126,12 @@ export default [
     }
   },
 
-  // 6b. storage plugin: models the Web Storage API, whose `getItem` returns
-  // `string | null`. `null` is part of the public `StorageBackend` contract (so a
-  // localStorage-shaped backend is drop-in), so `unicorn/no-null` is scoped off here.
+  // 6b. storage + platform plugins: model the Web Storage API, whose `getItem`
+  // returns `string | null`. `null` is part of the public `StorageBackend` contract
+  // (so a localStorage-shaped backend is drop-in) — the platform plugin's CrazyGames
+  // adapter implements that same contract — so `unicorn/no-null` is scoped off here.
   {
-    files: ["src/plugins/storage/**/*.ts"],
+    files: ["src/plugins/storage/**/*.ts", "src/plugins/platform/**/*.ts"],
     rules: {
       "unicorn/no-null": "off"
     }
