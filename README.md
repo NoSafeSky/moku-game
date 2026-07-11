@@ -2,7 +2,7 @@
 
 **An ECS game framework for Moku — Spark-style API and memory layout, PixiJS v8 rendering, with the live runtime exposed to agents over MCP.**
 
-`game` is a typed Entity-Component-System runtime you compose into a Moku app: archetype object-SoA component storage, a fixed-timestep loop that bypasses the kernel for the hot path, typed world resources for first-class systems access, and nine plugins that wire ECS, scheduling, rendering, input, assets, scenes, framework context, and an MCP server together. It is **not** a game engine UI or a level editor — there is no scene graph GUI, no asset pipeline, no runtime of its own beyond `@moku-labs/core`. You define components and systems in TypeScript and drive frames; the framework owns the data layout, the stage order, and the GPU lifecycle.
+`game` is a typed Entity-Component-System runtime you compose into a Moku app: archetype object-SoA component storage, a fixed-timestep loop that bypasses the kernel for the hot path, typed world resources for first-class systems access, and eleven plugins that wire ECS, scheduling, rendering, input, assets, scenes, framework context, an MCP server, native WebAudio audio, and versioned save persistence together. It is **not** a game engine UI or a level editor — there is no scene graph GUI, no asset pipeline, no runtime of its own beyond `@moku-labs/core`. You define components and systems in TypeScript and drive frames; the framework owns the data layout, the stage order, and the GPU lifecycle.
 
 <br/>
 
@@ -103,11 +103,11 @@ flowchart LR
 - **The command buffer is the only mutation path during iteration.** Inside `updateEach` (or any system), structural ops (`spawn`/`despawn`/`add`/`remove`) are deferred and flushed at each stage boundary inside `tick`. This is the path every `mcp` mutating tool uses.
 - **World resources are first-class systems access.** The world owns a typed singleton registry — `defineResource(create?)` mints a `Resource<T>` token; `setResource`/`getResource`/`resource`/`hasResource`/`removeResource` read and write it. `resource(token)` asserts presence (throws an actionable error if unset with no factory); `getResource` returns `T | undefined`. Resource ops are **immediate** — they bypass the command buffer even mid-iteration, and aren't counted by `maxStructuralOpsWarn`. Systems reach shared services through the `world` argument, with no closure over `app`. The framework's well-known resources — `Assets` + `GameContext` (from `context`) and `Time` (from `loop`) — are wired at `app.start()`.
 - **The loop is fixed-timestep.** Real time is accumulated and consumed in `fixedDt` slices (clamped by `maxFrameDelta`, capped at `maxStepsPerFrame`) so simulation is frame-rate independent; `step()` advances exactly one deterministic tick + render. Each fixed step the loop updates the `Time` world resource in place (`{ dt, elapsed, frame }`, seconds), readable as `app.loop.time` or `world.resource(Time)`.
-- **Three-layer Moku model.** `createCoreConfig` (config + events) → `createCore` (framework + the nine plugins) → `createApp({ pluginConfigs })` (your app). Consumers use `createApp` / `createPlugin` from `game` and never import `@moku-labs/core` directly. For **advanced / headless** assembly, `game` also re-exports `createCore` (compose a custom core from a plugin subset) and `createCoreConfig` (build a bespoke Layer-1 config) — escape hatches for tooling, tests, and agent-only hosts; `createApp` stays the default.
+- **Three-layer Moku model.** `createCoreConfig` (config + events) → `createCore` (framework + the eleven plugins) → `createApp({ pluginConfigs })` (your app). Consumers use `createApp` / `createPlugin` from `game` and never import `@moku-labs/core` directly. For **advanced / headless** assembly, `game` also re-exports `createCore` (compose a custom core from a plugin subset) and `createCoreConfig` (build a bespoke Layer-1 config) — escape hatches for tooling, tests, and agent-only hosts; `createApp` stays the default.
 
 ## Plugins
 
-The framework is nine plugins, built and resolved in dependency order: `ecs` → `scheduler` → `renderer` + `input` → `loop` + `assets` → `context` → `scene` → `mcp`.
+The framework is eleven plugins, built and resolved in dependency order: `ecs` → `scheduler` → `renderer` + `input` → `loop` + `assets` → `context` → `scene` → `mcp`, plus the dependency-free `audio` and `storage` plugins.
 
 | Plugin | Tier | Responsibility | Key API |
 |---|---|---|---|
@@ -120,6 +120,8 @@ The framework is nine plugins, built and resolved in dependency order: `ecs` →
 | [context](src/plugins/context/README.md) | Standard | Binds the well-known `Assets` + `GameContext` world resources so systems reach them via `world.resource(token)`. | `app.context` → `assets` · `game` |
 | [scene](src/plugins/scene/README.md) | Standard | Named scene lifecycle with entity-ownership tracking, clean transitions, bundle pre-load. | `app.scene.define` · `load` · `unload` · `currentScene` · `sceneNames` · `ownedEntities` |
 | [mcp](src/plugins/mcp/README.md) | Complex | First-class MCP server exposing the runtime to agents over stdio / Streamable HTTP / in-page `inMemory` (env-aware default); 15 registered tools (4 read-only, the rest mutation/play gated by `enableMutations`). | `app.mcp.isRunning` · `httpEndpoint` · `toolNames` · `clientTransport` |
+| [audio](src/plugins/audio/README.md) | Standard | Native WebAudio SFX + music — master **mute bus** (single-call duck for ad breaks), per-channel + master volume, user-gesture `unlock()` (no autoplay), decoded-buffer cache. Zero deps, headless-safe. | `app.audio.unlock` · `load` · `play` · `playMusic` · `stopMusic` · `mute`/`unmute` · `setVolume` · `getVolume` |
+| [storage](src/plugins/storage/README.md) | Standard | Namespaced, **versioned** key/value save persistence with a migration chain behind a pluggable `StorageBackend` seam; safe localStorage-or-memory default that **never throws** (in-memory fallback when storage is partitioned/blocked/absent). Zero deps. | `app.storage.get` · `set` · `has` · `remove` · `clear` · `keys` · `isPersistent` · `getVersion` · `setBackend` |
 
 ## Events
 
@@ -130,8 +132,10 @@ The event catalog is intentionally tiny — hot-path frame work (ticks, sync, re
 | `assets:loaded` | `{ alias: string; kind: "asset" \| "bundle" }` | After `app.assets.load()` or `loadBundle()` succeeds (once per call, not per texture). |
 | `scene:loaded` | `{ name: string }` | After a scene's `setup` completes during `app.scene.load()`. |
 | `game:reset` | `{ reason: "mcp" }` | After the `mcp` `game:reset` tool despawns all MCP-tracked entities and unloads the current scene — listen to re-initialize consumer state. |
+| `audio:muteChanged` | `{ muted: boolean }` | After `app.audio.mute()` / `unmute()` / `setMuted()` changes the mute state — a `storage`/`platform` plugin persists it. |
+| `audio:volumeChanged` | `{ channel: "master" \| "sfx" \| "music"; value: number }` | After `app.audio.setVolume()` changes a channel volume. |
 
-`assets:loaded` and `scene:loaded` are declared on the framework `Events` (`src/config.ts`); `game:reset` is a plugin-level event declared and emitted by the `mcp` plugin. Subscribe from a consumer plugin via the `hooks` map (`depends: [assetsPlugin]`, then `hooks: _ctx => ({ "assets:loaded": ({ alias, kind }) => { … } })`).
+`assets:loaded` and `scene:loaded` are declared on the framework `Events` (`src/config.ts`); `game:reset` (from `mcp`) and `audio:muteChanged` / `audio:volumeChanged` (from `audio`) are plugin-level events declared and emitted by their plugins. Subscribe from a consumer plugin via the `hooks` map (`depends: [assetsPlugin]`, then `hooks: _ctx => ({ "assets:loaded": ({ alias, kind }) => { … } })`).
 
 ## Scripts
 

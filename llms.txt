@@ -2,7 +2,7 @@
 
 > An ECS game framework for Moku — Spark-style public API and memory layout, PixiJS v8 rendering, built on @moku-labs/core, composable with @moku-labs/web, with a first-class MCP plugin exposing the live runtime to agent clients.
 
-`game` is a typed Entity-Component-System runtime composed of nine plugins. It is unpublished
+`game` is a typed Entity-Component-System runtime composed of eleven plugins. It is unpublished
 (version 0.0.0) and not a game engine UI or editor — it owns the data model (archetype object-SoA
 storage), the fixed-timestep frame, and the GPU lifecycle; you write components and systems in
 TypeScript. Hot-path frame work bypasses the Moku kernel for performance and is NOT emitted as
@@ -12,7 +12,7 @@ kernel events. Systems reach shared services (assets, logging, frame time) throu
 ## Core Concepts
 
 - **Three-layer Moku model.** `createCoreConfig` (Layer 1: config + events) → `createCore`
-  (Layer 2: framework + the 9 built-in plugins) → `createApp({ pluginConfigs })` (Layer 3: your
+  (Layer 2: framework + the 10 built-in plugins) → `createApp({ pluginConfigs })` (Layer 3: your
   app). Consumers import `createApp` / `createPlugin` from `game` and never import
   `@moku-labs/core` directly. `createApp(...)` returns an App synchronously; `await app.start()`
   boots the Pixi Application and registers DOM listeners. Each plugin's API is reached as
@@ -251,6 +251,45 @@ Mutating / play (when `enableMutations: true`, 11): `ecs:spawn` (REAL components
 MCP resources: `game://world/snapshot` (every live entity + named values), `game://systems/list`
 (stage names only — systems are anonymous), `game://stats/frame`, `game://scene/current`.
 
+### app.audio (Standard) — native WebAudio SFX + music (zero deps)
+
+```ts
+unlock(): Promise<void>                          // resume AudioContext after a user gesture; idempotent; sets state.unlocked
+load(name: string, url?: string): Promise<void>  // fetch + decodeAudioData + cache; url falls back to manifest[name]; one decode per name
+play(name: string, opts?: { volume?: number; rate?: number }): void       // one-shot on sfx; no-op if headless/not-unlocked/not-loaded
+playMusic(name: string, opts?: { loop?: boolean; fadeIn?: number }): void // looping on music; stops previous; fadeIn ramps from 0
+stopMusic(opts?: { fadeOut?: number }): void     // stop current track; fadeOut ramps to 0 first
+mute(): void                                     // zero the master mute bus; emits audio:muteChanged on change
+unmute(): void                                   // restore master gain to masterVolume; emits on change
+setMuted(muted: boolean): void                   // explicit; emits only on change
+isMuted(): boolean
+setVolume(channel: Channel, value: number): void // clamp 0..1; write gain; emit audio:volumeChanged on change; master-while-muted keeps bus at 0
+getVolume(channel: Channel): number
+// Channel = "master" | "sfx" | "music".
+// Gain graph: source → channelGain(sfx|music) → masterGain(mute bus) → destination. Held in a ctx.global WeakMap.
+// Config: masterVolume/sfxVolume/musicVolume (0..1, @default 1), muted (@default false), manifest (name→url, @default {}).
+//   Volume/mute config double as rehydration inputs a storage/platform plugin feeds via pluginConfigs.audio.*.
+// Headless-safe: with no AudioContext (SSR/tests) every method no-ops (getters still return state). onStart/onStop own the AudioContext.
+```
+
+### app.storage (Standard) — versioned key/value save persistence (zero deps)
+
+```ts
+get<T>(key: string, fallback?: T): T | undefined  // JSON-parse; fallback on missing/unparseable/unavailable; triggers lazy migration; never throws
+set(key: string, value: unknown): boolean         // JSON-serialize + write; false on rejected write / unserializable value; never throws
+has(key: string): boolean
+remove(key: string): void                          // no-op if absent
+clear(): void                                      // wipe every namespace key, then re-stamp the schema version
+keys(): string[]                                   // namespace keys, `${namespace}:` prefix stripped, meta key excluded; [] on failure
+isPersistent(): boolean                            // false on the in-memory fallback / an injected non-persistent backend
+getVersion(): number                               // schema version in effect after any lazy migration
+setBackend(backend: StorageBackend): void          // inject platform's CrazyGames backend; resets `migrated` → re-migrate on next access
+// Values stored as `${namespace}:${key}` (JSON). StorageBackend = { getItem→string|null, setItem→boolean, removeItem, keys(prefix)→string[], persistent } — synchronous, non-throwing.
+// Config: namespace (@default "game"), version (@default 1), migrations (target-version → whole-namespace Snapshot transform, @default {}).
+// Migration runs lazily on first access, once (memoized): migrations[n] upgrades a v(n-1) snapshot to vn; a store already at version is untouched; a downgrade warns + leaves data intact.
+// Safe by construction: the default backend probes localStorage and falls back to an in-memory Map (persistent=false) when partitioned/blocked/absent — get/set never crash the game. No events, no hooks, no lifecycle.
+```
+
 ## Events
 
 The catalog is intentionally tiny — per-frame work is on the hot path, off the event bus.
@@ -259,10 +298,15 @@ The catalog is intentionally tiny — per-frame work is on the hot path, off the
 - `scene:loaded` — `{ name: string }` — after a scene's `setup` completes during `load()`. (framework Events)
 - `game:reset` — `{ reason: "mcp" }` — after the mcp `game:reset` tool despawns all MCP-tracked
   entities and unloads the current scene. (mcp plugin event — declared + emitted by the mcp plugin)
+- `audio:muteChanged` — `{ muted: boolean }` — after `mute()`/`unmute()`/`setMuted()` changes the
+  mute state. (audio plugin event — a storage/platform plugin persists it)
+- `audio:volumeChanged` — `{ channel: "master" | "sfx" | "music"; value: number }` — after
+  `setVolume()` changes a channel volume. (audio plugin event)
 
-`assets:loaded`/`scene:loaded` are declared in `src/config.ts` (framework `Events`); `game:reset` is
-declared on the `mcp` plugin's `Events`. Subscribe from a consumer plugin's `hooks`. The `context`
-plugin exposes the framework emitter to systems via `GameContext.emit`, but owns no events of its own.
+`assets:loaded`/`scene:loaded` are declared in `src/config.ts` (framework `Events`); `game:reset`
+(mcp) and `audio:muteChanged`/`audio:volumeChanged` (audio) are declared on their plugins' `Events`.
+Subscribe from a consumer plugin's `hooks`. The `context` plugin exposes the framework emitter to
+systems via `GameContext.emit`, but owns no events of its own.
 
 ## File Structure
 
@@ -270,7 +314,7 @@ plugin exposes the framework emitter to systems via `GameContext.emit`, but owns
 game/
 ├── src/
 │   ├── config.ts            # Layer 1: createCoreConfig, Config = {}, Events, createPlugin/createCore
-│   ├── index.ts             # Layer 2: createCore assembles the 9 plugins; exports createApp/createPlugin (+ createCore/createCoreConfig for advanced/headless assembly)
+│   ├── index.ts             # Layer 2: createCore assembles the 11 plugins; exports createApp/createPlugin (+ createCore/createCoreConfig for advanced/headless assembly)
 │   └── plugins/
 │       ├── index.ts         # plugin barrel (instances + type namespaces)
 │       ├── ecs/             # data/runtime core + introspection + resource registry (world.ts, types.ts, README.md, __tests__/)
@@ -281,7 +325,9 @@ game/
 │       ├── assets/          # Pixi Assets wrapper
 │       ├── context/         # binds Assets + GameContext world resources (resources.ts, lifecycle.ts)
 │       ├── scene/           # named scene lifecycle + ownership
-│       └── mcp/             # MCP server (transport.ts, tools.ts, resources.ts)
+│       ├── mcp/             # MCP server (transport.ts, tools.ts, resources.ts)
+│       ├── audio/           # native WebAudio SFX + music, mute bus (engine.ts, lifecycle.ts)
+│       └── storage/         # versioned key/value save persistence (backend.ts, migrate.ts)
 ├── tests/                   # framework-level unit + integration tests
 ├── .planning/specs/         # design specs (intent)
 ├── README.md
@@ -326,7 +372,23 @@ Built/resolved in dependency order. (depends → resolved with `ctx.require`.)
   in-page `inMemory` (env-aware default: `["stdio"]` Node-Bun, `["inMemory"]` browser; stdio guarded
   on `process?.stdin`). 15 tools (4 read-only; 11 mutation/play gated by `enableMutations`). |
   Complex | `isRunning`/`httpEndpoint`/`toolNames`/`clientTransport` | config: +`inMemoryGlobalKey` |
-  events: `game:reset` (`{ reason: "mcp" }`) | depends: all eight above.
+  events: `game:reset` (`{ reason: "mcp" }`) | depends: ecs, scheduler, renderer, input, loop, assets, scene.
+- **audio** — native WebAudio SFX + music (zero runtime deps, no Howler/Pixi). Owns a small gain
+  graph `source → channelGain(sfx|music) → masterGain → destination` whose `masterGain` is the
+  **mute bus** a future `platform` adapter ducks on ad breaks. Pooled one-shots (decoded-buffer
+  cache), looping music with fade, per-channel + master volume, user-gesture `unlock()` (no
+  autoplay). Headless-safe (every method no-ops without an `AudioContext`); owns the `AudioContext`
+  via onStart/onStop. | Standard | `unlock`/`load`/`play`/`playMusic`/`stopMusic`/`mute`/`unmute`/
+  `setMuted`/`isMuted`/`setVolume`/`getVolume` | new types: `Channel`, `PlayOptions`,
+  `PlayMusicOptions`, `StopMusicOptions` | events: `audio:muteChanged`, `audio:volumeChanged` |
+  depends: none (foundational, Wave 1).
+- **storage** — namespaced, versioned key/value save persistence with a migration chain behind a
+  pluggable synchronous `StorageBackend` seam. Safe default: probes `localStorage`, falls back to an
+  in-memory `Map` (partitioned/blocked/absent) — get/set never throw. Migration runs lazily on first
+  access, once (memoized); `setBackend()` (the future `platform` CrazyGames adapter) resets it. No
+  events, no hooks, no lifecycle. | Standard | `get`/`set`/`has`/`remove`/`clear`/`keys`/
+  `isPersistent`/`getVersion`/`setBackend` | new types: `StorageBackend`, `Migration`, `Snapshot` |
+  config: `namespace`/`version`/`migrations` | events: none | depends: none (foundational, Wave 1).
 
 ## Requirements
 

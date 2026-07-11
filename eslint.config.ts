@@ -126,6 +126,16 @@ export default [
     }
   },
 
+  // 6b. storage plugin: models the Web Storage API, whose `getItem` returns
+  // `string | null`. `null` is part of the public `StorageBackend` contract (so a
+  // localStorage-shaped backend is drop-in), so `unicorn/no-null` is scoped off here.
+  {
+    files: ["src/plugins/storage/**/*.ts"],
+    rules: {
+      "unicorn/no-null": "off"
+    }
+  },
+
   // 7. Test files: relaxed rules
   {
     files: ["tests/**/*.ts", "src/plugins/**/__tests__/**/*.ts"],

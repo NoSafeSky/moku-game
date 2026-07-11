@@ -163,7 +163,7 @@ describe("core framework lifecycle (integration)", () => {
 
   // ── Scenario 2: shipped wiring via the real createApp ──────────────────────
 
-  it("boots via the shipped createApp export with all eight plugin APIs", async () => {
+  it("boots via the shipped createApp export with every shipped plugin API (incl. audio + storage)", async () => {
     const app = shippedCreateApp({
       pluginConfigs: { mcp: { transports: ["stdio"], httpAuth: "none" } }
     });
@@ -176,8 +176,21 @@ describe("core framework lifecycle (integration)", () => {
     expect(app.input).toBeDefined();
     expect(app.loop).toBeDefined();
     expect(app.assets).toBeDefined();
+    expect(app.context).toBeDefined();
     expect(app.scene).toBeDefined();
     expect(app.mcp).toBeDefined();
+
+    // audio (Wave 1) is wired into the shipped framework; its getters work even
+    // headless (no AudioContext in node), returning the config-seeded defaults.
+    expect(app.audio).toBeDefined();
+    expect(app.audio.isMuted()).toBe(false);
+    expect(app.audio.getVolume("master")).toBe(1);
+
+    // storage (Wave 1) is wired too; in node (no localStorage) it degrades to the
+    // in-memory fallback — isPersistent() is false, and the save schema starts at v1.
+    expect(app.storage).toBeDefined();
+    expect(app.storage.isPersistent()).toBe(false);
+    expect(app.storage.getVersion()).toBe(1);
 
     await app.stop();
   });

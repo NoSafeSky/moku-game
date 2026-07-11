@@ -5,6 +5,7 @@
 import { coreConfig, createCore } from "./config";
 import {
   assetsPlugin,
+  audioPlugin,
   contextPlugin,
   ecsPlugin,
   inputPlugin,
@@ -12,7 +13,8 @@ import {
   mcpPlugin,
   rendererPlugin,
   scenePlugin,
-  schedulerPlugin
+  schedulerPlugin,
+  storagePlugin
 } from "./plugins";
 
 const framework = createCore(coreConfig, {
@@ -25,6 +27,8 @@ const framework = createCore(coreConfig, {
     assetsPlugin,
     contextPlugin,
     scenePlugin,
+    audioPlugin,
+    storagePlugin,
     mcpPlugin
   ],
   // Framework default plugin configuration. Consumers override via createApp({ pluginConfigs }).

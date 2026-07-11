@@ -6,6 +6,7 @@
 
 // ─── Plugin Instances ────────────────────────────────────────
 export { assetsPlugin } from "./assets";
+export { audioPlugin } from "./audio";
 export { contextPlugin } from "./context";
 export { ecsPlugin } from "./ecs";
 export { inputPlugin } from "./input";
@@ -14,9 +15,11 @@ export { mcpPlugin } from "./mcp";
 export { rendererPlugin } from "./renderer";
 export { scenePlugin } from "./scene";
 export { schedulerPlugin } from "./scheduler";
+export { storagePlugin } from "./storage";
 
 // ─── Plugin Types (namespace re-exports) ─────────────────────
 export * as Assets from "./assets/types";
+export * as Audio from "./audio/types";
 export * as Context from "./context/types";
 export * as Ecs from "./ecs/types";
 export * as Input from "./input/types";
@@ -25,3 +28,4 @@ export * as Mcp from "./mcp/types";
 export * as Renderer from "./renderer/types";
 export * as Scene from "./scene/types";
 export * as Scheduler from "./scheduler/types";
+export * as Storage from "./storage/types";
