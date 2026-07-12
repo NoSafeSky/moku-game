@@ -155,12 +155,13 @@ audio          (no deps — foundational, Wave 1; independent of the graph above
 storage        (no deps — foundational, Wave 1; independent of the graph above)
 platform       (depends: audio, loop, storage — Wave 2; registered after them, before mcp)
 vfx            (depends: ecs, scheduler, renderer — Wave 3; registered after platform, before mcp)
+ui             (depends: renderer, scheduler, input — leaf; registered after vfx, before mcp)
 ```
 
 Build/resolve order: ecs → scheduler → renderer + input → loop + assets → context → scene → audio →
-storage → platform → vfx → mcp (the dependency-free `audio` + `storage`, then `platform` which depends
-on `audio` + `loop` + `storage`, then `vfx` on `ecs` + `scheduler` + `renderer`, all registered before
-`mcp` so `mcp` stays last).
+storage → platform → vfx → ui → mcp (the dependency-free `audio` + `storage`, then `platform` which depends
+on `audio` + `loop` + `storage`, then `vfx` on `ecs` + `scheduler` + `renderer`, then `ui` on `renderer` +
+`scheduler` + `input`, all registered before `mcp` so `mcp` stays last).
 Each plugin declares `depends: [...]` and resolves the API at runtime with `ctx.require(...)`.
 There are no dependency cycles. `loop` depends on `ecs` (to publish the `Time` resource), the
 `context` plugin depends on `ecs` + `assets`, and `mcp` depends on its seven build-dependency plugins (its
@@ -1550,7 +1551,98 @@ app.ecs.set(trail, app.renderer.Transform, { x: player.x, y: player.y });
 ```
 
 --------------------------------------------------------------------------------
-## 17. End-to-end example (scene → spawn → resources → loop → MCP)
+## 17. ui — PixiJS-native game-UI layer (Complex)
+--------------------------------------------------------------------------------
+
+The **game-UI layer**: a **screen stack** (title / pause / game-over / upgrade-choice modal cards), a
+small **declarative widget set** (`label` / `button` / `panel` / `bar`), a **persistent HUD**, and
+**pointer/touch hit-testing** — all rendered **natively into the renderer's Pixi stage**. Widgets are
+described as **plain data** (no Pixi types leak into the specs); `ui` builds the Pixi objects once and
+returns **opaque handles** for later mutation (retained-mode, not a per-frame rebuild). Depends on
+`renderer` (`getStage()` to parent the UI root), `scheduler` (`addSystem("update", …)`), and `input`
+(`snapshot().pointer`). Emits **no** events. **Headless-safe**. **No new package dependency** (Pixi via
+`renderer`).
+
+**PixiJS-native, not DOM islands via `@moku-labs/web`.** A single-canvas UI adds zero new dependency,
+keeps the whole game in one portable surface (the iframe/portal target), and shares one coordinate space
+with the renderer's shake/camera — matching the `audio` (native WebAudio) and `vfx` (ECS-native
+particles) precedent. A responsive layout engine (safe-area insets, reflow, flex/grid) is a documented
+deferred enhancement; this plugin ships absolute screen-space positioning with anchors.
+
+**Screen stack (modal capture).** `pushScreen(spec)` builds one Pixi `Container` — an optional
+full-viewport dimming backdrop behind a set of widgets — and adds it on top of the stack. Only the TOP
+screen's buttons are tappable while the stack is non-empty (a modal captures pointer input away from the
+HUD and lower screens). `popScreen`/`replaceScreen`/`clearScreens` destroy the container(s) they remove;
+the HUD is never touched. `topScreen()` / `screenCount()` read the stack.
+
+**Widgets (plain data).** `label` (a Pixi `Text`), `button` (bg + centered caption, with an explicit
+`width`/`height` hit-area or a documented text-estimate fallback), `panel` (a filled/rounded card whose
+`children` are positioned relative to its origin — nested hit-rects accumulate the panel offset), and
+`bar` (a track + a fill scaled horizontally to `value/max`, so `setValue` is a cheap `scale.x` write).
+`WidgetSpec` is a discriminated union on `kind`; `ScreenSpec = { backdrop?, widgets }`. Widgets given a
+spec `id` are addressable inside a pushed screen via `getWidget(screen, id)` (recursive through panels).
+
+**HUD + live mutation.** `addHud(spec)` builds a persistent widget outside the stack (score `label`,
+health `bar`, pause `button`); HUD buttons are tappable only when the stack is empty (a modal captures
+them). Mutate any live widget through its handle: `setText` (label/button caption), `setValue` (bar,
+clamped to `[0, max]`), `setVisible`, and `removeHud`.
+
+**Pointer hit-testing.** One `"update"`-stage system reads `input.snapshot().pointer` each frame and
+computes its own press/release edges from the button bitmask (the input snapshot exposes
+`justPressed`/`justReleased` for keys only, not pointer buttons). A button's `onTap` fires on pointer-up
+over the SAME button armed on pointer-down — a press that drifts off, or a release over an un-armed
+button, fires nothing. Touch is first-class for free: `input.pointer` is fed by DOM pointer events,
+which unify mouse + touch.
+
+**Lifecycle & disposal.** `onStart` (deps-ready wiring, the renderer/`vfx` shape) captures
+`renderer.getStage()`, builds the UI root over the game entities when a stage exists, and registers the
+hit-test system. There is NO `onStop`: every Pixi object is parented under the renderer-owned stage, so
+the renderer disposes the whole subtree; in-run disposal (`popScreen`/`clearScreens`/`replaceScreen`/
+`removeHud`) is the API's job. Headless-safe: with `renderer.getStage()` undefined, the root is never
+built and every API method + the system are guarded no-ops.
+
+Public API (`app.ui`):
+
+```ts
+pushScreen(spec: ScreenSpec): ScreenHandle       // build + push a screen (widgets + optional backdrop)
+popScreen(): void                                // remove + destroy the top screen
+replaceScreen(spec: ScreenSpec): ScreenHandle    // popScreen() then pushScreen(spec)
+clearScreens(): void                             // remove + destroy every screen (HUD untouched)
+topScreen(): ScreenHandle | undefined            // the top screen's handle, or undefined when empty
+screenCount(): number                            // stack depth
+addHud(spec: WidgetSpec): WidgetHandle           // persistent HUD widget outside the stack
+removeHud(handle: WidgetHandle): void            // remove + destroy a HUD widget
+getWidget(screen: ScreenHandle, id: string): WidgetHandle | undefined  // resolve a screen widget by spec id
+setText(handle: WidgetHandle, text: string): void
+setValue(handle: WidgetHandle, value: number): void
+setVisible(handle: WidgetHandle, visible: boolean): void
+getRoot(): Container | undefined                 // the UI root Container (advanced), or undefined before start / headless
+```
+
+Config (theme defaults + reference viewport): `textColor` (0xffffff), `fontSize` (20), `fontFamily`
+("sans-serif"), `buttonColor` (0x3355ff), `buttonHoverColor` (0x4466ff), `panelColor` (0x141821),
+`panelAlpha` (0.92), `backdropColor` (0x000000), `backdropAlpha` (0.6), `padding` (12), `width` (800),
+`height` (600). `width`/`height` are the reference viewport a modal backdrop fills — the renderer
+exposes no canvas dimensions via its API (only `getStage()`), so set them to match the renderer's canvas.
+
+```ts
+// Title screen with a Play button; a HUD score + health bar during gameplay:
+app.ui.pushScreen({ widgets: [
+  { kind: "label", text: "ASCEND", x: 400, y: 200, fontSize: 48 },
+  { kind: "button", text: "Play", x: 400, y: 320, width: 200, height: 56,
+    onTap: () => { app.ui.popScreen(); app.loop.start(); } }
+]});
+
+const score = app.ui.addHud({ kind: "label", text: "0", x: 16, y: 16, anchor: { x: 0, y: 0 } });
+const hp = app.ui.addHud({ kind: "bar", value: 100, max: 100, x: 16, y: 44, width: 160, height: 12 });
+app.scheduler.addSystem("update", () => {
+  app.ui.setText(score, String(currentScore));
+  app.ui.setValue(hp, player.health);
+});
+```
+
+--------------------------------------------------------------------------------
+## 18. End-to-end example (scene → spawn → resources → loop → MCP)
 --------------------------------------------------------------------------------
 
 ```ts
@@ -1633,7 +1725,7 @@ const reinit = createPlugin("reinit", {
 ```
 
 --------------------------------------------------------------------------------
-## 18. Extension patterns
+## 19. Extension patterns
 --------------------------------------------------------------------------------
 
 - **Add a gameplay plugin:** `createPlugin("name", { depends: [ecsPlugin, schedulerPlugin], api, lifecycle })`.
@@ -1655,7 +1747,7 @@ const reinit = createPlugin("reinit", {
   snapshot.
 
 --------------------------------------------------------------------------------
-## 19. Error handling & gotchas
+## 20. Error handling & gotchas
 --------------------------------------------------------------------------------
 
 - `createApp(...)` is synchronous; `app.start()` / `app.stop()` are async and must be awaited.
@@ -1693,7 +1785,7 @@ const reinit = createPlugin("reinit", {
   boundaries; outside iteration they apply immediately. Resource ops are always immediate.
 
 --------------------------------------------------------------------------------
-## 20. Scripts, requirements, layout
+## 21. Scripts, requirements, layout
 --------------------------------------------------------------------------------
 
 Scripts (package.json, run with `bun`):
@@ -1718,7 +1810,7 @@ Layout:
 
 ```
 src/config.ts              # Layer 1 — createCoreConfig, Config = {}, Events, createPlugin/createCore
-src/index.ts               # Layer 2 — createCore(13 plugins); exports createApp/createPlugin (+ createCore/createCoreConfig)
+src/index.ts               # Layer 2 — createCore(14 plugins); exports createApp/createPlugin (+ createCore/createCoreConfig)
 src/plugins/index.ts       # plugin barrel (instances + Ecs/Scheduler/Context/... type namespaces)
 src/plugins/<name>/        # api.ts, types.ts, index.ts, lifecycle.ts / resources.ts / primitives.ts (where applicable), README.md, __tests__/
 tests/                     # framework-level unit + integration tests

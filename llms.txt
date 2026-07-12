@@ -2,7 +2,7 @@
 
 > An ECS game framework for Moku — Spark-style public API and memory layout, PixiJS v8 rendering, built on @moku-labs/core, composable with @moku-labs/web, with a first-class MCP plugin exposing the live runtime to agent clients.
 
-`game` is a typed Entity-Component-System runtime composed of thirteen plugins. It is unpublished
+`game` is a typed Entity-Component-System runtime composed of fourteen plugins. It is unpublished
 (version 0.0.0) and not a game engine UI or editor — it owns the data model (archetype object-SoA
 storage), the fixed-timestep frame, and the GPU lifecycle; you write components and systems in
 TypeScript. Hot-path frame work bypasses the Moku kernel for performance and is NOT emitted as
@@ -12,7 +12,7 @@ kernel events. Systems reach shared services (assets, logging, frame time) throu
 ## Core Concepts
 
 - **Three-layer Moku model.** `createCoreConfig` (Layer 1: config + events) → `createCore`
-  (Layer 2: framework + the 13 built-in plugins) → `createApp({ pluginConfigs })` (Layer 3: your
+  (Layer 2: framework + the 14 built-in plugins) → `createApp({ pluginConfigs })` (Layer 3: your
   app). Consumers import `createApp` / `createPlugin` from `game` and never import
   `@moku-labs/core` directly. `createApp(...)` returns an App synchronously; `await app.start()`
   boots the Pixi Application and registers DOM listeners. Each plugin's API is reached as
@@ -328,6 +328,28 @@ lerp(a: number, b: number, t: number): number   // linear interpolation a + (b �
 // Config: maxParticles (@default 1000), shakeDecay (@default 1.8), shakeMaxOffset (@default 24), defaultColor (@default 0xffffff).
 ```
 
+### app.ui (Complex) — PixiJS-native game-UI layer (zero new deps)
+
+```ts
+pushScreen(spec: ScreenSpec): ScreenHandle      // build + push a screen (widgets + optional dimming backdrop); only the TOP screen's buttons are tappable (modal capture)
+popScreen(): void                               // remove + destroy the top screen
+replaceScreen(spec: ScreenSpec): ScreenHandle   // popScreen() then pushScreen(spec)
+clearScreens(): void                            // remove + destroy every screen (HUD untouched)
+topScreen(): ScreenHandle | undefined           // the top screen's handle, or undefined when empty
+screenCount(): number                           // stack depth
+addHud(spec: WidgetSpec): WidgetHandle          // persistent HUD widget (outside the stack); HUD buttons tappable only when the stack is empty
+removeHud(handle): void                         // remove + destroy a HUD widget (and drop its buttons from the hit-set)
+getWidget(screen: ScreenHandle, id: string): WidgetHandle | undefined  // resolve a screen widget by spec id (recursive through panels)
+setText(handle, text): void                     // update a label/button caption (no-op on non-text / stale)
+setValue(handle, value): void                   // update a bar (clamped to [0,max]; scales the fill)
+setVisible(handle, visible): void               // show/hide a widget's node
+getRoot(): Container | undefined                // the UI root Container (advanced), or undefined before start / headless
+// Declarative plain-data specs: WidgetSpec = label | button | panel(children) | bar (discriminated on `kind`); ScreenSpec = { backdrop?, widgets }. ui builds the Pixi subtree once and returns opaque handles (retained-mode), parented under renderer.getStage(). NO Pixi types leak into specs; only the structural Container handle escapes via getRoot().
+// A single "update"-stage system reads input.snapshot().pointer, computes its own press/release edges from the button bitmask, and fires a button's onTap on release over the SAME button armed on press. Hover fill re-paints as the pointer enters/leaves. Touch == mouse (both arrive as DOM pointer events). Modal capture: only the top screen (or the HUD when the stack is empty) is tappable.
+// Emits NO events (interactions are declarative onTap callbacks). No onStop (the renderer disposes the whole subtree; in-run disposal is the API's job). Headless-safe: with renderer.getStage() undefined, no root is built and every method + the system are guarded no-ops.
+// Config: textColor (@default 0xffffff), fontSize (@default 20), fontFamily (@default "sans-serif"), buttonColor (@default 0x3355ff), buttonHoverColor (@default 0x4466ff), panelColor (@default 0x141821), panelAlpha (@default 0.92), backdropColor (@default 0x000000), backdropAlpha (@default 0.6), padding (@default 12), width (@default 800), height (@default 600 — reference viewport for the backdrop/layout; the renderer exposes no dims via its API).
+```
+
 ## Events
 
 The catalog is intentionally tiny — per-frame work is on the hot path, off the event bus.
@@ -359,7 +381,7 @@ systems via `GameContext.emit`, but owns no events of its own.
 game/
 ├── src/
 │   ├── config.ts            # Layer 1: createCoreConfig, Config = {}, Events, createPlugin/createCore
-│   ├── index.ts             # Layer 2: createCore assembles the 13 plugins; exports createApp/createPlugin (+ createCore/createCoreConfig for advanced/headless assembly)
+│   ├── index.ts             # Layer 2: createCore assembles the 14 plugins; exports createApp/createPlugin (+ createCore/createCoreConfig for advanced/headless assembly)
 │   └── plugins/
 │       ├── index.ts         # plugin barrel (instances + type namespaces)
 │       ├── ecs/             # data/runtime core + introspection + resource registry (world.ts, types.ts, README.md, __tests__/)
@@ -374,7 +396,8 @@ game/
 │       ├── audio/           # native WebAudio SFX + music, mute bus (engine.ts, lifecycle.ts)
 │       ├── storage/         # versioned key/value save persistence (backend.ts, migrate.ts)
 │       ├── platform/        # portal-SDK adapter layer (api.ts, lifecycle.ts, prefs.ts, adapters/{crazygames,poki,newgrounds,noop})
-│       └── vfx/             # game-juice / visual-feedback layer (api.ts, lifecycle.ts, easing.ts, views.ts, state.ts, systems/{emit,particles,shake,pop,floating})
+│       ├── vfx/             # game-juice / visual-feedback layer (api.ts, lifecycle.ts, easing.ts, views.ts, state.ts, systems/{emit,particles,shake,pop,floating})
+│       └── ui/              # PixiJS-native UI: screen stack + widgets + HUD + pointer hit-testing (widgets.ts, system.ts, api.ts, lifecycle.ts, state.ts)
 ├── tests/                   # framework-level unit + integration tests
 ├── .planning/specs/         # design specs (intent)
 ├── README.md
@@ -463,6 +486,23 @@ Built/resolved in dependency order. (depends → resolved with `ctx.require`.)
   `stopShake`/`pop`/`floatText`/`easing`/`lerp` | new types: `EmitterSpec`, `BurstSpec`, `PopOptions`,
   `FloatTextOptions`, `EasingName` | config: `maxParticles`/`shakeDecay`/`shakeMaxOffset`/`defaultColor` |
   events: none | depends: ecs, scheduler, renderer (Wave 3; registered after platform, before mcp).
+- **ui** — the PixiJS-native game-UI layer. A screen stack (`pushScreen`/`popScreen`/`replaceScreen`/
+  `clearScreens`/`topScreen`/`screenCount`) of modal cards (title / pause / game-over / upgrade); a
+  declarative widget set (`label`/`button`/`panel`/`bar`) described as plain data and built once into a
+  Pixi subtree under `renderer.getStage()` (retained-mode, opaque handles); a persistent HUD
+  (`addHud`/`removeHud`) mutated via `setText`/`setValue`/`setVisible`, resolved by `getWidget`; and a
+  single `"update"`-stage pointer/touch hit-test system that computes its own press/release edges from
+  `input.snapshot().pointer` and fires a button's `onTap` on release over the same armed button (modal
+  capture: only the top screen — or the HUD when the stack is empty — is tappable). `onStart` captures
+  `renderer.getStage()`, builds the root, and registers the system; no `onStop` (the renderer disposes
+  the whole subtree; in-run disposal is the API's job). Headless-safe (no stage → no root; every method +
+  the system are no-ops). No new package dep (Pixi via `renderer`). | Complex |
+  `pushScreen`/`popScreen`/`replaceScreen`/`clearScreens`/`topScreen`/`screenCount`/`addHud`/`removeHud`/
+  `getWidget`/`setText`/`setValue`/`setVisible`/`getRoot` | new types: `ScreenSpec`, `WidgetSpec`
+  (`LabelSpec`/`ButtonSpec`/`PanelSpec`/`BarSpec`), `ScreenHandle`, `WidgetHandle` | config:
+  `textColor`/`fontSize`/`fontFamily`/`buttonColor`/`buttonHoverColor`/`panelColor`/`panelAlpha`/
+  `backdropColor`/`backdropAlpha`/`padding`/`width`/`height` | events: none | depends: renderer,
+  scheduler, input (registered after vfx, before mcp).
 
 ## Requirements
 
