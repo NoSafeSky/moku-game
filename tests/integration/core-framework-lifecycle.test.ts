@@ -163,7 +163,7 @@ describe("core framework lifecycle (integration)", () => {
 
   // ── Scenario 2: shipped wiring via the real createApp ──────────────────────
 
-  it("boots via the shipped createApp export with every shipped plugin API (incl. audio + storage)", async () => {
+  it("boots via the shipped createApp export with every shipped plugin API (incl. audio, storage, platform, vfx)", async () => {
     const app = shippedCreateApp({
       pluginConfigs: { mcp: { transports: ["stdio"], httpAuth: "none" } }
     });
@@ -191,6 +191,19 @@ describe("core framework lifecycle (integration)", () => {
     expect(app.storage).toBeDefined();
     expect(app.storage.isPersistent()).toBe(false);
     expect(app.storage.getVersion()).toBe(1);
+
+    // platform (Wave 2) is wired too; with no portal SDK on the (headless) window it
+    // resolves the no-op "none" adapter.
+    expect(app.platform).toBeDefined();
+    expect(app.platform.getPortal()).toBe("none");
+
+    // vfx (Wave 3) exposes the juice API; its pure easing/lerp helpers work headless,
+    // and its four named components are defined on the ECS world at start.
+    expect(app.vfx).toBeDefined();
+    expect(app.vfx.lerp(0, 10, 0.5)).toBe(5);
+    expect(app.ecs.componentNames()).toEqual(
+      expect.arrayContaining(["Emitter", "Particle", "Pop", "FloatingText"])
+    );
 
     await app.stop();
   });

@@ -2,7 +2,7 @@
 
 > An ECS game framework for Moku — Spark-style public API and memory layout, PixiJS v8 rendering, built on @moku-labs/core, composable with @moku-labs/web, with a first-class MCP plugin exposing the live runtime to agent clients.
 
-`game` is a typed Entity-Component-System runtime composed of twelve plugins. It is unpublished
+`game` is a typed Entity-Component-System runtime composed of thirteen plugins. It is unpublished
 (version 0.0.0) and not a game engine UI or editor — it owns the data model (archetype object-SoA
 storage), the fixed-timestep frame, and the GPU lifecycle; you write components and systems in
 TypeScript. Hot-path frame work bypasses the Moku kernel for performance and is NOT emitted as
@@ -12,7 +12,7 @@ kernel events. Systems reach shared services (assets, logging, frame time) throu
 ## Core Concepts
 
 - **Three-layer Moku model.** `createCoreConfig` (Layer 1: config + events) → `createCore`
-  (Layer 2: framework + the 10 built-in plugins) → `createApp({ pluginConfigs })` (Layer 3: your
+  (Layer 2: framework + the 13 built-in plugins) → `createApp({ pluginConfigs })` (Layer 3: your
   app). Consumers import `createApp` / `createPlugin` from `game` and never import
   `@moku-labs/core` directly. `createApp(...)` returns an App synchronously; `await app.start()`
   boots the Pixi Application and registers DOM listeners. Each plugin's API is reached as
@@ -308,6 +308,26 @@ isAdPlaying(): boolean
 // Config: portal (@default "auto"), portalEnvVar (@default "GAME_PORTAL"), pauseOnAd (@default true), minInterstitialSeconds (@default 60), useNativeStorage (@default true), persistAudioPrefs (@default true).
 ```
 
+### app.vfx (Complex) — game-juice / visual-feedback layer (zero new deps)
+
+```ts
+createEmitter(spec: EmitterSpec): Entity        // persistent emitter entity (Emitter + Transform at spec.x/y); required: rate, speed, lifetime
+configureEmitter(emitter, patch: Partial<EmitterSpec>): void  // shallow-merge emission params (position moves via the Transform, not here)
+setEmitterEnabled(emitter, enabled): void       // pause/resume emission; existing particles stay alive
+removeEmitter(emitter): void                    // despawn the emitter AND only its own live particles (burst particles untouched)
+burst(x, y, spec: BurstSpec): void              // one-shot spark/explosion/pickup; required: count, speed, lifetime; defaults to full-circle spread
+shake(amplitude, duration): void                // bank screen-shake trauma (0..1); render system offsets the stage root by trauma² · shakeMaxOffset
+stopShake(): void                               // clear trauma + reset the stage offset to (0,0) immediately
+pop(entity, opts?): void                        // scale-pop a Transform to opts.scale× (@default 1.3) over opts.duration (@default 0.15s) and back; no-op without a Transform
+floatText(x, y, text, opts?): Entity            // rising, alpha-fading floating number/text (e.g. "+50"); returns its entity handle
+readonly easing: Readonly<Record<EasingName, (t: number) => number>>  // frozen curve table: linear, easeInQuad, easeOutQuad, easeInOutQuad, easeOutCubic, easeOutBack, easeOutElastic
+lerp(a: number, b: number, t: number): number   // linear interpolation a + (b − a) * t
+// Particles are ECS entities (renderer.Transform + a named Particle) drawn via renderer.attachPrimitive — the renderer owns their whole view lifecycle; they fade by scaling out startScale → endScale (no alpha), so NO new dependency (Pixi arrives via renderer). vfx keeps no per-particle handle; only floating-text Text handles are retained (to fade alpha).
+// Emitter/Particle/Pop/FloatingText are named components (MCP-introspectable by name). A single maxParticles budget spans every emitter + burst; over-budget emission is dropped (ctx.log debug once per over-budget frame).
+// Every effectful method is a guarded no-op before app.start() and on dead / wrong-type entities. Emits NO events (per-frame hot path — same stance as ecs/renderer/scheduler/loop). No onStop (the renderer disposes every view). Headless-safe: systems run identically; only Pixi view creation guards on renderer.getStage().
+// Config: maxParticles (@default 1000), shakeDecay (@default 1.8), shakeMaxOffset (@default 24), defaultColor (@default 0xffffff).
+```
+
 ## Events
 
 The catalog is intentionally tiny — per-frame work is on the hot path, off the event bus.
@@ -339,7 +359,7 @@ systems via `GameContext.emit`, but owns no events of its own.
 game/
 ├── src/
 │   ├── config.ts            # Layer 1: createCoreConfig, Config = {}, Events, createPlugin/createCore
-│   ├── index.ts             # Layer 2: createCore assembles the 12 plugins; exports createApp/createPlugin (+ createCore/createCoreConfig for advanced/headless assembly)
+│   ├── index.ts             # Layer 2: createCore assembles the 13 plugins; exports createApp/createPlugin (+ createCore/createCoreConfig for advanced/headless assembly)
 │   └── plugins/
 │       ├── index.ts         # plugin barrel (instances + type namespaces)
 │       ├── ecs/             # data/runtime core + introspection + resource registry (world.ts, types.ts, README.md, __tests__/)
@@ -353,7 +373,8 @@ game/
 │       ├── mcp/             # MCP server (transport.ts, tools.ts, resources.ts)
 │       ├── audio/           # native WebAudio SFX + music, mute bus (engine.ts, lifecycle.ts)
 │       ├── storage/         # versioned key/value save persistence (backend.ts, migrate.ts)
-│       └── platform/        # portal-SDK adapter layer (api.ts, lifecycle.ts, prefs.ts, adapters/{crazygames,poki,newgrounds,noop})
+│       ├── platform/        # portal-SDK adapter layer (api.ts, lifecycle.ts, prefs.ts, adapters/{crazygames,poki,newgrounds,noop})
+│       └── vfx/             # game-juice / visual-feedback layer (api.ts, lifecycle.ts, easing.ts, views.ts, state.ts, systems/{emit,particles,shake,pop,floating})
 ├── tests/                   # framework-level unit + integration tests
 ├── .planning/specs/         # design specs (intent)
 ├── README.md
@@ -428,6 +449,20 @@ Built/resolved in dependency order. (depends → resolved with `ctx.require`.)
   `rewardedAd`/`isAdPlaying` | new types: `Portal`, `AdType`, `PortalAdapter`, `AdapterContext` |
   config: `portal`/`portalEnvVar`/`pauseOnAd`/`minInterstitialSeconds`/`useNativeStorage`/`persistAudioPrefs` |
   events: `platform:ready`, `platform:adStart`, `platform:adEnd` | depends: audio, loop, storage (Wave 2).
+- **vfx** — the game-juice / visual-feedback layer. ECS-native particle emitters + one-shot bursts
+  (each particle is an entity with `renderer.Transform` + a named `Particle`, drawn via
+  `renderer.attachPrimitive` so the renderer owns the view lifecycle; particles fade by scaling out
+  `startScale → endScale`), trauma-based screen shake (offsets the Pixi stage root by
+  `trauma² · shakeMaxOffset`, decays by `shakeDecay`), Transform scale-pop, floating rising/alpha-fading
+  damage/score `Text`, and pure easing curves + `lerp`. `onStart` captures `renderer.Transform`, defines
+  four named components (`Emitter`/`Particle`/`Pop`/`FloatingText`), and registers five systems
+  (emit/particle/pop/floating in `"update"`, shake in `"render"`); no `onStop` (the renderer disposes
+  every view). A single `maxParticles` budget spans every emitter + burst. Headless-safe (systems run;
+  only Pixi view creation guards on `renderer.getStage()`). No new package dep (Pixi via `renderer`). |
+  Complex | `createEmitter`/`configureEmitter`/`setEmitterEnabled`/`removeEmitter`/`burst`/`shake`/
+  `stopShake`/`pop`/`floatText`/`easing`/`lerp` | new types: `EmitterSpec`, `BurstSpec`, `PopOptions`,
+  `FloatTextOptions`, `EasingName` | config: `maxParticles`/`shakeDecay`/`shakeMaxOffset`/`defaultColor` |
+  events: none | depends: ecs, scheduler, renderer (Wave 3; registered after platform, before mcp).
 
 ## Requirements
 

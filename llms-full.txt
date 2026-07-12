@@ -154,11 +154,13 @@ ecs            (no deps — foundation, plugin #1)
 audio          (no deps — foundational, Wave 1; independent of the graph above)
 storage        (no deps — foundational, Wave 1; independent of the graph above)
 platform       (depends: audio, loop, storage — Wave 2; registered after them, before mcp)
+vfx            (depends: ecs, scheduler, renderer — Wave 3; registered after platform, before mcp)
 ```
 
 Build/resolve order: ecs → scheduler → renderer + input → loop + assets → context → scene → audio →
-storage → platform → mcp (the dependency-free `audio` + `storage`, then `platform` which depends on
-`audio` + `loop` + `storage`, all registered before `mcp` so `mcp` stays last).
+storage → platform → vfx → mcp (the dependency-free `audio` + `storage`, then `platform` which depends
+on `audio` + `loop` + `storage`, then `vfx` on `ecs` + `scheduler` + `renderer`, all registered before
+`mcp` so `mcp` stays last).
 Each plugin declares `depends: [...]` and resolves the API at runtime with `ctx.require(...)`.
 There are no dependency cycles. `loop` depends on `ecs` (to publish the `Time` resource), the
 `context` plugin depends on `ecs` + `assets`, and `mcp` depends on its seven build-dependency plugins (its
@@ -210,8 +212,9 @@ Event catalog (complete):
 
 Design note: per-frame hot-path work (ticks, sync, render, input, structural mutations, resource
 ops) is **deliberately not emitted** as kernel events — emitting an event per frame would defeat the
-kernel-bypass that keeps the loop fast. ecs, scheduler, renderer, input, loop, and context emit no
-events and register no hooks; `mcp` emits one (`game:reset`) and `audio` two coarse mute/volume
+kernel-bypass that keeps the loop fast. ecs, scheduler, renderer, input, loop, context, and vfx emit
+no events and register no hooks (vfx's particles/shake/pop/floating-text are all per-frame hot-path
+work); `mcp` emits one (`game:reset`) and `audio` two coarse mute/volume
 milestones (`play`/`playMusic`/`stopMusic` are hot-path and emit nothing). The `context` plugin hands
 systems a typed `emit` (the framework emitter) inside `GameContext`, but owns no event surface of
 its own.
@@ -1420,7 +1423,134 @@ app.platform.gameplayStart();
 ```
 
 --------------------------------------------------------------------------------
-## 16. End-to-end example (scene → spawn → resources → loop → MCP)
+## 16. vfx — game-juice / visual-feedback layer (Complex)
+--------------------------------------------------------------------------------
+
+The `vfx` plugin adds the **juice** that makes hits, pickups, and score changes *feel* good:
+**ECS-native particle emitters** + one-shot bursts, **trauma-based screen shake**, **Transform
+scale-pop**, **floating damage/score text**, and a set of **pure easing curves + `lerp`**. It is a
+pure **API your own game code calls** (`app.vfx.burst()` / `shake()` / `pop()` / `floatText()` from
+collision and scoring systems), so vfx never couples to any specific gameplay event. Every effect
+runs as a scheduler system over ordinary ECS entities, so every particle and emitter is queryable
+through `world.query(...)` and MCP-introspectable by name. Depends on `ecs`, `scheduler`, and
+`renderer` (their APIs via `ctx.require`); **no new package dependency** — Pixi `Graphics`/`Text`
+arrive via `renderer`, and Pixi imports are confined to vfx's own domain files. Emits **no** kernel
+events (per-frame hot path). **Headless-safe.**
+
+Config (`pluginConfigs.vfx`):
+
+```ts
+export type Config = {
+  maxParticles: number;   // @default 1000 — global cap on simultaneously-live particles across every emitter + burst
+  shakeDecay: number;     // @default 1.8 — screen-shake trauma decay in units/second (trauma is 0..1)
+  shakeMaxOffset: number; // @default 24 — max stage offset in px at trauma = 1 (offset scales with trauma²)
+  defaultColor: number;   // @default 0xffffff — fallback particle/text color when a spec omits `color`
+};
+```
+
+Public API (`app.vfx`):
+
+```ts
+createEmitter(spec: EmitterSpec): Entity                       // persistent emitter entity (Emitter + Transform at spec.x/y); required: rate, speed, lifetime
+configureEmitter(emitter: Entity, patch: Partial<EmitterSpec>): void  // shallow-merge emission params (position moves via the Transform, not here)
+setEmitterEnabled(emitter: Entity, enabled: boolean): void     // pause/resume emission; existing particles stay alive
+removeEmitter(emitter: Entity): void                           // despawn the emitter AND only its own live particles (a per-particle owner back-ref scopes the sweep)
+burst(x: number, y: number, spec: BurstSpec): void             // one-shot spark/explosion/pickup; required: count, speed, lifetime; defaults to full-circle spread
+shake(amplitude: number, duration: number): void               // bank screen-shake trauma (0..1); the render-stage system offsets the stage root by trauma² · shakeMaxOffset
+stopShake(): void                                              // clear trauma + reset the stage offset to (0,0) immediately
+pop(entity: Entity, opts?: PopOptions): void                   // scale-pop a Transform to opts.scale× (@default 1.3) over opts.duration (@default 0.15s) and back; no-op without a Transform
+floatText(x: number, y: number, text: string, opts?: FloatTextOptions): Entity  // rising, alpha-fading floating number/text (e.g. "+50"); returns its entity handle
+readonly easing: Readonly<Record<EasingName, (t: number) => number>>  // frozen curve table (see below)
+lerp(a: number, b: number, t: number): number                  // linear interpolation a + (b − a) * t
+// EasingName = "linear" | "easeInQuad" | "easeOutQuad" | "easeInOutQuad" | "easeOutCubic" | "easeOutBack" | "easeOutElastic".
+// EmitterSpec: required rate/speed/lifetime; optional x/y/angle/spread/speedVariance/lifetimeVariance/startScale/endScale/radius/color/gravityX/gravityY/enabled (config/sane defaults).
+// BurstSpec: required count/speed/lifetime; same optional emission fields (spread @default π → full circle); no x/y (passed as burst args).
+// FloatTextOptions: lifetime/riseSpeed/startAlpha/endAlpha/color/fontSize. PopOptions: scale (@default 1.3) / duration (@default 0.15s).
+// Every effectful method is a guarded no-op before app.start() (returning a dead handle where it must return one) and on dead / wrong-type entities.
+```
+
+### ECS-native particles (no `@pixi/particle-emitter`)
+
+An emitter is an **entity** carrying a named `Emitter` component; a particle is an **entity** carrying
+`renderer.Transform` + a named `Particle`. The emit system spawns particles inside the `"update"`
+stage; because the ECS command buffer flushes before the `"sync"` stage, an emitted particle is
+**visible the same frame**. Particles are drawn via `renderer.attachPrimitive` (a Pixi `Graphics`), so
+the **renderer owns their entire view lifecycle** — stage-add, per-tick sync from `Transform`, and
+disposal on despawn — and vfx keeps no per-particle handle. Particles **fade by scaling out**
+(`startScale → endScale ≈ 0`) rather than by alpha, so they render straight through the renderer's
+primitive path with zero new dependency. A `ParticleContainer`-backed batch path for *thousands* of
+particles is a documented deferred optimization; the target here is "hundreds at 60 fps". A third-party
+emitter was rejected because it adds a runtime dependency and a second particle lifecycle *outside* the
+world (invisible to `world.query`, MCP introspection, and scene-unload reconciliation).
+
+### Effects
+
+- **Emitters** — persistent particle sources. `createEmitter` spawns an emitter entity; reconfigure it
+  live with `configureEmitter`, pause/resume with `setEmitterEnabled`, tear it down (with only its own
+  live particles) via `removeEmitter`. Emission honours a fractional accumulator, so `rate = 60` yields
+  ≈1 particle per 1/60 s tick with no double-spawn.
+- **Burst** — one-shot `burst(x, y, spec)` for hit sparks, explosions, pickups; no persistent entity is
+  retained; particles default to a full-circle spread.
+- **Screen shake** — trauma-based. `shake(amplitude, duration)` banks trauma (0..1); the render-stage
+  system offsets the Pixi stage root by `trauma² · shakeMaxOffset` in a random direction and decays
+  trauma by `shakeDecay` each second, snapping back to (0, 0) at rest. `stopShake()` clears it
+  immediately.
+- **Pop** — `pop(entity, { scale, duration })` gives any entity's Transform a squash-and-return scale
+  pulse; it captures and restores the entity's **exact** base scale, and re-calling refreshes the pop
+  without recapturing a mid-pop scale.
+- **Floating text** — `floatText(x, y, text, opts)` spawns a rising, alpha-fading `Text` (e.g. `"+50"`
+  damage numbers). vfx retains this one handle to fade its alpha each frame (the renderer's sync system
+  positions it but never touches alpha); it despawns itself at end of life.
+- **Easing** — `app.vfx.easing` is a frozen table of pure `f(t): [0,1]→[0,1]` curves (`linear`,
+  `easeInQuad`, `easeOutQuad`, `easeInOutQuad`, `easeOutCubic`, `easeOutBack`, `easeOutElastic`) plus
+  `app.vfx.lerp`. Reused internally and exported for consumer juice (and a future `tween` plugin — vfx
+  ships the easing curves it needs, **not** a general property-tween scheduler).
+
+### Global particle cap
+
+A single `maxParticles` budget spans every emitter and burst. At the cap, further emission is
+**dropped** (`ctx.log` debug once per over-budget frame) — emitters never back up an unbounded queue.
+The `particleCount` state is maintained by the emit/particle systems.
+
+### Lifecycle & headless
+
+`onStart` is **deps-ready wiring** (the renderer's own onStart shape — not a per-frame or
+resource-owning path): after `ecs`/`scheduler`/`renderer` have started it (1) captures
+`renderer.Transform` (reading it earlier throws), (2) defines the four named components
+(`Emitter`/`Particle`/`Pop`/`FloatingText`) so they exist before any spawn and are MCP-introspectable
+by name, and (3) registers the five effect systems (emit/particle/pop/floating in `"update"`, shake in
+`"render"`). There is **no `onStop`**: vfx owns no external OS/GPU resource of its own — every view it
+builds is registered with the renderer (particle `Graphics` via `attachPrimitive`, floating-text `Text`
+via `attach`), so the renderer disposes them; vfx's own state (the `Text` handle map, `trauma`,
+`particleCount`) is plain GC-able data (there is **no** `ctx.global` WeakMap). **Headless-safe:** every
+system is registered and runs identically headless — entities simulate with no visual; only Pixi *view
+creation* guards on `renderer.getStage()` being defined (headless particles never build a `Graphics`,
+headless floating text never builds a `Text`, and the shake system decays trauma without writing the
+absent stage). Nothing throws.
+
+Events: **none.** Particle emission, shake, pop, and floating text are per-frame hot-path work with no
+discrete milestone worth a kernel event — the same stance as `ecs`, `renderer`, `scheduler`, and `loop`
+(see §3). Compose vfx with other plugins at the app layer (e.g. `vfx.burst()` + `audio.play()` on the
+same hit). Depends: `ecs` (the four named components, `spawn`/`despawn`, `query(...).updateEach`,
+`add`/`remove`/`get`/`set`/`has`/`isAlive`), `scheduler` (`addSystem` for the five systems; `dt` via the
+`(world, dt)` signature), `renderer` (`Transform`, `attachPrimitive`, `attach` + `getStage`,
+`markDirty`) — **not** `loop` (dt flows through the system signature) and **not** `audio` (a title
+composes them at the app layer). Runtime packages: **none** (Pixi via `renderer`).
+
+```ts
+// In a collision system, on an enemy hit:
+app.vfx.burst(hit.x, hit.y, { count: 16, speed: 220, lifetime: 0.5, color: 0xffcc00, radius: 3 });
+app.vfx.pop(enemy, { scale: 1.4, duration: 0.12 });   // squash-pop the sprite
+app.vfx.floatText(hit.x, hit.y - 20, "+50", { color: 0xffffff });
+app.vfx.shake(0.5, 0.3);                               // punchy screen shake
+
+// A persistent trail emitter following the player, moved each frame via its Transform:
+const trail = app.vfx.createEmitter({ rate: 80, speed: 40, spread: 0.3, lifetime: 0.6, color: 0x66ccff });
+app.ecs.set(trail, app.renderer.Transform, { x: player.x, y: player.y });
+```
+
+--------------------------------------------------------------------------------
+## 17. End-to-end example (scene → spawn → resources → loop → MCP)
 --------------------------------------------------------------------------------
 
 ```ts
@@ -1503,7 +1633,7 @@ const reinit = createPlugin("reinit", {
 ```
 
 --------------------------------------------------------------------------------
-## 17. Extension patterns
+## 18. Extension patterns
 --------------------------------------------------------------------------------
 
 - **Add a gameplay plugin:** `createPlugin("name", { depends: [ecsPlugin, schedulerPlugin], api, lifecycle })`.
@@ -1525,7 +1655,7 @@ const reinit = createPlugin("reinit", {
   snapshot.
 
 --------------------------------------------------------------------------------
-## 18. Error handling & gotchas
+## 19. Error handling & gotchas
 --------------------------------------------------------------------------------
 
 - `createApp(...)` is synchronous; `app.start()` / `app.stop()` are async and must be awaited.
@@ -1563,7 +1693,7 @@ const reinit = createPlugin("reinit", {
   boundaries; outside iteration they apply immediately. Resource ops are always immediate.
 
 --------------------------------------------------------------------------------
-## 19. Scripts, requirements, layout
+## 20. Scripts, requirements, layout
 --------------------------------------------------------------------------------
 
 Scripts (package.json, run with `bun`):
@@ -1588,7 +1718,7 @@ Layout:
 
 ```
 src/config.ts              # Layer 1 — createCoreConfig, Config = {}, Events, createPlugin/createCore
-src/index.ts               # Layer 2 — createCore(12 plugins); exports createApp/createPlugin (+ createCore/createCoreConfig)
+src/index.ts               # Layer 2 — createCore(13 plugins); exports createApp/createPlugin (+ createCore/createCoreConfig)
 src/plugins/index.ts       # plugin barrel (instances + Ecs/Scheduler/Context/... type namespaces)
 src/plugins/<name>/        # api.ts, types.ts, index.ts, lifecycle.ts / resources.ts / primitives.ts (where applicable), README.md, __tests__/
 tests/                     # framework-level unit + integration tests

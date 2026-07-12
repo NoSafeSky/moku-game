@@ -15,7 +15,8 @@ import {
   rendererPlugin,
   scenePlugin,
   schedulerPlugin,
-  storagePlugin
+  storagePlugin,
+  vfxPlugin
 } from "./plugins";
 
 const framework = createCore(coreConfig, {
@@ -31,6 +32,7 @@ const framework = createCore(coreConfig, {
     audioPlugin,
     storagePlugin,
     platformPlugin,
+    vfxPlugin,
     mcpPlugin
   ],
   // Framework default plugin configuration. Consumers override via createApp({ pluginConfigs }).
