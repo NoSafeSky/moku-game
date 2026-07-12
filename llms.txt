@@ -2,7 +2,7 @@
 
 > An ECS game framework for Moku — Spark-style public API and memory layout, PixiJS v8 rendering, built on @moku-labs/core, composable with @moku-labs/web, with a first-class MCP plugin exposing the live runtime to agent clients.
 
-`game` is a typed Entity-Component-System runtime composed of fourteen plugins. It is unpublished
+`game` is a typed Entity-Component-System runtime composed of fifteen plugins. It is unpublished
 (version 0.0.0) and not a game engine UI or editor — it owns the data model (archetype object-SoA
 storage), the fixed-timestep frame, and the GPU lifecycle; you write components and systems in
 TypeScript. Hot-path frame work bypasses the Moku kernel for performance and is NOT emitted as
@@ -12,7 +12,7 @@ kernel events. Systems reach shared services (assets, logging, frame time) throu
 ## Core Concepts
 
 - **Three-layer Moku model.** `createCoreConfig` (Layer 1: config + events) → `createCore`
-  (Layer 2: framework + the 14 built-in plugins) → `createApp({ pluginConfigs })` (Layer 3: your
+  (Layer 2: framework + the 15 built-in plugins) → `createApp({ pluginConfigs })` (Layer 3: your
   app). Consumers import `createApp` / `createPlugin` from `game` and never import
   `@moku-labs/core` directly. `createApp(...)` returns an App synchronously; `await app.start()`
   boots the Pixi Application and registers DOM listeners. Each plugin's API is reached as
@@ -350,6 +350,22 @@ getRoot(): Container | undefined                // the UI root Container (advanc
 // Config: textColor (@default 0xffffff), fontSize (@default 20), fontFamily (@default "sans-serif"), buttonColor (@default 0x3355ff), buttonHoverColor (@default 0x4466ff), panelColor (@default 0x141821), panelAlpha (@default 0.92), backdropColor (@default 0x000000), backdropAlpha (@default 0.6), padding (@default 12), width (@default 800), height (@default 600 — reference viewport for the backdrop/layout; the renderer exposes no dims via its API).
 ```
 
+### app.tween (Standard) — shared ECS-agnostic tweening (zero new deps)
+
+```ts
+to<T>(target: T, props: NumericProperties<T>, opts?: TweenOptions): TweenHandle   // tween numeric props of any plain object TO the given values; start values captured at creation; non-finite props skipped
+from<T>(target: T, props: NumericProperties<T>, opts?: TweenOptions): TweenHandle // apply the "from" values immediately, then tween back to the current values
+value(from: number, to: number, opts: ValueTweenOptions): TweenHandle            // tween a bare scalar, driving opts.onUpdate(value) each frame (onUpdate required)
+killAll(): void                                 // stop + drop every active tween (no onComplete; each done settles)
+count(): number                                 // number of active tweens
+easing: Readonly<Record<EasingName, (t) => number>>  // the frozen 7-curve table (parity with vfx; the canonical shared source)
+lerp(a, b, t): number                           // linear interpolation a + (b − a) * t
+// TweenHandle: stop() (cancel now, no onComplete, settles done, idempotent) · pause()/resume() (freeze/unfreeze advancement) · active (still registered?) · done (Promise, settles on complete OR stop — never rejects/hangs).
+// TweenOptions: duration (@default config.defaultDuration) · easing (EasingName | (t)=>number, @default config.defaultEasing) · delay (@default 0; does NOT defer start-value capture) · repeat (@default 0; Infinity allowed) · yoyo (@default false; ping-pong) · onUpdate(progress) · onComplete().
+// One "update"-stage system advances all tweens by dt on the game clock, so a paused loop freezes every tween automatically (pause-safe, zero coupling to platform/loop). Advanced by scheduler ONLY (not ecs/renderer/loop). onStart-only wiring; NO onStop (tweens are plain GC-able data). Emits NO events. Headless-safe. Before-start / over-maxActive creators warn + return a dead handle (no hot-path throw).
+// Config: defaultDuration (@default 0.3), defaultEasing (@default "easeOutCubic"), updateStage (@default "update"), maxActive (@default 2048).
+```
+
 ## Events
 
 The catalog is intentionally tiny — per-frame work is on the hot path, off the event bus.
@@ -381,7 +397,7 @@ systems via `GameContext.emit`, but owns no events of its own.
 game/
 ├── src/
 │   ├── config.ts            # Layer 1: createCoreConfig, Config = {}, Events, createPlugin/createCore
-│   ├── index.ts             # Layer 2: createCore assembles the 14 plugins; exports createApp/createPlugin (+ createCore/createCoreConfig for advanced/headless assembly)
+│   ├── index.ts             # Layer 2: createCore assembles the 15 plugins; exports createApp/createPlugin (+ createCore/createCoreConfig for advanced/headless assembly)
 │   └── plugins/
 │       ├── index.ts         # plugin barrel (instances + type namespaces)
 │       ├── ecs/             # data/runtime core + introspection + resource registry (world.ts, types.ts, README.md, __tests__/)
@@ -397,7 +413,8 @@ game/
 │       ├── storage/         # versioned key/value save persistence (backend.ts, migrate.ts)
 │       ├── platform/        # portal-SDK adapter layer (api.ts, lifecycle.ts, prefs.ts, adapters/{crazygames,poki,newgrounds,noop})
 │       ├── vfx/             # game-juice / visual-feedback layer (api.ts, lifecycle.ts, easing.ts, views.ts, state.ts, systems/{emit,particles,shake,pop,floating})
-│       └── ui/              # PixiJS-native UI: screen stack + widgets + HUD + pointer hit-testing (widgets.ts, system.ts, api.ts, lifecycle.ts, state.ts)
+│       ├── ui/              # PixiJS-native UI: screen stack + widgets + HUD + pointer hit-testing (widgets.ts, system.ts, api.ts, lifecycle.ts, state.ts)
+│       └── tween/           # shared ECS-agnostic tweening advanced by one scheduler system (api.ts, advance.ts, easing.ts, state.ts)
 ├── tests/                   # framework-level unit + integration tests
 ├── .planning/specs/         # design specs (intent)
 ├── README.md
@@ -503,6 +520,16 @@ Built/resolved in dependency order. (depends → resolved with `ctx.require`.)
   `textColor`/`fontSize`/`fontFamily`/`buttonColor`/`buttonHoverColor`/`panelColor`/`panelAlpha`/
   `backdropColor`/`backdropAlpha`/`padding`/`width`/`height` | events: none | depends: renderer,
   scheduler, input (registered after vfx, before mcp).
+- **tween** — shared, ECS-agnostic tweening. `to`/`from` mutate the numeric props of any plain object
+  over time; `value` drives a scalar `onUpdate`; each tween supports `duration`/`easing` (named curve or
+  custom `(t)=>number`)/`delay`/`repeat`/`yoyo` and returns an opaque `TweenHandle`
+  (`stop`/`pause`/`resume`/`active` + a `done` Promise). Re-exposes the canonical 7-curve `easing` table
+  + `lerp`. One `"update"`-stage system advances all tweens by `dt` on the game clock, so a paused loop
+  freezes every tween for free (pause-safe, zero coupling to platform/loop). | Standard |
+  `to`/`from`/`value`/`killAll`/`count`/`easing`/`lerp` | new types: `TweenOptions`, `ValueTweenOptions`,
+  `TweenHandle`, `Easing`, `EasingName`, `NumericProperties` | config: `defaultDuration`/`defaultEasing`/
+  `updateStage`/`maxActive` | events: none | onStart-only (no onStop) | depends: scheduler only
+  (registered after ui, before mcp).
 
 ## Requirements
 

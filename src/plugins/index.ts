@@ -17,6 +17,7 @@ export { rendererPlugin } from "./renderer";
 export { scenePlugin } from "./scene";
 export { schedulerPlugin } from "./scheduler";
 export { storagePlugin } from "./storage";
+export { tweenPlugin } from "./tween";
 export { uiPlugin } from "./ui";
 export { vfxPlugin } from "./vfx";
 
@@ -33,5 +34,6 @@ export * as Renderer from "./renderer/types";
 export * as Scene from "./scene/types";
 export * as Scheduler from "./scheduler/types";
 export * as Storage from "./storage/types";
+export * as Tween from "./tween/types";
 export * as Ui from "./ui/types";
 export * as Vfx from "./vfx/types";

@@ -156,12 +156,13 @@ storage        (no deps — foundational, Wave 1; independent of the graph above
 platform       (depends: audio, loop, storage — Wave 2; registered after them, before mcp)
 vfx            (depends: ecs, scheduler, renderer — Wave 3; registered after platform, before mcp)
 ui             (depends: renderer, scheduler, input — leaf; registered after vfx, before mcp)
+tween          (depends: scheduler — leaf; registered after ui, before mcp)
 ```
 
 Build/resolve order: ecs → scheduler → renderer + input → loop + assets → context → scene → audio →
-storage → platform → vfx → ui → mcp (the dependency-free `audio` + `storage`, then `platform` which depends
+storage → platform → vfx → ui → tween → mcp (the dependency-free `audio` + `storage`, then `platform` which depends
 on `audio` + `loop` + `storage`, then `vfx` on `ecs` + `scheduler` + `renderer`, then `ui` on `renderer` +
-`scheduler` + `input`, all registered before `mcp` so `mcp` stays last).
+`scheduler` + `input`, then `tween` on `scheduler` only, all registered before `mcp` so `mcp` stays last).
 Each plugin declares `depends: [...]` and resolves the API at runtime with `ctx.require(...)`.
 There are no dependency cycles. `loop` depends on `ecs` (to publish the `Time` resource), the
 `context` plugin depends on `ecs` + `assets`, and `mcp` depends on its seven build-dependency plugins (its
@@ -1642,7 +1643,67 @@ app.scheduler.addSystem("update", () => {
 ```
 
 --------------------------------------------------------------------------------
-## 18. End-to-end example (scene → spawn → resources → loop → MCP)
+## 18. tween — shared ECS-agnostic tweening (Standard)
+--------------------------------------------------------------------------------
+
+The reusable animation primitive `vfx`, `ui`, and a future `camera` can all share. Unlike vfx's
+ECS-native particles, a tween is agnostic to *what* it animates: it reads and writes the numeric fields
+of any plain mutable object you hand it — a camera `{ x, y }`, a UI element's position, an audio-gain
+holder, a score counter. Advanced by one scheduler `"update"`-stage system on the game clock, so tweens
+**pause exactly when the loop pauses** (e.g. during a portal ad break) with zero coupling to `platform`
+or `loop` (no dependency edge, no hook). Emits no events. Headless-safe. Depends on `scheduler` only.
+
+**Design calls:** (1) **Imperative tweens over plain objects**, not an ECS `Tween` component — the only
+form that serves vfx (entities), ui (Pixi handles), and camera (`{x,y,zoom}`) alike; a consumer who wants
+to tween an ECS value reads it, tweens a scratch object, and writes it back in `onUpdate` (one-line escape
+hatch). (2) **Advanced by a scheduler system** (not a private rAF/timer) — so a paused loop freezes tweens
+for free. (3) **Owns its own `easing.ts` with the vfx-identical 7 curves** — the `add` flow must not touch
+vfx; identical curves make a later `vfx → tween` dedupe a drop-in. (4) **onStart-only** (`@no-resource-check`
+deps-ready wiring: register the advance system + flip `started`); **NO onStop** — tweens are plain GC-able
+data, the system owns no external resource (the vfx precedent). (5) Before-start / over-`maxActive` creators
+warn + return a **dead handle** (no hot-path throw). (6) `done` settles on complete OR stop (never hangs).
+(7) `NumericProperties<T>` restricts `to`/`from` to numeric keys at compile time.
+
+Public API (`app.tween`):
+
+```ts
+to<T>(target: T, props: NumericProperties<T>, opts?: TweenOptions): TweenHandle;   // capture start = current, tween to props values (mutates target); start captured at creation (delay does not defer it); non-finite props skipped (debug-logged)
+from<T>(target: T, props: NumericProperties<T>, opts?: TweenOptions): TweenHandle; // apply the "from" values immediately, then tween back to the current values
+value(from: number, to: number, opts: ValueTweenOptions): TweenHandle;            // tween a bare scalar, driving opts.onUpdate(value) each frame (onUpdate REQUIRED — there is no target)
+killAll(): void;                                 // stop + drop every active tween (no onComplete; each done settles)
+count(): number;                                 // number of active tweens
+readonly easing: Readonly<Record<EasingName, (t: number) => number>>;  // the frozen 7-curve table (parity with vfx)
+lerp(a: number, b: number, t: number): number;   // linear interpolation a + (b − a) * t (unclamped)
+
+// TweenOptions: { duration?, easing?, delay?, repeat?, yoyo?, onUpdate?(progress), onComplete?() }
+//   duration @default config.defaultDuration · easing (EasingName | (t)=>number) @default config.defaultEasing ·
+//   delay @default 0 (does NOT defer start capture) · repeat @default 0 (Infinity allowed) · yoyo @default false (ping-pong)
+// ValueTweenOptions = TweenOptions & { onUpdate(value): void }  (onUpdate required)
+// TweenHandle: stop() (cancel now, no onComplete, settles done, idempotent) · pause()/resume() · readonly active · readonly done: Promise<void> (settles on complete OR stop — never rejects/hangs)
+// EasingName: "linear" | "easeInQuad" | "easeOutQuad" | "easeInOutQuad" | "easeOutCubic" | "easeOutBack" | "easeOutElastic"
+```
+
+```ts
+// Smooth camera pan (any plain { x, y } holder):
+app.tween.to(camera, { x: 640, y: 360 }, { duration: 0.6, easing: "easeOutCubic" });
+// Slide a UI card in from off-screen, then fire a callback:
+app.tween.from(card, { y: -200 }, { duration: 0.4, easing: "easeOutBack", onComplete: enableInput });
+// Ramp master volume during a fade-out (no target object — drive a scalar):
+await app.tween.value(1, 0, { duration: 0.5, onUpdate: v => app.audio.setVolume("master", v) }).done;
+```
+
+**Config** (`pluginConfigs.tween`): `defaultDuration` (@default 0.3), `defaultEasing` (@default
+`"easeOutCubic"`), `updateStage` (@default `"update"`), `maxActive` (@default 2048).
+
+**Advance semantics:** the `"update"`-stage system steps each non-paused record by `dt` — burns down
+`delay` (carrying overflow into elapsed), applies `easingFn(clamp(elapsed/duration))` (yoyo reverses the
+curve on odd iterations), and at the iteration boundary repeats (carry overflow, `repeat--`) or completes
+(fire `onComplete`, settle `done`, drop the record). Completed ids are deleted after a snapshot pass, so a
+re-entrant `onComplete` that creates a new tween does not advance it the same frame. `duration: 0` is
+coerced to a tiny epsilon so it resolves to the end on the first tick.
+
+--------------------------------------------------------------------------------
+## 19. End-to-end example (scene → spawn → resources → loop → MCP)
 --------------------------------------------------------------------------------
 
 ```ts
@@ -1725,7 +1786,7 @@ const reinit = createPlugin("reinit", {
 ```
 
 --------------------------------------------------------------------------------
-## 19. Extension patterns
+## 20. Extension patterns
 --------------------------------------------------------------------------------
 
 - **Add a gameplay plugin:** `createPlugin("name", { depends: [ecsPlugin, schedulerPlugin], api, lifecycle })`.
@@ -1747,7 +1808,7 @@ const reinit = createPlugin("reinit", {
   snapshot.
 
 --------------------------------------------------------------------------------
-## 20. Error handling & gotchas
+## 21. Error handling & gotchas
 --------------------------------------------------------------------------------
 
 - `createApp(...)` is synchronous; `app.start()` / `app.stop()` are async and must be awaited.
@@ -1785,7 +1846,7 @@ const reinit = createPlugin("reinit", {
   boundaries; outside iteration they apply immediately. Resource ops are always immediate.
 
 --------------------------------------------------------------------------------
-## 21. Scripts, requirements, layout
+## 22. Scripts, requirements, layout
 --------------------------------------------------------------------------------
 
 Scripts (package.json, run with `bun`):
@@ -1810,7 +1871,7 @@ Layout:
 
 ```
 src/config.ts              # Layer 1 — createCoreConfig, Config = {}, Events, createPlugin/createCore
-src/index.ts               # Layer 2 — createCore(14 plugins); exports createApp/createPlugin (+ createCore/createCoreConfig)
+src/index.ts               # Layer 2 — createCore(15 plugins); exports createApp/createPlugin (+ createCore/createCoreConfig)
 src/plugins/index.ts       # plugin barrel (instances + Ecs/Scheduler/Context/... type namespaces)
 src/plugins/<name>/        # api.ts, types.ts, index.ts, lifecycle.ts / resources.ts / primitives.ts (where applicable), README.md, __tests__/
 tests/                     # framework-level unit + integration tests

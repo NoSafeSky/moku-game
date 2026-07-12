@@ -205,6 +205,15 @@ describe("core framework lifecycle (integration)", () => {
       expect.arrayContaining(["Emitter", "Particle", "Pop", "FloatingText"])
     );
 
+    // tween exposes the shared tweening API + the re-exposed easing table/lerp; it
+    // advances a plain object across a real scheduler.tick (pause-safe, scheduler-only).
+    expect(app.tween).toBeDefined();
+    expect(app.tween.lerp(0, 10, 0.5)).toBe(5);
+    const tweened = { x: 0 };
+    app.tween.to(tweened, { x: 100 }, { duration: 1, easing: "linear" });
+    app.scheduler.tick(0.5);
+    expect(tweened.x).toBeCloseTo(50, 6);
+
     await app.stop();
   });
 
