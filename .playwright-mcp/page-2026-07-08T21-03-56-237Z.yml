@@ -1,0 +1,143 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - link "Poki for Developers" [ref=e5] [cursor=pointer]:
+      - /url: /
+      - img "Poki for Developers" [ref=e6]
+    - generic [ref=e7]:
+      - link "ui-icons-best-practices Developer Guide" [ref=e9] [cursor=pointer]:
+        - /url: /guide
+        - img "ui-icons-best-practices" [ref=e10]
+        - text: Developer Guide
+      - link "ui-icons-login Sign In" [ref=e12] [cursor=pointer]:
+        - /url: https://app.poki.dev/signin/
+        - img "ui-icons-login" [ref=e13]
+        - text: Sign In
+  - generic [ref=e14]:
+    - generic [ref=e18]:
+      - heading "Turn your game into a hit" [level=1] [ref=e19]
+      - paragraph [ref=e21]: Leverage the power of the web and our developer friendly tools to take your game from concept to hit and skyrocket it to success.
+      - link "Get started" [ref=e22] [cursor=pointer]:
+        - /url: /share
+    - generic [ref=e38]:
+      - generic [ref=e39]:
+        - generic [ref=e40]:
+          - generic [ref=e41]:
+            - img [ref=e42]
+            - generic [ref=e44]:
+              - generic [ref=e45]: "The #1 on web"
+              - generic [ref=e46]: in 100+ countries
+          - generic [ref=e47]: Poki is the leading web gaming platform, powered by a community of 500+ game developers.
+        - generic [ref=e49]:
+          - img [ref=e50]
+          - generic [ref=e52]:
+            - generic [ref=e53]: 100 million
+            - generic [ref=e54]: monthly players
+        - generic [ref=e56]:
+          - img [ref=e57]
+          - generic [ref=e59]:
+            - generic [ref=e60]: €100,000+ in earnings
+            - generic [ref=e61]: per active developer in 2024
+      - generic [ref=e62]:
+        - heading "Reach the world, maximize your revenue" [level=2] [ref=e63]
+        - paragraph [ref=e65]: When you're ready for the spotlight, we'll showcase your game to millions of daily players, boosting visibility and earnings across all devices.
+        - link "Apply now" [ref=e66] [cursor=pointer]:
+          - /url: /share
+    - generic [ref=e68]:
+      - heading "Instant feedback for free" [level=2] [ref=e69]
+      - generic [ref=e70]: Poki Playtesting allows you to experience your game through the eyes of real players in no time. Leverage real player data and analytics to unlock your game's full potential.
+      - link "Run your first playtest" [ref=e71] [cursor=pointer]:
+        - /url: /share
+    - generic [ref=e76]:
+      - heading "From concept to hit" [level=2] [ref=e77]
+      - generic [ref=e78]: Test. Evaluate. Iterate. The web lets you move fast. Use our tools to quickly assess which ideas have the highest chance of success.
+      - link "Start testing" [ref=e79] [cursor=pointer]:
+        - /url: /share
+    - generic [ref=e94]:
+      - heading "We've got you covered" [level=2] [ref=e95]
+      - generic [ref=e96]: "Poki handles all the behind the scenes work so you can focus on what you do best: creating great games. Your success doesn't stop at release, we're with you for the long haul."
+      - generic [ref=e97]:
+        - generic [ref=e98]:
+          - img [ref=e99]
+          - heading "Seamless Monetization" [level=3] [ref=e101]
+        - generic [ref=e102]:
+          - img [ref=e103]
+          - heading "In-house QA" [level=3] [ref=e105]
+        - generic [ref=e106]:
+          - img [ref=e107]
+          - heading "Player Acquisition" [level=3] [ref=e109]
+        - generic [ref=e110]:
+          - img [ref=e111]
+          - heading "Brand Protection" [level=3] [ref=e113]
+    - generic [ref=e114]:
+      - heading "The proof is in the play" [level=2] [ref=e115]
+      - generic [ref=e116]:
+        - generic [ref=e117]:
+          - generic [ref=e118]:
+            - img "Unept" [ref=e120]
+            - paragraph [ref=e121]: "\"After Level Devil blew up, Poki kept supporting it with social media marketing, technical support, and game design suggestions. It’s just kept rolling for me ever since.\""
+            - strong [ref=e122]: Unept
+          - generic [ref=e123]:
+            - img "Madbox" [ref=e125]
+            - paragraph [ref=e126]: "\"Expanding our games to millions of players worldwide with Poki has been an incredible journey, allowing us to fulfill our dream of bringing smiles to millions while driving our business growth.\""
+            - strong [ref=e127]: Madbox
+          - generic [ref=e128]:
+            - img "Superplus Games" [ref=e130]
+            - paragraph [ref=e131]: "\"Poki has allowed us to diversify our revenue stream through a robust platform and a unique audience. By embracing the web, you open new pathways for your business to flourish! And for that, there's no better partner than Poki.\""
+            - strong [ref=e132]: Superplus Games
+          - generic [ref=e133]:
+            - img "Fancade" [ref=e135]
+            - paragraph [ref=e136]: "\"Poki helped bring Fancade's games, including the viral hit Drive Mad, to millions of players, expanding the audience beyond mobile platforms.\""
+            - strong [ref=e137]: Fancade
+          - generic [ref=e138]:
+            - img "Blumgi" [ref=e140]
+            - paragraph [ref=e141]: "\"I am lucky to have found a place at Poki where I feel good, where I can find players who enjoy the games I want to create. Poki lets me focus on what I love the most: creating games. They do the rest.\""
+            - strong [ref=e142]: Blumgi
+          - generic [ref=e143]:
+            - img "SYBO" [ref=e145]
+            - paragraph [ref=e146]: "\"Our partnership with Poki helped us expand Subway Surfers to the web with a seamless transition, reaching an entirely new audience. This not only grew our player base but also unlocked fresh revenue streams, creating new opportunities for the brand.\""
+            - strong [ref=e147]: SYBO
+        - button "ui-icons-chevron-right" [ref=e148] [cursor=pointer]:
+          - img "ui-icons-chevron-right" [ref=e149]
+        - button "ui-icons-chevron-right" [ref=e150] [cursor=pointer]:
+          - img "ui-icons-chevron-right" [ref=e151]
+      - heading "Trusted by the biggest brands in the industry" [level=2] [ref=e152]
+    - generic [ref=e179]:
+      - generic [ref=e180]:
+        - heading "About Poki" [level=3] [ref=e181]
+        - paragraph [ref=e182]: Poki is on a mission to create the ultimate online playground.
+        - link "Get to know us" [ref=e183] [cursor=pointer]:
+          - /url: https://about.poki.com
+      - generic [ref=e184]:
+        - heading "Developer Guide" [level=3] [ref=e185]
+        - paragraph [ref=e186]: Kickstart your journey with our guide to best practices for web games.
+        - link "Let's build" [ref=e187] [cursor=pointer]:
+          - /url: /guide
+      - generic [ref=e188]:
+        - heading "Our Blog" [level=3] [ref=e189]
+        - paragraph [ref=e190]: Learn more about web games and what it's like to work with us.
+        - link "Follow our journey" [ref=e191] [cursor=pointer]:
+          - /url: https://poki.com/blog
+    - contentinfo [ref=e193]:
+      - generic [ref=e194]:
+        - generic [ref=e195]:
+          - generic [ref=e196]:
+            - text: ©2026
+            - link "Poki B.V." [ref=e197] [cursor=pointer]:
+              - /url: https://about.poki.com
+              - strong [ref=e198]: Poki B.V.
+          - generic [ref=e199]:
+            - link "Spui 10" [ref=e200] [cursor=pointer]:
+              - /url: https://goo.gl/maps/EKz1MmVJnDRY1Vb97
+            - text: ", 1012 WZ • Amsterdam, The Netherlands"
+        - generic [ref=e201]:
+          - link "Privacy Policy" [ref=e203] [cursor=pointer]:
+            - /url: https://poki.com/en/c/privacy-statement
+          - link "Terms Of Use" [ref=e205] [cursor=pointer]:
+            - /url: https://app.poki.dev/2024.03.13_Terms_and_Conditions_Poki_for_Developers.pdf
+          - generic [ref=e207]:
+            - link "Icon Linkedin" [ref=e208] [cursor=pointer]:
+              - /url: https://www.linkedin.com/company/poki
+              - img "Icon Linkedin" [ref=e209]
+            - link "Icon Medium" [ref=e210] [cursor=pointer]:
+              - /url: https://poki.com/blog
+              - img "Icon Medium" [ref=e211]

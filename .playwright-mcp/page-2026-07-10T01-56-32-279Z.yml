@@ -1,0 +1,220 @@
+- generic [ref=f1e3]:
+  - banner [ref=f1e5]:
+    - link [ref=f1e6] [cursor=pointer]:
+      - /url: /
+      - img "Poki for Developers" [ref=f1e7]
+    - generic [ref=f1e8]:
+      - link [ref=f1e10] [cursor=pointer]:
+        - /url: /guide
+        - img "ui-icons-best-practices" [ref=f1e11]
+        - text: Developer Guide
+      - link [ref=f1e13] [cursor=pointer]:
+        - /url: https://app.poki.dev/signin/
+        - img "ui-icons-login" [ref=f1e14]
+        - text: Sign In
+  - generic [ref=f1e15]:
+    - main [ref=f1e16]:
+      - link [ref=f1e17] [cursor=pointer]:
+        - /url: /guide
+        - img "ui-icons-arrow-left" [ref=f1e18]
+        - text: Overview
+      - heading "Monetization" [level=1] [ref=f1e19]
+      - paragraph [ref=f1e20]: The earlier you think about monetization for you game, the better. Leaving it until the last moment makes it feel forced and often not worthwhile for players compared to implementing it early. Doing this means you can make ads feel really beneficial by offering very relevant rewards at the relevant time. This will help boost the monetization and revenue for you game without impacting UX as negatively!
+      - heading "What are Rewarded Videos?" [level=3] [ref=f1e21]
+      - paragraph [ref=f1e22]:
+        - text: Rewarded Videos allow players to choose to
+        - strong [ref=f1e23]: watch a video ad in exchange for a certain benefit in a game
+        - text: . They are meant to enhance the player experience, and should never block content of the core gameplay.
+      - paragraph [ref=f1e24]: In this page you can find the basics of Rewarded Videos as well as some ways you might be able to integrate them into your game 💪
+      - paragraph [ref=f1e25]: "Disclaimer: Prioritize fun! If players aren’t engaged with your game, the different Rewarded Video options won’t make a big difference. We know that games with a higher engagement also get more clicks on Rewarded Videos 📈."
+      - generic [ref=f1e26]:
+        - heading "Requirements" [level=3] [ref=f1e27]
+        - list [ref=f1e28]:
+          - listitem [ref=f1e29]:
+            - text: Rewarded Videos
+            - strong [ref=f1e30]: should never block content of the core gameplay
+            - text: ", but rather serve as an extra optional perk."
+          - listitem [ref=f1e31]:
+            - text: Any button that triggers a Rewarded Video should be
+            - strong [ref=f1e32]: clearly distinguishable
+            - text: (with text and/or an icon), accessible, and not misleading in any way.
+      - heading "Types of Rewarded Videos" [level=3] [ref=f1e33]
+      - paragraph [ref=f1e34]: In order to better understand how games could benefit from Rewarded Videos, we have divided them into several categories.
+      - paragraph [ref=f1e35]: Keep in mind that the examples below are some of the most used options, which doesn’t mean you should stop experimenting or come up with brand new cool ideas! 💪
+      - heading "🤝 A Helping Hand" [level=3] [ref=f1e36]
+      - paragraph [ref=f1e37]: Rewarded Videos can be helpful when trying to balance difficulty in a game (which plays a big part in engagement), since it provides players with alternative ways to reach their goals.
+      - paragraph [ref=f1e38]: While all games should be accessible and easy to understand, offering a helping hand to those players who are struggling will help reduce the number of drop-offs.
+      - generic [ref=f1e39]:
+        - generic [ref=f1e40]:
+          - heading "Revives" [level=3] [ref=f1e41]
+          - paragraph [ref=f1e42]: Watch a Rewarded Video to revive/go back to the game (without losing progress).
+          - paragraph [ref=f1e43]:
+            - text: "Example:"
+            - link "Subway Surfers" [ref=f1e44] [cursor=pointer]:
+              - /url: https://poki.com/en/g/subway-surfers
+        - generic:
+          - img "revive example"
+      - generic [ref=f1e45]:
+        - generic [ref=f1e46]:
+          - heading "Level skip" [level=3] [ref=f1e47]
+          - paragraph [ref=f1e48]: Watch a Rewarded Video to skip the current level and move forward.
+          - paragraph [ref=f1e49]:
+            - text: "Example:"
+            - link "Drive Mad" [ref=f1e50] [cursor=pointer]:
+              - /url: https://poki.com/en/g/drive-mad
+        - generic:
+          - img "skip example"
+      - generic [ref=f1e51]:
+        - generic [ref=f1e52]:
+          - heading "Hints" [level=3] [ref=f1e53]
+          - paragraph [ref=f1e54]: Watch a Rewarded Video to get a hint in the current level (to help players when they get stuck).
+          - paragraph [ref=f1e55]:
+            - text: "Example:"
+            - link "Infinity Loop" [ref=f1e56] [cursor=pointer]:
+              - /url: https://poki.com/en/g/infinity-loop
+        - generic:
+          - img "hint example"
+      - generic [ref=f1e57]:
+        - generic [ref=f1e58]:
+          - heading "Stat boost" [level=3] [ref=f1e59]
+          - paragraph [ref=f1e60]: Watch a Rewarded Video to get improvements in stats (like health, damage, mana, stamina, shield, etc.).
+          - paragraph [ref=f1e61]:
+            - text: "Example:"
+            - link "Gladihoppers" [ref=f1e62] [cursor=pointer]:
+              - /url: https://poki.com/en/g/gladihoppers
+        - generic:
+          - img "boost example"
+      - generic [ref=f1e63]:
+        - generic [ref=f1e64]:
+          - heading "Speed up the game" [level=3] [ref=f1e65]
+          - paragraph [ref=f1e66]: Watch a Rewarded Video to speed up the whole game or a specific skill/action.
+          - paragraph [ref=f1e67]:
+            - text: "Example:"
+            - link "Merge Round Racers" [ref=f1e68] [cursor=pointer]:
+              - /url: https://poki.com/en/g/merge-round-racers
+        - generic:
+          - img "speed up example"
+      - generic [ref=f1e69]:
+        - generic [ref=f1e70]:
+          - heading "Extra ability" [level=3] [ref=f1e71]
+          - paragraph [ref=f1e72]: Watch a Rewarded Video to gain a new or special ability/item.
+          - paragraph [ref=f1e73]:
+            - text: "Example:"
+            - link "Blumgi Castle" [ref=f1e74] [cursor=pointer]:
+              - /url: https://poki.com/en/g/blumgi-castle
+        - generic:
+          - img "extra ability example"
+      - heading "💰 In-Game Economy" [level=3] [ref=f1e75]
+      - paragraph [ref=f1e76]: Both Rewarded Videos and in-game economy systems (coins, points, keys, tokens…) often coexist within the same game. In a lot of cases the content available through rewarded videos can also be available through the game’s internal economy.
+      - paragraph [ref=f1e77]: Letting users decide if they want to get a reward using the coins they have collected by playing, or if they prefer to watch a video, is a good strategy to keep a balance between different game mechanics.
+      - generic [ref=f1e78]:
+        - generic [ref=f1e79]:
+          - heading "Multiply reward" [level=3] [ref=f1e80]
+          - paragraph [ref=f1e81]: Watch a Rewarded Video to multiply (for example x2) the coins/points that you’ve gotten (either during gameplay or as offline earnings).
+          - paragraph [ref=f1e82]:
+            - text: "Example:"
+            - link "Beecoins Inc" [ref=f1e83] [cursor=pointer]:
+              - /url: https://poki.com/en/g/beecoins-inc
+        - generic:
+          - img "multiply reward example"
+      - generic [ref=f1e84]:
+        - generic [ref=f1e85]:
+          - heading "Direct coin unlocks" [level=3] [ref=f1e86]
+          - paragraph [ref=f1e87]: Watch a Rewarded Video to unlock a specific amount of coins/points.
+          - paragraph [ref=f1e88]:
+            - text: "Example:"
+            - 'link "Brain Test: Tricky Puzzles" [ref=f1e89] [cursor=pointer]':
+              - /url: https://poki.com/en/g/brain-test-tricky-puzzles
+        - generic:
+          - img "coin unlock example"
+      - heading "🎀 Customization" [level=3] [ref=f1e90]
+      - paragraph [ref=f1e91]: Giving players the opportunity to customize aspects of the game helps them create a bigger sense of ownership, investment, and connection to it. Unlocking a collection of items also serves as a new goal for players, and makes the game more re-playable.
+      - generic [ref=f1e92]:
+        - generic [ref=f1e93]:
+          - heading "Feature Unlock" [level=3] [ref=f1e94]
+          - paragraph [ref=f1e95]: Watch a Rewarded Video to get a new feature that enhances the game experience, such as environment changes, music/songs, a new color scheme for the UI…
+          - paragraph [ref=f1e96]:
+            - text: "Example:"
+            - link "Numbers" [ref=f1e97] [cursor=pointer]:
+              - /url: https://poki.com/en/g/numbers
+        - generic:
+          - img "feature unlock example"
+      - generic [ref=f1e98]:
+        - heading "Cosmetics" [level=3] [ref=f1e99]
+        - paragraph [ref=f1e100]: Watch a Rewarded Video to get one or more cosmetic aspects for your character/weapon. This can be done through a direct unlock (1 video = 1 reward), or in a progressive way (several videos = 1 reward).
+        - paragraph [ref=f1e101]:
+          - text: "Example:"
+          - link "Stickman Hook" [ref=f1e102] [cursor=pointer]:
+            - /url: https://poki.com/en/g/stickman-hook
+        - generic:
+          - img "cosmetic example"
+          - img "cosmetic example"
+          - img "cosmetic example"
+      - heading "Best Practices/Tips" [level=3] [ref=f1e103]
+      - list [ref=f1e104]:
+        - listitem [ref=f1e105]: We strongly advise you to show the option/button to continue the game’s natural flow (the one without a Rewarded Video behind it) on the primary and most natural position. Bringing too much attention to the Rewarded Video button or delaying the other options could hurt your players’ trust.
+        - listitem [ref=f1e106]: Make sure rewarded options are not too invasive or insistent. If players feel too pushed to watch an ad or too many notifications are on their way, engagement could decrease.
+        - listitem [ref=f1e107]: The industry standard to indicate a Rewarded Video is the icon 🎬.
+        - listitem [ref=f1e108]: Make sure the player knows they have been rewarded after the ad. You can do this through an animation, with sound, or any kind of celebration.
+        - listitem [ref=f1e109]: It’s usually a good idea to equip/activate the reward right after the player unlocks it (to minimize the amount of clicks and navigation), but this will depend on the type of reward.
+        - listitem [ref=f1e110]: While letting players watch infinite Rewarded Videos is allowed, keep in mind how this could affect your game’s balance and progression, so you can set an according limit.
+        - listitem [ref=f1e111]: Introducing dynamic Rewarded Video opportunities by showing Rewarded Video options only under specific circumstances (instead of static buttons), can give you more control on the amount of rewards a player is getting. For example, introducing it via an item/character that shows up only for some seconds, or modifying an earnings multiplier to make it more attractive to the player.
+        - listitem [ref=f1e112]: Consider using your Rewarded Videos with temporary or themed content! Strategies like weekly or seasonal unlocks can help you increase engagement and retention.
+    - navigation [ref=f1e113]:
+      - link "ui-icons-grid Back to All topics" [ref=f1e114] [cursor=pointer]:
+        - /url: /guide
+        - img "ui-icons-grid" [ref=f1e115]
+        - generic [ref=f1e116]:
+          - generic [ref=f1e117]: Back to
+          - generic [ref=f1e118]: All topics
+      - link "Next Game thumbnail ui-icons-arrow-right" [ref=f1e119] [cursor=pointer]:
+        - /url: /guide/thumbnail
+        - generic [ref=f1e120]:
+          - generic [ref=f1e121]: Next
+          - generic [ref=f1e122]: Game thumbnail
+        - img "ui-icons-arrow-right" [ref=f1e123]
+    - generic [ref=f1e125]:
+      - heading "Are you ready for web?" [level=2] [ref=f1e126]
+      - paragraph [ref=f1e128]: Sign up and start using our dev tools to launch, improve, and skyrocket your game to success.
+      - link "Join Us" [ref=f1e129] [cursor=pointer]:
+        - /url: /share
+    - generic [ref=f1e131]:
+      - generic [ref=f1e132]:
+        - heading "About Poki" [level=3] [ref=f1e133]
+        - paragraph [ref=f1e134]: Poki is on a mission to create the ultimate online playground.
+        - link "Get to know us" [ref=f1e135] [cursor=pointer]:
+          - /url: https://about.poki.com
+      - generic [ref=f1e136]:
+        - heading "Developer Guide" [level=3] [ref=f1e137]
+        - paragraph [ref=f1e138]: Kickstart your journey with our guide to best practices for web games.
+        - link "Let's build" [ref=f1e139] [cursor=pointer]:
+          - /url: /guide
+      - generic [ref=f1e140]:
+        - heading "Our Blog" [level=3] [ref=f1e141]
+        - paragraph [ref=f1e142]: Learn more about web games and what it's like to work with us.
+        - link "Follow our journey" [ref=f1e143] [cursor=pointer]:
+          - /url: https://poki.com/blog
+    - contentinfo [ref=f1e145]:
+      - generic [ref=f1e146]:
+        - generic [ref=f1e147]:
+          - generic [ref=f1e148]:
+            - text: ©2026
+            - link [ref=f1e149] [cursor=pointer]:
+              - /url: https://about.poki.com
+              - strong [ref=f1e150]: Poki B.V.
+          - generic [ref=f1e151]:
+            - link "Spui 10" [ref=f1e152] [cursor=pointer]:
+              - /url: https://goo.gl/maps/EKz1MmVJnDRY1Vb97
+            - text: ", 1012 WZ • Amsterdam, The Netherlands"
+        - generic [ref=f1e153]:
+          - link "Privacy Policy" [ref=f1e155] [cursor=pointer]:
+            - /url: https://poki.com/en/c/privacy-statement
+          - link "Terms Of Use" [ref=f1e157] [cursor=pointer]:
+            - /url: https://app.poki.dev/2024.03.13_Terms_and_Conditions_Poki_for_Developers.pdf
+          - generic [ref=f1e159]:
+            - link [ref=f1e160] [cursor=pointer]:
+              - /url: https://www.linkedin.com/company/poki
+              - img "Icon Linkedin" [ref=f1e161]
+            - link [ref=f1e162] [cursor=pointer]:
+              - /url: https://poki.com/blog
+              - img "Icon Medium" [ref=f1e163]

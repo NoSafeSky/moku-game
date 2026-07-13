@@ -1,0 +1,2 @@
+[     524ms] [LOG] Search query changed:  @ https://flashgameforandroid.com/_next/static/chunks/app/layout-64f79963502affd5.js:0
+[     595ms] [ERROR] Loading the script 'https://cloud.umami.is/script.js' violates the following Content Security Policy directive: "script-src 'self' 'unsafe-eval' 'unsafe-inline' giscus.app analytics.umami.is https://unpkg.com". Note that 'script-src-elem' was not explicitly set, so 'script-src' is used as a fallback. The action has been blocked. @ https://flashgameforandroid.com/blog/flash-game/how-flash-game-developer-get-paid:0

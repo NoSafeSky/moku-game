@@ -1,0 +1,224 @@
+- generic [active] [ref=f3e1]:
+  - link "Skip to content" [ref=f3e2] [cursor=pointer]:
+    - /url: "#how-does-poki-promote-my-game"
+  - banner [ref=f3e3]:
+    - navigation "Header" [ref=f3e4]:
+      - img [ref=f3e6] [cursor=pointer]
+      - generic [ref=f3e9]:
+        - generic [ref=f3e11]: Poki Documentation
+        - generic:
+          - generic: How Does Poki Promote My Game
+      - dialog [ref=f3e12]:
+        - search [ref=f3e13]:
+          - generic [ref=f3e14]:
+            - textbox "Search" [ref=f3e15]
+            - generic:
+              - img
+            - navigation "Search":
+              - button "Clear":
+                - img
+          - generic [ref=f3e16]:
+            - generic [ref=f3e17]: Initializing search
+            - list
+  - generic [ref=f3e18]:
+    - main [ref=f3e19]:
+      - generic [ref=f3e20]:
+        - navigation "Navigation" [ref=f3e23]:
+          - generic [ref=f3e24] [cursor=pointer]:
+            - link "Poki Documentation" [ref=f3e25]:
+              - /url: .
+              - img "logo" [ref=f3e26]
+            - text: Poki Documentation
+          - list [ref=f3e27]:
+            - listitem [ref=f3e28]:
+              - generic [ref=f3e29] [cursor=pointer]: Level 0 - Welcome
+              - navigation "Level 0 - Welcome" [ref=f3e31]:
+                - generic [ref=f3e32] [cursor=pointer]: Level 0 - Welcome
+                - list [ref=f3e34]:
+                  - listitem [ref=f3e35]:
+                    - link "Working With Poki" [ref=f3e36] [cursor=pointer]:
+                      - /url: index.html
+                  - listitem [ref=f3e37]:
+                    - link "Poki For Developers" [ref=f3e38] [cursor=pointer]:
+                      - /url: what-is-p4d.html
+                  - listitem [ref=f3e39]:
+                    - link "Poki Inspector" [ref=f3e40] [cursor=pointer]:
+                      - /url: poki-inspector.html
+                  - listitem [ref=f3e41]:
+                    - link "Building For Localization" [ref=f3e42] [cursor=pointer]:
+                      - /url: localization.html
+                  - listitem [ref=f3e43]:
+                    - link "Quality Guidelines" [ref=f3e44] [cursor=pointer]:
+                      - /url: poki-quality-guidelines.html
+                  - listitem [ref=f3e45]:
+                    - link "Working With AI" [ref=f3e46] [cursor=pointer]:
+                      - /url: working-with-ai.html
+                  - listitem [ref=f3e47]:
+                    - link "Trends & Trend-Driven Content" [ref=f3e48] [cursor=pointer]:
+                      - /url: trends.html
+            - listitem [ref=f3e49]:
+              - generic [ref=f3e50] [cursor=pointer]: Level 1 - Adding Your Game
+              - navigation "Level 1 - Adding Your Game" [ref=f3e52]:
+                - generic [ref=f3e53] [cursor=pointer]: Level 1 - Adding Your Game
+                - list [ref=f3e55]:
+                  - listitem [ref=f3e56]:
+                    - link "Requirements" [ref=f3e57] [cursor=pointer]:
+                      - /url: new-requirements.html
+                  - listitem [ref=f3e58]:
+                    - link "External Resources" [ref=f3e59] [cursor=pointer]:
+                      - /url: external-resources.html
+            - listitem [ref=f3e60]:
+              - link "Level 2 - Feedback & Playtesting" [ref=f3e61] [cursor=pointer]:
+                - /url: playtesting.html
+            - listitem [ref=f3e62]:
+              - link "Level 3 - Player Fit Test" [ref=f3e63] [cursor=pointer]:
+                - /url: player-fit.html
+            - listitem [ref=f3e64]:
+              - generic [ref=f3e65] [cursor=pointer]: Level 4 - Web Fit Test
+              - navigation "Level 4 - Web Fit Test" [ref=f3e67]:
+                - generic [ref=f3e68] [cursor=pointer]: Level 4 - Web Fit Test
+                - list [ref=f3e70]:
+                  - listitem [ref=f3e71]:
+                    - link "Web Fit Test" [ref=f3e72] [cursor=pointer]:
+                      - /url: web-fit-test.html
+                  - listitem [ref=f3e73]:
+                    - link "Game Thumbnail" [ref=f3e74] [cursor=pointer]:
+                      - /url: game-thumbnail.html
+                  - listitem [ref=f3e75]:
+                    - link "What To Do If My Game Doesn't Make It" [ref=f3e76] [cursor=pointer]:
+                      - /url: web-fit-help.html
+            - listitem [ref=f3e77]:
+              - link "Level 5 - Final Poki Review" [ref=f3e78] [cursor=pointer]:
+                - /url: final-review.html
+            - listitem [ref=f3e79]:
+              - generic [ref=f3e80] [cursor=pointer]: SDK Documentation
+              - navigation "SDK Documentation" [ref=f3e82]:
+                - generic [ref=f3e83] [cursor=pointer]: SDK Documentation
+                - list [ref=f3e85]:
+                  - listitem [ref=f3e86]:
+                    - link "General Info" [ref=f3e87] [cursor=pointer]:
+                      - /url: sdk-documentation.html
+                  - listitem [ref=f3e88]:
+                    - link "HTML5" [ref=f3e89] [cursor=pointer]:
+                      - /url: html5.html
+                  - listitem [ref=f3e90]:
+                    - link "Defold" [ref=f3e91] [cursor=pointer]:
+                      - /url: defold.html
+                  - listitem [ref=f3e92]:
+                    - link "Unity" [ref=f3e93] [cursor=pointer]:
+                      - /url: unity.html
+                  - listitem [ref=f3e94]:
+                    - link "GameMaker" [ref=f3e95] [cursor=pointer]:
+                      - /url: gamemaker.html
+                  - listitem [ref=f3e96]:
+                    - link "Phaser 3" [ref=f3e97] [cursor=pointer]:
+                      - /url: phaser.html
+                  - listitem [ref=f3e98]:
+                    - link "Godot" [ref=f3e99] [cursor=pointer]:
+                      - /url: godot.html
+                  - listitem [ref=f3e100]:
+                    - link "Cocos" [ref=f3e101] [cursor=pointer]:
+                      - /url: cocos.html
+                  - listitem [ref=f3e102]:
+                    - link "Construct 3" [ref=f3e103] [cursor=pointer]:
+                      - /url: construct3.html
+                  - listitem [ref=f3e104]:
+                    - link "GDevelop" [ref=f3e105] [cursor=pointer]:
+                      - /url: gdevelop.html
+                  - listitem [ref=f3e106]
+                  - listitem [ref=f3e107]
+                  - listitem [ref=f3e108]
+            - listitem [ref=f3e109]:
+              - generic [ref=f3e110] [cursor=pointer]: Bonus Level
+              - navigation "Bonus Level" [ref=f3e112]:
+                - generic [ref=f3e113] [cursor=pointer]: Bonus Level
+                - list [ref=f3e115]:
+                  - listitem [ref=f3e116]:
+                    - link "Bonus Level" [ref=f3e117] [cursor=pointer]:
+                      - /url: bonus.html
+                  - listitem [ref=f3e118]:
+                    - link "Deal Types" [ref=f3e119] [cursor=pointer]:
+                      - /url: deals.html
+                  - listitem [ref=f3e120]:
+                    - link "Release Process" [ref=f3e121] [cursor=pointer]:
+                      - /url: releaseprocess.html
+                  - listitem [ref=f3e122]:
+                    - generic [ref=f3e123] [cursor=pointer]: How Does Poki Promote My Game
+                    - navigation "Table of contents" [ref=f3e125]:
+                      - generic [ref=f3e126] [cursor=pointer]: Table of contents
+                      - list [ref=f3e127]:
+                        - listitem [ref=f3e128]:
+                          - link "Promotion at Global Release" [ref=f3e129] [cursor=pointer]:
+                            - /url: "#promotion-at-global-release"
+                        - listitem [ref=f3e130]:
+                          - link "Post-Release Promotion" [ref=f3e131] [cursor=pointer]:
+                            - /url: "#post-release-promotion"
+                  - listitem [ref=f3e132]:
+                    - link "Post-Release Update" [ref=f3e133] [cursor=pointer]:
+                      - /url: post-release-process.html
+                  - listitem [ref=f3e134]:
+                    - link "Fullscreen For Games" [ref=f3e135] [cursor=pointer]:
+                      - /url: fullscreen.html
+                  - listitem [ref=f3e136]:
+                    - link "Animated Thumbnails" [ref=f3e137] [cursor=pointer]:
+                      - /url: animated-thumbnails.html
+                  - listitem [ref=f3e138]:
+                    - link "A/B Thumbnail Tests" [ref=f3e139] [cursor=pointer]:
+                      - /url: ab-thumbnail-tests.html
+            - listitem [ref=f3e140]:
+              - link "FAQ" [ref=f3e141] [cursor=pointer]:
+                - /url: faq.html
+        - article [ref=f3e143]:
+          - heading "How Does Poki Promote My Game? ⭐️" [level=1] [ref=f3e144]
+          - heading "Promotion at Global Release" [level=2] [ref=f3e145]:
+            - link "Promotion at Global Release" [ref=f3e146] [cursor=pointer]:
+              - /url: "#promotion-at-global-release"
+          - paragraph [ref=f3e147]: Poki promotes every newly released game for 2-3 weeks to help it find its audience. During this period, the game receives prominent placement on category pages, promotion on related game pages to encourage relevant connections, and visibility on the Poki homepage (by adding a “fire” icon to make it stand out). Games that perform particularly well compared to other recent global releases have an even greater chance of securing extended visibility on the homepage.
+          - separator [ref=f3e148]
+          - heading "Post-Release Promotion" [level=2] [ref=f3e149]:
+            - link "Post-Release Promotion" [ref=f3e150] [cursor=pointer]:
+              - /url: "#post-release-promotion"
+          - paragraph [ref=f3e151]: "After launch, games continue to be recommended within relevant category pages and game pages. Poki continues to promote games based on game performance metrics with:"
+          - list [ref=f3e152]:
+            - listitem [ref=f3e153]: Higher placement on category pages and game pages;
+            - listitem [ref=f3e154]: Placement on the Poki homepage as a large or small tile (for top-performing games in each category);
+          - paragraph [ref=f3e155]: Games that perform well with players, receive additional promotion and visibility. The metrics you can see on your Poki for Developers dashboard (total gameplays, engagement time, and conversion to play) are the key metrics we consider.
+          - paragraph [ref=f3e156]: As game performance improves, the recommender notices and adapts promotions accordingly. The system continuously updates based on daily releases, ensuring it promotes games that serve the best interests of both users and developers. If your game’s performance stats significantly change, the system will take this into account in the week after the improvement.
+          - paragraph [ref=f3e157]: There’s no exact metric that guarantees homepage placement, but updating game content regularly and higher performance stats will be noticed by our recommender, and receive more promotions!
+          - separator [ref=f3e158]
+          - paragraph [ref=f3e159]
+    - contentinfo [ref=f3e160]:
+      - navigation "Footer" [ref=f3e161]:
+        - 'link "Previous: Release Process" [ref=f3e162] [cursor=pointer]':
+          - /url: releaseprocess.html
+          - img [ref=f3e164]
+          - generic [ref=f3e167]:
+            - generic [ref=f3e168]: Previous
+            - text: Release Process
+        - 'link "Next: Post-Release Update" [ref=f3e169] [cursor=pointer]':
+          - /url: post-release-process.html
+          - generic [ref=f3e171]:
+            - generic [ref=f3e172]: Next
+            - text: Post-Release Update
+          - img [ref=f3e174]
+      - generic [ref=f3e177]:
+        - generic [ref=f3e178]:
+          - text: Made with
+          - link "Material for MkDocs" [ref=f3e179] [cursor=pointer]:
+            - /url: https://squidfunk.github.io/mkdocs-material/
+        - generic [ref=f3e180]:
+          - link "Poki on Facebook" [ref=f3e181] [cursor=pointer]:
+            - /url: https://www.facebook.com/Poki
+            - img [ref=f3e182]
+          - link "Poki on Twitter" [ref=f3e184] [cursor=pointer]:
+            - /url: https://twitter.com/poki
+            - img [ref=f3e185]
+          - link "Poki on YouTube" [ref=f3e187] [cursor=pointer]:
+            - /url: https://www.youtube.com/poki
+            - img [ref=f3e188]
+          - link "Poki on LinkedIn" [ref=f3e190] [cursor=pointer]:
+            - /url: https://linkedin.com/company/poki/
+            - img [ref=f3e191]
+          - link "Poki Blog" [ref=f3e193] [cursor=pointer]:
+            - /url: https://poki.com/blog/
+            - img [ref=f3e194]
