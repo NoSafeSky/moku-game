@@ -15,7 +15,7 @@
 import type { Sprite as SpriteType, Texture } from "pixi.js";
 import { Assets, Sprite } from "pixi.js";
 import { rendererPlugin } from "../renderer";
-import type { Api, Config, Events, State } from "./types";
+import type { Api, AssetEntry, Config, Events, State } from "./types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Structural context type
@@ -244,6 +244,63 @@ export const createApi = (ctx: AssetsContext): Api => {
      */
     isLoaded(alias: string): boolean {
       return ctx.state.loaded.has(alias);
+    },
+
+    /**
+     * Enumerate known assets for the editor's asset-browser panel: the union of the configured
+     * `manifest` aliases and the aliases loaded this session, each flagged `loaded` and carrying
+     * its manifest `url` when one is configured. A read-only projection of existing state — no new
+     * state and cheap enough for the editor to poll.
+     *
+     * @returns A read-only array of `{ alias, loaded, url? }` entries.
+     * @example
+     * ```ts
+     * app.assets.entries(); // [{ alias: "ship", loaded: true, url: "sprites/ship.png" }, ...]
+     * ```
+     */
+    entries(): readonly AssetEntry[] {
+      // Union manifest aliases with session-loaded aliases (a loaded alias may not be in the manifest).
+      const aliases = new Set<string>([...Object.keys(ctx.config.manifest), ...ctx.state.loaded]);
+
+      const result: AssetEntry[] = [];
+      for (const alias of aliases) {
+        const url = ctx.config.manifest[alias];
+        const entry: AssetEntry = { alias, loaded: ctx.state.loaded.has(alias) };
+        // exactOptionalPropertyTypes: only attach `url` when the alias is a manifest entry.
+        if (url !== undefined) entry.url = url;
+        result.push(entry);
+      }
+      return result;
+    },
+
+    /**
+     * Return the configured alias → url manifest map (a read-only view of `config.manifest`).
+     *
+     * @returns The configured manifest.
+     * @example
+     * ```ts
+     * app.assets.manifest(); // { ship: "sprites/ship.png" }
+     * ```
+     */
+    manifest(): Readonly<Record<string, string>> {
+      return ctx.config.manifest;
+    },
+
+    /**
+     * Return the pixel dimensions of a loaded texture (read from the Pixi cache via `get`), or
+     * `undefined` when the alias is not loaded. Fast-follow: thumbnail / asset-type metadata.
+     *
+     * @param alias - The logical asset name.
+     * @returns `{ width, height }` of the loaded texture, or `undefined` if not loaded.
+     * @example
+     * ```ts
+     * app.assets.metadata("ship"); // { width: 64, height: 32 } | undefined
+     * ```
+     */
+    metadata(alias: string): { width: number; height: number } | undefined {
+      const texture = this.get(alias);
+      if (texture === undefined) return undefined;
+      return { width: texture.width, height: texture.height };
     }
   };
 };

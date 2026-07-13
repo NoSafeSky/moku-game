@@ -25,6 +25,19 @@ export type State = {
   readonly loaded: Set<string>;
 };
 
+/**
+ * One asset in the enumeration surface (the editor's asset-browser panel polls `entries()`):
+ * the alias, whether it is loaded this session, and its configured url when one exists in the manifest.
+ */
+export type AssetEntry = {
+  /** The logical asset alias. */
+  alias: string;
+  /** Whether the alias has been successfully loaded this session. */
+  loaded: boolean;
+  /** The configured url from `config.manifest`, when the alias is a manifest entry. */
+  url?: string;
+};
+
 /** assets plugin API. */
 export type Api = {
   /** Load one asset by alias; emits assets:loaded on success. */
@@ -40,4 +53,14 @@ export type Api = {
   sprite(alias: string): Promise<Sprite>;
   /** True if the alias has been loaded this session. */
   isLoaded(alias: string): boolean;
+  /**
+   * Enumerate known assets for the editor's asset-browser: the union of `config.manifest`
+   * aliases and `state.loaded` aliases, each flagged `loaded` (and carrying its manifest `url`
+   * when configured). A read-only projection of existing state — cheap to poll.
+   */
+  entries(): readonly AssetEntry[];
+  /** The configured alias → url manifest map (a read-only view of `config.manifest`). */
+  manifest(): Readonly<Record<string, string>>;
+  /** Pixel dimensions of a loaded texture (from the Pixi cache), or `undefined` if not loaded. */
+  metadata(alias: string): { width: number; height: number } | undefined;
 };

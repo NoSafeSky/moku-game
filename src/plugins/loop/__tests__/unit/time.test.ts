@@ -112,7 +112,11 @@ const makeMockWorld = (): MockWorld => {
     entityCount: vi.fn() as unknown as World["entityCount"],
     componentNames: vi.fn() as unknown as World["componentNames"],
     componentsOf: vi.fn() as unknown as World["componentsOf"],
-    componentByName: vi.fn() as unknown as World["componentByName"]
+    componentByName: vi.fn() as unknown as World["componentByName"],
+    // editor-cycle facet — unused here but required for structural typing as World
+    changeEpoch: vi.fn() as unknown as World["changeEpoch"],
+    setActiveStages: vi.fn() as unknown as World["setActiveStages"],
+    activeStages: vi.fn() as unknown as World["activeStages"]
   };
 
   return mockWorld;

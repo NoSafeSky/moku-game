@@ -7,12 +7,14 @@ import {
   assetsPlugin,
   audioPlugin,
   cameraPlugin,
+  commandsPlugin,
   contextPlugin,
   ecsPlugin,
   inputPlugin,
   loopPlugin,
   mcpPlugin,
   platformPlugin,
+  reflectionPlugin,
   rendererPlugin,
   scenePlugin,
   schedulerPlugin,
@@ -39,7 +41,12 @@ const framework = createCore(coreConfig, {
     uiPlugin,
     tweenPlugin,
     cameraPlugin,
-    mcpPlugin
+    mcpPlugin,
+    // ─── Editor subsystem (Layer-2) — registered after mcp; commands/reflection are the
+    //     E1 foundations (write-authority + field-schema registry). editor-bridge (E4)
+    //     depends on mcp + all editor plugins and becomes the last array entry.
+    commandsPlugin,
+    reflectionPlugin
   ],
   // Framework default plugin configuration. Consumers override via createApp({ pluginConfigs }).
   pluginConfigs: {
@@ -73,3 +80,6 @@ export const createPlugin = framework.createPlugin;
 // Layer-1/2 escape hatches for composing a custom (e.g. headless) core. `createApp` above
 // remains the default entry point; these are documented at their source in `./config`.
 export { createCore, createCoreConfig } from "./config";
+// ─── Plugin Helpers ──────────────────────────────────────────
+// The `field.*` builder set (reflection) for authoring typed component schemas at module scope.
+export { field } from "./plugins/reflection";

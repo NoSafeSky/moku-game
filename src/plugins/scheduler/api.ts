@@ -137,6 +137,36 @@ export const createApi = (ctx: SchedulerContext): Api => {
      */
     tick: (dt: number): void => {
       getWorld().tick(dt);
+    },
+
+    /**
+     * Gate which stages `tick` runs. Forwards to `world.setActiveStages` (the gate is implemented
+     * in `ecs`, which owns `world.tick`). `undefined` (the default + sentinel) runs all stages; a
+     * gated-off stage is skipped but its command-buffer flush still runs.
+     *
+     * @param stages - The stages to keep active, or `undefined` to run all stages.
+     * @example
+     * ```ts
+     * app.scheduler.setActiveStages(["input", "sync", "render"]); // edit mode
+     * app.scheduler.setActiveStages(undefined);                    // play mode
+     * ```
+     */
+    setActiveStages: (stages: readonly Stage[] | undefined): void => {
+      getWorld().setActiveStages(stages);
+    },
+
+    /**
+     * The stages currently active for `tick`, or `undefined` when all stages run.
+     * Forwards to `world.activeStages`.
+     *
+     * @returns The active-stage list, or `undefined` (all stages / default).
+     * @example
+     * ```ts
+     * app.scheduler.activeStages(); // undefined by default
+     * ```
+     */
+    activeStages: (): readonly Stage[] | undefined => {
+      return getWorld().activeStages();
     }
   };
 };

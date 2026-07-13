@@ -1,94 +1,107 @@
 /**
- * @file reflection plugin — `field.*` builder set skeleton.
+ * @file reflection plugin — `field.*` builder set.
+ *
+ * Pure, stateless builders for authoring a typed `Schema`. Safe to call at module scope, before
+ * the app starts. Each returns a concrete discriminated-union member tagged by `kind` — no
+ * generics, no single mapped type (spec/09 §1).
  */
-import type { FieldBuilders } from "./types";
+import type { FieldBuilders, FieldSpec } from "./types";
 
 /**
- * The `field.*` builder set for authoring a typed `Schema` (skeleton — implemented during build).
+ * The `field.*` builder set for authoring a typed `Schema`.
+ *
+ * Every builder returns a concrete discriminated-union member (`NumberFieldSpec`,
+ * `BooleanFieldSpec`, …) tagged by `kind` — an inspector switches on `descriptor.kind` with no
+ * casts. Stateless: safe to call at module scope to build a `Schema` before the app starts.
+ *
+ * @example
+ * ```ts
+ * import { field } from "./field";
+ * const schema = { hp: field.number({ min: 0, max: 100 }), state: field.select(["idle", "dead"]) };
+ * ```
  */
 export const field: FieldBuilders = {
   /**
-   * Builds a number field spec (skeleton).
+   * Builds a number field spec; optional `min`/`max` bound `validate`, `step` is an inspector hint.
    *
-   * @throws {Error} Always in the skeleton — implemented during build.
+   * @param opts - Optional bounds/step hint.
+   * @param opts.min - Minimum accepted value (inclusive); `validate` rejects lower values.
+   * @param opts.max - Maximum accepted value (inclusive); `validate` rejects higher values.
+   * @param opts.step - Inspector step hint; not enforced by `validate`.
+   * @returns A `NumberFieldSpec` carrying only the provided bounds (no undefined-valued keys).
    * @example
    * ```ts
-   * field.number({ min: 0, max: 1 });
+   * field.number({ min: 0, max: 1, step: 0.05 }); // a normalized ratio control
    * ```
    */
-  number: () => {
-    throw new Error("not implemented");
-  },
+  number: opts => ({ kind: "number", ...opts }),
+
   /**
-   * Builds a boolean field spec (skeleton).
+   * Builds a boolean (checkbox) field spec.
    *
-   * @throws {Error} Always in the skeleton — implemented during build.
+   * @returns A `BooleanFieldSpec`.
    * @example
    * ```ts
-   * field.boolean();
+   * field.boolean(); // e.g. a `visible` flag
    * ```
    */
-  boolean: () => {
-    throw new Error("not implemented");
-  },
+  boolean: () => ({ kind: "boolean" }),
+
   /**
-   * Builds a string field spec (skeleton).
+   * Builds a free-text string field spec.
    *
-   * @throws {Error} Always in the skeleton — implemented during build.
+   * @returns A `StringFieldSpec`.
    * @example
    * ```ts
-   * field.string();
+   * field.string(); // e.g. a `label` field
    * ```
    */
-  string: () => {
-    throw new Error("not implemented");
-  },
+  string: () => ({ kind: "string" }),
+
   /**
-   * Builds a color field spec (skeleton).
+   * Builds a color field spec (value is a `#rrggbb`/`#rrggbbaa` string).
    *
-   * @throws {Error} Always in the skeleton — implemented during build.
+   * @returns A `ColorFieldSpec`.
    * @example
    * ```ts
-   * field.color();
+   * field.color(); // a `tint` that `typeof` alone would mis-read as string/number
    * ```
    */
-  color: () => {
-    throw new Error("not implemented");
-  },
+  color: () => ({ kind: "color" }),
+
   /**
-   * Builds a select field spec (skeleton).
+   * Builds an enum dropdown field spec; `validate` rejects any value not in `options`.
    *
-   * @throws {Error} Always in the skeleton — implemented during build.
+   * @param options - The allowed values, in display order.
+   * @returns A `SelectFieldSpec`.
    * @example
    * ```ts
-   * field.select(["a", "b"]);
+   * field.select(["idle", "run", "jump"]); // an animation state enum
    * ```
    */
-  select: () => {
-    throw new Error("not implemented");
-  },
+  select: options => ({ kind: "select", options }),
+
   /**
-   * Builds a vector2 field spec (skeleton).
+   * Builds a 2-component vector field spec (value is `{ x: number; y: number }`).
    *
-   * @throws {Error} Always in the skeleton — implemented during build.
+   * @returns A `Vector2FieldSpec`.
    * @example
    * ```ts
-   * field.vector2();
+   * field.vector2(); // e.g. a `velocity` { x, y }
    * ```
    */
-  vector2: () => {
-    throw new Error("not implemented");
-  },
+  vector2: () => ({ kind: "vector2" }),
+
   /**
-   * Wraps a field spec as read-only (skeleton).
+   * Wraps any field spec to mark it non-editable; `validate` rejects a write to a readonly
+   * field. Preserves the inner spec's discriminant (`kind`) and its other fields.
    *
-   * @throws {Error} Always in the skeleton — implemented during build.
+   * @param inner - The field spec to wrap as read-only.
+   * @returns A copy of `inner` with `readonly: true`.
    * @example
    * ```ts
-   * field.readonly(field.number());
+   * field.readonly(field.number()); // a computed value the inspector shows but can't edit
    * ```
    */
-  readonly: () => {
-    throw new Error("not implemented");
-  }
+  readonly: (inner: FieldSpec) => ({ ...inner, readonly: true })
 };

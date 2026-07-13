@@ -139,6 +139,15 @@ const makeTrackingWorld = (world: World, owned: Set<Entity>): World => ({
   // tracked world during setup can resolve components by name.
   // eslint-disable-next-line jsdoc/require-jsdoc -- delegation property
   componentByName: name => world.componentByName(name),
+  // NEW (Editor cycle) — change-epoch + stage-gate delegations: forward so a tracked
+  // scene `setup` (and editor tooling reading the tracked world) sees the real epoch
+  // and can gate stages through the wrapper.
+  // eslint-disable-next-line jsdoc/require-jsdoc -- delegation property
+  changeEpoch: () => world.changeEpoch(),
+  // eslint-disable-next-line jsdoc/require-jsdoc -- delegation property
+  setActiveStages: stages => world.setActiveStages(stages),
+  // eslint-disable-next-line jsdoc/require-jsdoc -- delegation property
+  activeStages: () => world.activeStages(),
   // NEW (Cycle 2) — resource delegations: forward the six world-resource methods
   // straight through so the tracked wrapper remains a complete `World` and a scene
   // `setup` can read/write resources (e.g. `world.resource(app.context.assets)`).

@@ -131,6 +131,21 @@ export function createWorld(config: Config): World {
   /** Monotonic counter used to mint stable "res:N" keys via defineResource. */
   let nextResourceId = 0;
 
+  // ─── Editor cycle: change epoch + stage gate ──────────────
+  //
+  // `changeEpoch` is a monotonically non-decreasing counter bumped once per data
+  // write (the four structural appliers + `set` + each `updateEach` pass). It is
+  // unconditional (never gated on an editor flag) so `tick` stays monomorphic —
+  // the one accepted pay-for-what-you-use exception. The editor polls it to refresh
+  // an inspector with NO per-frame emit.
+
+  /** Monotonically non-decreasing change counter — bumped once per data write. */
+  let changeEpoch = 0;
+  /** The active-stage list for `tick`, or `undefined` (the sentinel + default = all stages). */
+  let activeStagesValue: readonly Stage[] | undefined;
+  /** Membership set derived from `activeStagesValue` for O(1) gate checks in `tick`; `undefined` = all. */
+  let activeStagesSet: Set<Stage> | undefined;
+
   // ─── Flush target ─────────────────────────────────────────
 
   /**
@@ -167,6 +182,7 @@ export function createWorld(config: Config): World {
     if (archetypeIds.length > 0) {
       archetypeStore.insert(entity, archetypeIds, archetypeValues);
     }
+    changeEpoch++; // structural write: entity created
   };
 
   /**
@@ -184,6 +200,7 @@ export function createWorld(config: Config): World {
       sparseMap.delete(entity);
     }
     entityTable.free(entity);
+    changeEpoch++; // structural write: entity destroyed
   };
 
   /**
@@ -209,6 +226,7 @@ export function createWorld(config: Config): World {
     } else {
       archetypeStore.addComponent(entity, componentId, value);
     }
+    changeEpoch++; // structural write: component added
   };
 
   /**
@@ -228,6 +246,7 @@ export function createWorld(config: Config): World {
     } else {
       archetypeStore.removeComponent(entity, componentId);
     }
+    changeEpoch++; // structural write: component removed
   };
 
   const flushTarget = { insertSpawned, completeDespawn, applyAdd, applyRemove };
@@ -301,6 +320,7 @@ export function createWorld(config: Config): World {
      * ```
      */
     updateEach(cb: (values: object[], entity: Entity) => void): void {
+      changeEpoch++; // updateEach is the value-mutation path (a ref mutation is invisible to `set`)
       const wasIterating = iterating;
       iterating = true;
       try {
@@ -616,10 +636,14 @@ export function createWorld(config: Config): World {
         const current = sparseMap?.get(entity) as T | undefined;
         if (current !== undefined && sparseMap) {
           sparseMap.set(entity, { ...current, ...value });
+          changeEpoch++; // value write
         }
       } else {
         const current = archetypeStore.get(entity, id) as T | undefined;
-        if (current !== undefined) Object.assign(current, value);
+        if (current !== undefined) {
+          Object.assign(current, value);
+          changeEpoch++; // value write
+        }
       }
     },
 
@@ -676,6 +700,12 @@ export function createWorld(config: Config): World {
      */
     tick(dt: number): void {
       for (const stage of STAGE_ORDER) {
+        // Stage gate: `=== undefined` fast path so non-editor games pay nothing. A gated-off
+        // stage skips its systems but still flushes the command buffer (structural correctness).
+        if (activeStagesSet !== undefined && !activeStagesSet.has(stage)) {
+          flushBuffer();
+          continue;
+        }
         const stageSystems = [...(systems.get(stage) ?? [])];
         for (const system of stageSystems) {
           iterating = true;
@@ -689,6 +719,52 @@ export function createWorld(config: Config): World {
         // Flush at each stage boundary even if no systems ran
         flushBuffer();
       }
+    },
+
+    // ─── Editor cycle: change epoch + stage gate ─────────────
+
+    /**
+     * Read the monotonically non-decreasing change epoch (bumped once per data write).
+     * Editor tooling polls this to refresh an inspector without a per-frame kernel `emit`.
+     *
+     * @returns The current change epoch (starts at 0; only increases).
+     * @example
+     * ```ts
+     * const before = world.changeEpoch();
+     * world.set(entity, Position, { x: 1 });
+     * world.changeEpoch() > before; // true
+     * ```
+     */
+    changeEpoch(): number {
+      return changeEpoch;
+    },
+
+    /**
+     * Gate which stages `world.tick` runs. `undefined` (default + sentinel) runs all stages.
+     * A gated-off stage is skipped but its command-buffer flush still runs.
+     *
+     * @param stages - The stages to keep active, or `undefined` for all stages.
+     * @example
+     * ```ts
+     * world.setActiveStages(["input", "sync", "render"]); // edit mode
+     * ```
+     */
+    setActiveStages(stages: readonly Stage[] | undefined): void {
+      activeStagesValue = stages;
+      activeStagesSet = stages === undefined ? undefined : new Set(stages);
+    },
+
+    /**
+     * The stages currently active for `world.tick`, or `undefined` when all stages run.
+     *
+     * @returns The active-stage list, or `undefined` (all stages / default).
+     * @example
+     * ```ts
+     * world.activeStages(); // undefined by default
+     * ```
+     */
+    activeStages(): readonly Stage[] | undefined {
+      return activeStagesValue;
     },
 
     // ─── Introspection (read-only — for tooling such as the mcp plugin) ───────

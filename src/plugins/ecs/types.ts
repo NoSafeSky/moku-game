@@ -160,6 +160,56 @@ export type World = {
   /** Advance one frame: run stages in order, flushing the command buffer between them. */
   tick(dt: number): void;
 
+  // ── Editor cycle: change epoch + stage gate ────────────────────────────────
+
+  /**
+   * Read the monotonically non-decreasing **change epoch** — a counter bumped once per data
+   * write: the four structural appliers (spawn/despawn/add/remove), `set`, and each
+   * `query(...).updateEach` value-mutation pass. It reflects live play-mode field changes made
+   * by gameplay systems (Unity `SerializedObject.Update()` parity), so editor tooling can
+   * **poll-on-epoch** to refresh an inspector WITHOUT any per-frame kernel `emit`. The increment
+   * is unconditional (never gated on an editor flag) so `world.tick` stays monomorphic for
+   * non-editor games — the one accepted pay-for-what-you-use exception. **Read-only.**
+   *
+   * @returns The current change epoch (starts at 0; only ever increases).
+   * @example
+   * ```ts
+   * const before = world.changeEpoch();
+   * world.set(entity, Position, { x: 10 });
+   * world.changeEpoch() > before; // true — a write happened
+   * ```
+   */
+  changeEpoch(): number;
+
+  /**
+   * Gate which stages `world.tick` runs. `undefined` (the default + sentinel) runs ALL stages
+   * exactly as before. A gated-off stage is skipped, but its per-stage command-buffer flush
+   * still runs so structural ops stay correct. The `tick` loop consults the gate via a
+   * `=== undefined` fast path, so non-editor games pay nothing.
+   *
+   * `editor-runtime` sets `["input", "sync", "render"]` for edit mode (gates OFF
+   * `update`/`physics`) and `undefined` for play mode.
+   *
+   * @param stages - The stages to keep active, or `undefined` to run all stages.
+   * @example
+   * ```ts
+   * world.setActiveStages(["input", "sync", "render"]); // edit mode: no update/physics
+   * world.setActiveStages(undefined);                    // play mode: all stages
+   * ```
+   */
+  setActiveStages(stages: readonly Stage[] | undefined): void;
+
+  /**
+   * The stages currently active for `world.tick`, or `undefined` when all stages run.
+   *
+   * @returns The active-stage list previously set, or `undefined` (all stages / default).
+   * @example
+   * ```ts
+   * world.activeStages(); // undefined by default
+   * ```
+   */
+  activeStages(): readonly Stage[] | undefined;
+
   // ── Introspection (read-only — for tooling such as the mcp plugin) ──────────
 
   /**
