@@ -16,6 +16,8 @@ import type {
   Config,
   EmitterComponent,
   EmitterValue,
+  FlashComponent,
+  FlashValue,
   FloatingTextComponent,
   FloatingTextValue,
   ParticleComponent,
@@ -49,12 +51,14 @@ export const makeStage = () => ({ position: { set: vi.fn() } }) as unknown as Co
 /**
  * A recording mock renderer (structural `RendererDep`). `attachPrimitive` reports
  * success only when a stage is present (mirrors the real headless contract).
+ * `getEntityView` resolves from the optional `views` map (undefined → headless).
  */
-export const makeRenderer = (stage?: Container) => ({
+export const makeRenderer = (stage?: Container, views?: Map<Entity, Container>) => ({
   attachPrimitive: vi.fn((_entity: Entity, _spec: unknown) => stage !== undefined),
   attach: vi.fn(),
   markDirty: vi.fn(),
-  getStage: vi.fn((): Container | undefined => stage)
+  getStage: vi.fn((): Container | undefined => stage),
+  getEntityView: vi.fn((entity: Entity): Container | undefined => views?.get(entity))
 });
 
 /** The real world + all vfx tokens + a state wired to them (the started shape). */
@@ -64,6 +68,7 @@ export type VfxSetup = {
   Emitter: EmitterComponent;
   Particle: ParticleComponent;
   Pop: PopComponent;
+  Flash: FlashComponent;
   FloatingText: FloatingTextComponent;
   state: State;
   config: Config;
@@ -120,6 +125,10 @@ export const setup = (config: Config = makeConfig()): VfxSetup => {
     () => ({ age: 0, duration: 0, amplitude: 1, baseScaleX: 1, baseScaleY: 1 }) satisfies PopValue,
     { name: "Pop" }
   );
+  const Flash = world.defineComponent<FlashValue>(
+    () => ({ age: 0, duration: 0, color: 0xff_ff_ff, baseTint: 0xff_ff_ff }) satisfies FlashValue,
+    { name: "Flash" }
+  );
   const FloatingText = world.defineComponent<FloatingTextValue>(
     () =>
       ({
@@ -137,9 +146,10 @@ export const setup = (config: Config = makeConfig()): VfxSetup => {
   state.Emitter = Emitter;
   state.Particle = Particle;
   state.Pop = Pop;
+  state.Flash = Flash;
   state.FloatingText = FloatingText;
 
-  return { world, transform, Emitter, Particle, Pop, FloatingText, state, config };
+  return { world, transform, Emitter, Particle, Pop, Flash, FloatingText, state, config };
 };
 
 /** Branded-entity helper for constructing raw handles in tests. */

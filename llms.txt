@@ -156,6 +156,7 @@ screenshot(): Promise<string | undefined>      // PNG data URL via Pixi extract;
 tree(): SceneNode | undefined                  // JSON scene-graph snapshot; SceneNode.type ∈ Text|Graphics|Sprite|Container
 getView(): HTMLCanvasElement | undefined       // canvas for manual mounting; undefined when headless
 getStage(): Container | undefined              // root Pixi stage; undefined when headless
+getEntityView(entity: Entity): Container | undefined  // entity's attached view (undefined if none/headless); for view-local state (tint/alpha) the Transform sync doesn't manage — e.g. vfx flash
 markDirty(entity: Entity): void                // re-sync view next "sync" tick
 // PrimitiveStyle = { fill?: number; stroke?: number; strokeWidth?: number; alpha?: number; label?: string }  // hex-int colors, no Pixi types
 // PrimitiveSpec = discriminated union on `shape`:
@@ -319,11 +320,12 @@ burst(x, y, spec: BurstSpec): void              // one-shot spark/explosion/pick
 shake(amplitude, duration): void                // bank screen-shake trauma (0..1); render system offsets the stage root by trauma² · shakeMaxOffset
 stopShake(): void                               // clear trauma + reset the stage offset to (0,0) immediately
 pop(entity, opts?): void                        // scale-pop a Transform to opts.scale× (@default 1.3) over opts.duration (@default 0.15s) and back; no-op without a Transform
+flash(entity, opts?): void                      // hit-flash: snap view.tint to opts.color (@default white) then ease back to the captured base over opts.duration (@default 0.12s); alive entity, tint only if it has a view (headless → ages out); re-call refreshes
 floatText(x, y, text, opts?): Entity            // rising, alpha-fading floating number/text (e.g. "+50"); returns its entity handle
 readonly easing: Readonly<Record<EasingName, (t: number) => number>>  // frozen curve table: linear, easeInQuad, easeOutQuad, easeInOutQuad, easeOutCubic, easeOutBack, easeOutElastic
 lerp(a: number, b: number, t: number): number   // linear interpolation a + (b − a) * t
 // Particles are ECS entities (renderer.Transform + a named Particle) drawn via renderer.attachPrimitive — the renderer owns their whole view lifecycle; they fade by scaling out startScale → endScale (no alpha), so NO new dependency (Pixi arrives via renderer). vfx keeps no per-particle handle; only floating-text Text handles are retained (to fade alpha).
-// Emitter/Particle/Pop/FloatingText are named components (MCP-introspectable by name). A single maxParticles budget spans every emitter + burst; over-budget emission is dropped (ctx.log debug once per over-budget frame).
+// Emitter/Particle/Pop/Flash/FloatingText are named components (MCP-introspectable by name). A single maxParticles budget spans every emitter + burst; over-budget emission is dropped (ctx.log debug once per over-budget frame).
 // Every effectful method is a guarded no-op before app.start() and on dead / wrong-type entities. Emits NO events (per-frame hot path — same stance as ecs/renderer/scheduler/loop). No onStop (the renderer disposes every view). Headless-safe: systems run identically; only Pixi view creation guards on renderer.getStage().
 // Config: maxParticles (@default 1000), shakeDecay (@default 1.8), shakeMaxOffset (@default 24), defaultColor (@default 0xffffff).
 ```
@@ -463,7 +465,7 @@ Built/resolved in dependency order. (depends → resolved with `ctx.require`.)
   ECS→display objects on the `sync` stage, attaches plain-data primitives. First-class `headless`
   config (auto-detected; skips Pixi/GPU, still defines `Transform` + sync). | Complex |
   `Transform`/`attach`/`attachPrimitive`/`detach`/`render`/`screenshot`/`tree`/`getView`/`getStage`/
-  `markDirty` | new types: `PrimitiveSpec`, `PrimitiveStyle`, `SceneNode` | config: +`headless` |
+  `getEntityView`/`markDirty` | new types: `PrimitiveSpec`, `PrimitiveStyle`, `SceneNode` | config: +`headless` |
   events: none | depends: ecs, scheduler.
 - **input** — polled keyboard/pointer from DOM listeners → per-frame `InputSnapshot` on the `input`
   stage; programmatic `keyDown`/`keyUp`/`keyPress` injection with alias normalization
@@ -519,15 +521,17 @@ Built/resolved in dependency order. (depends → resolved with `ctx.require`.)
   (each particle is an entity with `renderer.Transform` + a named `Particle`, drawn via
   `renderer.attachPrimitive` so the renderer owns the view lifecycle; particles fade by scaling out
   `startScale → endScale`), trauma-based screen shake (offsets the Pixi stage root by
-  `trauma² · shakeMaxOffset`, decays by `shakeDecay`), Transform scale-pop, floating rising/alpha-fading
-  damage/score `Text`, and pure easing curves + `lerp`. `onStart` captures `renderer.Transform`, defines
-  four named components (`Emitter`/`Particle`/`Pop`/`FloatingText`), and registers five systems
-  (emit/particle/pop/floating in `"update"`, shake in `"render"`); no `onStop` (the renderer disposes
+  `trauma² · shakeMaxOffset`, decays by `shakeDecay`), Transform scale-pop, hit-flash tint (snaps a
+  view's `tint` to a color then eases it back via `renderer.getEntityView`), floating rising/alpha-fading
+  damage/score `Text`, and pure easing curves + `lerp` (vfx ships its own identical table; a `tween`
+  dedupe via depends+ctx.require is deferred). `onStart` captures `renderer.Transform`, defines five named components
+  (`Emitter`/`Particle`/`Pop`/`Flash`/`FloatingText`), and registers six systems
+  (emit/particle/pop/flash/floating in `"update"`, shake in `"render"`); no `onStop` (the renderer disposes
   every view). A single `maxParticles` budget spans every emitter + burst. Headless-safe (systems run;
   only Pixi view creation guards on `renderer.getStage()`). No new package dep (Pixi via `renderer`). |
   Complex | `createEmitter`/`configureEmitter`/`setEmitterEnabled`/`removeEmitter`/`burst`/`shake`/
-  `stopShake`/`pop`/`floatText`/`easing`/`lerp` | new types: `EmitterSpec`, `BurstSpec`, `PopOptions`,
-  `FloatTextOptions`, `EasingName` | config: `maxParticles`/`shakeDecay`/`shakeMaxOffset`/`defaultColor` |
+  `stopShake`/`pop`/`flash`/`floatText`/`easing`/`lerp` | new types: `EmitterSpec`, `BurstSpec`, `PopOptions`,
+  `FlashOptions`, `FloatTextOptions`, `EasingName` | config: `maxParticles`/`shakeDecay`/`shakeMaxOffset`/`defaultColor` |
   events: none | depends: ecs, scheduler, renderer (Wave 3; registered after platform, before mcp).
 - **ui** — the PixiJS-native game-UI layer. A screen stack (`pushScreen`/`popScreen`/`replaceScreen`/
   `clearScreens`/`topScreen`/`screenCount`) of modal cards (title / pause / game-over / upgrade); a

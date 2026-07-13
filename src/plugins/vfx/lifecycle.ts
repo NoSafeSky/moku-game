@@ -3,10 +3,10 @@
  *
  * `start` is the one place — after ecs/scheduler/renderer have started (guaranteed
  * by `depends` order) — to (1) capture `renderer.Transform` into state (reading it
- * earlier throws, per the renderer contract), (2) define the four named vfx
- * components (`Emitter`/`Particle`/`Pop`/`FloatingText`) so they exist before any
- * spawn and are MCP-introspectable by name, and (3) register the five effect
- * systems (emit/particle/pop/floating in `"update"`, shake in `"render"`).
+ * earlier throws, per the renderer contract), (2) define the five named vfx
+ * components (`Emitter`/`Particle`/`Pop`/`Flash`/`FloatingText`) so they exist
+ * before any spawn and are MCP-introspectable by name, and (3) register the six
+ * effect systems (emit/particle/pop/flash/floating in `"update"`, shake in `"render"`).
  *
  * This is deps-ready wiring — the renderer's own onStart shape — NOT a per-frame
  * or resource-owning path. There is no onStop: every effect view is renderer-owned
@@ -20,6 +20,7 @@ import type { Api as RendererApi } from "../renderer/types";
 import { schedulerPlugin } from "../scheduler";
 import type { Api as SchedulerApi } from "../scheduler/types";
 import { createEmitSystem, DEAD_ENTITY } from "./systems/emit";
+import { createFlashSystem } from "./systems/flash";
 import { createFloatingSystem } from "./systems/floating";
 import { createParticleSystem } from "./systems/particles";
 import { createPopSystem } from "./systems/pop";
@@ -27,6 +28,7 @@ import { createShakeSystem } from "./systems/shake";
 import type {
   Config,
   EmitterValue,
+  FlashValue,
   FloatingTextValue,
   Log,
   ParticleValue,
@@ -124,6 +126,22 @@ const createPopDefault = (): PopValue => ({
 });
 
 /**
+ * Default `FlashValue` — the merge base for `flash()`'s `add`. White = no tint.
+ *
+ * @returns A fresh default flash value (no-op white tint).
+ * @example
+ * ```ts
+ * const value = createFlashDefault();
+ * ```
+ */
+const createFlashDefault = (): FlashValue => ({
+  age: 0,
+  duration: 0,
+  color: 0xff_ff_ff,
+  baseTint: 0xff_ff_ff
+});
+
+/**
  * Default `FloatingTextValue` — the merge base; floating text is spawned with
  * complete values by `floatText()`.
  *
@@ -147,7 +165,7 @@ const createFloatingTextDefault = (): FloatingTextValue => ({
 
 /**
  * Starts the vfx plugin: captures the renderer's Transform token, defines the
- * four named vfx components on the ECS world, and registers the five effect
+ * five named vfx components on the ECS world, and registers the six effect
  * systems with the scheduler. Runs identically headless — only Pixi view creation
  * (inside the renderer) is gated on a live stage.
  *
@@ -166,7 +184,7 @@ export const start = (ctx: StartContext): void => {
   const transform = renderer.Transform;
   ctx.state.transform = transform;
 
-  // (2) Define the four named vfx components (introspectable by name via MCP).
+  // (2) Define the five named vfx components (introspectable by name via MCP).
   const Emitter = world.defineComponent<EmitterValue>(() => createEmitterDefault(ctx.config), {
     name: "Emitter"
   });
@@ -174,18 +192,20 @@ export const start = (ctx: StartContext): void => {
     name: "Particle"
   });
   const Pop = world.defineComponent<PopValue>(createPopDefault, { name: "Pop" });
+  const Flash = world.defineComponent<FlashValue>(createFlashDefault, { name: "Flash" });
   const FloatingText = world.defineComponent<FloatingTextValue>(createFloatingTextDefault, {
     name: "FloatingText"
   });
   ctx.state.Emitter = Emitter;
   ctx.state.Particle = Particle;
   ctx.state.Pop = Pop;
+  ctx.state.Flash = Flash;
   ctx.state.FloatingText = FloatingText;
 
   // The renderer API is structurally a `RendererDep` (superset), so it is passed
   // directly to the systems + emission core — no wrapper object needed.
 
-  // (3) Register the five effect systems.
+  // (3) Register the six effect systems.
   scheduler.addSystem(
     "update",
     createEmitSystem({
@@ -205,6 +225,7 @@ export const start = (ctx: StartContext): void => {
     createParticleSystem({ world, transform, Particle, renderer, state: ctx.state })
   );
   scheduler.addSystem("update", createPopSystem({ world, transform, Pop, renderer }));
+  scheduler.addSystem("update", createFlashSystem({ world, Flash, renderer }));
   scheduler.addSystem(
     "update",
     createFloatingSystem({

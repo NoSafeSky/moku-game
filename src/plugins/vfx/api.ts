@@ -2,8 +2,8 @@
  * @file vfx plugin — API factory (the `app.vfx` surface).
  *
  * Exposes emitters (`createEmitter`/`configureEmitter`/`setEmitterEnabled`/
- * `removeEmitter`), one-shot `burst`, `shake`/`stopShake`, `pop`, `floatText`, and
- * the pure `easing`/`lerp` helpers. `burst` shares the exact emission core the
+ * `removeEmitter`), one-shot `burst`, `shake`/`stopShake`, `pop`, `flash`,
+ * `floatText`, and the pure `easing`/`lerp` helpers. `burst` shares the emission core the
  * emit system uses. Every effectful method is a guarded no-op before onStart (the
  * component tokens are undefined) and on dead / wrong-type entities — so misuse
  * degrades quietly rather than throwing on the frame hot path.
@@ -21,6 +21,8 @@ import type {
   EmitterComponent,
   EmitterSpec,
   EmitterValue,
+  FlashComponent,
+  FlashOptions,
   FloatingTextComponent,
   FloatTextOptions,
   Log,
@@ -62,6 +64,8 @@ type Resolved = {
   readonly Particle: ParticleComponent;
   /** The vfx `Pop` token. */
   readonly Pop: PopComponent;
+  /** The vfx `Flash` token. */
+  readonly Flash: FlashComponent;
   /** The vfx `FloatingText` token. */
   readonly FloatingText: FloatingTextComponent;
 };
@@ -123,8 +127,8 @@ export const createApi = (ctx: VfxApiContext): Api => {
    * ```
    */
   const resolved = (): Resolved | undefined => {
-    const { transform, Emitter, Particle, Pop, FloatingText } = ctx.state;
-    if (!transform || !Emitter || !Particle || !Pop || !FloatingText) return undefined;
+    const { transform, Emitter, Particle, Pop, Flash, FloatingText } = ctx.state;
+    if (!transform || !Emitter || !Particle || !Pop || !Flash || !FloatingText) return undefined;
     return {
       world: ctx.require(ecsPlugin),
       renderer: ctx.require(rendererPlugin),
@@ -132,6 +136,7 @@ export const createApi = (ctx: VfxApiContext): Api => {
       Emitter,
       Particle,
       Pop,
+      Flash,
       FloatingText
     };
   };
@@ -377,6 +382,46 @@ export const createApi = (ctx: VfxApiContext): Api => {
         baseScaleX: tf.scaleX,
         baseScaleY: tf.scaleY
       });
+    },
+
+    /**
+     * Hit-flash an entity's view: snap its `tint` to `color`, then ease back to
+     * the captured base tint over `duration` (restored exactly). No-op if the
+     * entity is dead. The tint is only visible when the entity has an attached
+     * view — headless / view-less entities age the effect out with no tint write.
+     * Re-calling refreshes the flash while preserving the originally-captured base.
+     *
+     * @param entity - The entity whose view to flash.
+     * @param opts - Optional flash color (default white) + duration (default 0.12).
+     * @example
+     * ```ts
+     * api.flash(enemy, { color: 0xffffff, duration: 0.12 }); // white hit flash
+     * ```
+     */
+    flash(entity: Entity, opts?: FlashOptions): void {
+      const r = resolved();
+      if (!r) return;
+      if (!r.world.isAlive(entity)) return;
+
+      const color = opts?.color ?? 0xff_ff_ff;
+      const duration = opts?.duration ?? 0.12;
+      const view = r.renderer.getEntityView(entity);
+
+      // Refresh an in-flight flash without recapturing the (mid-flash) base tint;
+      // re-snap the visible tint to the new color so the refresh shows immediately
+      // (consistent with the initial-flash snap below).
+      if (r.world.has(entity, r.Flash)) {
+        r.world.set(entity, r.Flash, { age: 0, color, duration });
+        if (view) view.tint = color;
+        return;
+      }
+
+      // Capture the view's current tint so it restores exactly (white when
+      // headless / unattached), then snap to the flash color now so a flash is
+      // visible even before the first update tick.
+      const baseTint = view?.tint ?? 0xff_ff_ff;
+      r.world.add(entity, r.Flash, { age: 0, duration, color, baseTint });
+      if (view) view.tint = color;
     },
 
     /**

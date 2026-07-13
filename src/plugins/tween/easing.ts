@@ -3,9 +3,9 @@
  *
  * Every curve maps `f(0) = 0`, `f(1) = 1` and is finite on `[0, 1]`. This is the
  * canonical curve source for every juice consumer: it is re-exposed on the public
- * API (`app.tween.easing`, `app.tween.lerp`) so `vfx`, `ui`, and a future `camera`
- * can all share one table. Ships the exact same 7 curves + `lerp` as `vfx/easing.ts`
- * so a later `vfx → tween` dedupe is a drop-in (see README Follow-ups). No
+ * API (`app.tween.easing`, `app.tween.lerp`) and `camera` reuses `app.tween.lerp`.
+ * Ships the exact same 7 curves + `lerp` as `vfx/easing.ts`; a later `vfx → tween`
+ * dedupe (via `depends` + `ctx.require`) is deferred (see README Follow-ups). No
  * dependencies — pure math only.
  */
 import type { EasingName } from "./types";

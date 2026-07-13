@@ -55,32 +55,34 @@ const runStart = () => {
 };
 
 describe("vfx onStart", () => {
-  it("captures renderer.Transform and defines the four named components", () => {
+  it("captures renderer.Transform and defines the five named components", () => {
     const { world, state, transform } = runStart();
 
     expect(state.transform).toBe(transform);
     expect(world.componentNames()).toEqual(
-      expect.arrayContaining(["Emitter", "Particle", "Pop", "FloatingText"])
+      expect.arrayContaining(["Emitter", "Particle", "Pop", "Flash", "FloatingText"])
     );
     expect(state.Emitter).toBeDefined();
     expect(state.Particle).toBeDefined();
     expect(state.Pop).toBeDefined();
+    expect(state.Flash).toBeDefined();
     expect(state.FloatingText).toBeDefined();
   });
 
-  it("registers five systems — four in update, one in render", () => {
+  it("registers six systems — five in update, one in render", () => {
     const { addSystem } = runStart();
 
-    expect(addSystem).toHaveBeenCalledTimes(5);
+    expect(addSystem).toHaveBeenCalledTimes(6);
     const stages = addSystem.mock.calls.map(call => call[0]);
-    expect(stages.filter(s => s === "update")).toHaveLength(4);
+    expect(stages.filter(s => s === "update")).toHaveLength(5);
     expect(stages.filter(s => s === "render")).toHaveLength(1);
   });
 
   it("each component's default factory yields a valid merge base", () => {
     const { world, state } = runStart();
-    const { Emitter, Particle, Pop, FloatingText } = state;
-    if (!Emitter || !Particle || !Pop || !FloatingText) throw new Error("tokens undefined");
+    const { Emitter, Particle, Pop, Flash, FloatingText } = state;
+    if (!Emitter || !Particle || !Pop || !Flash || !FloatingText)
+      throw new Error("tokens undefined");
 
     const a = world.spawn();
     world.add(a, Emitter);
@@ -98,5 +100,9 @@ describe("vfx onStart", () => {
     const d = world.spawn();
     world.add(d, FloatingText);
     expect(world.get(d, FloatingText)?.riseSpeed).toBe(40);
+
+    const e = world.spawn();
+    world.add(e, Flash);
+    expect(world.get(e, Flash)?.baseTint).toBe(0xff_ff_ff);
   });
 });

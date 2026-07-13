@@ -88,7 +88,7 @@ Per-plugin config under `pluginConfigs.tween`.
 
 ## Easing curves
 
-`app.tween.easing` is a frozen table of pure `f(t): [0,1] → [0,1]` curves: `linear`, `easeInQuad`, `easeOutQuad`, `easeInOutQuad`, `easeOutCubic`, `easeOutBack` (springy overshoot), `easeOutElastic` (wobble). Any curve beyond these is available immediately by passing a custom `(t) => number` as `easing`. This is the **same 7-curve set** `vfx` ships, by design — see Follow-ups.
+`app.tween.easing` is a frozen table of pure `f(t): [0,1] → [0,1]` curves: `linear`, `easeInQuad`, `easeOutQuad`, `easeInOutQuad`, `easeOutCubic`, `easeOutBack` (springy overshoot), `easeOutElastic` (wobble). Any curve beyond these is available immediately by passing a custom `(t) => number` as `easing`. `camera` reuses this table via `app.tween.lerp`. This is the **same 7-curve set** `vfx` ships — de-duplicating vfx onto this table is deferred (see Follow-ups).
 
 ## Events
 
@@ -113,7 +113,7 @@ The plugin touches no DOM, canvas, or Pixi API — it is pure math over plain ob
 
 ## Follow-ups (non-blocking)
 
-- **Dedupe `vfx` → `tween`** — once this ships, a `/moku:plan update plugin vfx` can add `depends: [tweenPlugin]`, delete `vfx/easing.ts`, and set `app.vfx.easing = app.tween.easing` / `app.vfx.lerp = app.tween.lerp`. The identical 7-curve set + `lerp` make this behavior-preserving.
+- **Dedupe `vfx` → `tween`** *(deferred — issue #6)* — `vfx` still ships its own identical `easing.ts`. The correct de-dup is NOT a bare `export … from "../tween/easing"` (a cross-plugin internal import that violates plugin encapsulation, spec/15 §8) but a `depends: [tweenPlugin]` + `ctx.require(tweenPlugin)` edge sourcing `easing`/`lerp` from the tween API — exactly how `camera` reuses this table. Deferred as a ~12-file refactor vs. a minor cleanup; the identical 7-curve set makes it behavior-preserving whenever it lands.
 - **Unscaled / real-time tweens** — an `unscaled?: boolean` option backed by a real-time (rAF/`performance.now`) source so menu/overlay animations run while the game loop is paused. Requires a second, resource-owning update path (hence an `onStop`) — deferred until a concrete need.
 - **Richer easing table** — the in/out variants (cubic/quart/sine/expo/bounce) if consumers ask; a custom `(t) => number` covers any gap today.
 - **`camera` plugin** — the other issue #5 §6 optional sibling; a follow/shake/parallax camera would consume `app.tween` for smooth pans.

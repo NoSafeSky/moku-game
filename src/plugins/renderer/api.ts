@@ -283,6 +283,24 @@ export const createApi = (ctx: RendererContext): Api => {
     },
 
     /**
+     * Return the Pixi view attached to an entity (via `attach`/`attachPrimitive`),
+     * or undefined when the entity has no view. Exposes the per-entity view
+     * registry so effect plugins can read/write view-local state (`tint`, `alpha`)
+     * the Transform sync does not manage.
+     *
+     * @param entity - The entity whose attached view to return.
+     * @returns The entity's Pixi Container, or undefined.
+     * @example
+     * ```ts
+     * const view = api.getEntityView(entity);
+     * if (view) view.tint = 0xff0000;
+     * ```
+     */
+    getEntityView(entity: Entity): Container | undefined {
+      return ctx.state.views.get(entity);
+    },
+
+    /**
      * Mark an entity dirty so the sync system repositions its view next tick.
      *
      * @param entity - The entity whose Transform has changed.

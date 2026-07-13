@@ -181,6 +181,24 @@ export type Api = {
    */
   getStage(): Container | undefined;
   /**
+   * Return the Pixi view (Container) currently attached to an entity, or
+   * `undefined` when the entity has no view / before start / headless.
+   *
+   * Exposes the renderer's per-entity view registry so effect plugins (e.g. vfx
+   * `flash`) can read/write view-local visual state Pixi does NOT derive from the
+   * `Transform` — notably `tint` and `alpha`. Positioning still flows through the
+   * `Transform` + sync system; this accessor is only for view-local properties.
+   *
+   * @param entity - The entity whose attached view to return.
+   * @returns The entity's Pixi `Container`, or `undefined`.
+   * @example
+   * ```ts
+   * const view = api.getEntityView(entity);
+   * if (view) view.tint = 0xff0000;
+   * ```
+   */
+  getEntityView(entity: Entity): Container | undefined;
+  /**
    * Mark an entity dirty so the sync system repositions its view on the next tick.
    *
    * @param entity - The entity whose Transform has changed.

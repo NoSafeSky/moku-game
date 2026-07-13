@@ -18,8 +18,10 @@ import { loopPlugin } from "../../../loop";
 import { rendererPlugin } from "../../../renderer";
 import { schedulerPlugin } from "../../../scheduler";
 import { storagePlugin } from "../../../storage";
+import * as adapters from "../../adapters";
 import { platformPlugin } from "../../index";
 import type { AdType, Portal } from "../../types";
+import { makeMockAdapter } from "../mock-portal";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Mock localStorage (so storage persists across app instances)
@@ -191,6 +193,58 @@ describe("platform plugin integration", () => {
       const app = await bootGameApp();
       expect(await app.platform.rewardedAd()).toBe(true);
       await app.stop();
+    });
+
+    it("commercialBreak still resumes loop + unmutes audio when the underlying ad REJECTS", async () => {
+      // Swap only the leaf adapter for a rejecting one — the real loop/audio/platform
+      // wiring stays intact, exactly the failure the `finally` block must survive.
+      const rejecting = makeMockAdapter({ reject: true });
+      const selectSpy = vi.spyOn(adapters, "selectAdapter").mockReturnValue(rejecting);
+      try {
+        const app = await bootGameApp();
+        app.loop.start();
+        app.audio.unmute();
+
+        const startSpy = vi.spyOn(app.loop, "start");
+        const unmuteSpy = vi.spyOn(app.audio, "unmute");
+
+        // The adapter's ad promise rejects, yet the break settles cleanly to the caller.
+        await expect(app.platform.commercialBreak()).resolves.toBeUndefined();
+        expect(rejecting.commercialBreak).toHaveBeenCalledTimes(1);
+
+        // …and the `finally` block resumed the loop + unmuted audio.
+        expect(startSpy).toHaveBeenCalledTimes(1);
+        expect(unmuteSpy).toHaveBeenCalledTimes(1);
+        expect(app.loop.isRunning()).toBe(true);
+        expect(app.audio.isMuted()).toBe(false);
+        await app.stop();
+      } finally {
+        selectSpy.mockRestore();
+      }
+    });
+
+    it("rewardedAd resolves false + still restores loop + audio when the ad REJECTS", async () => {
+      const rejecting = makeMockAdapter({ reject: true });
+      const selectSpy = vi.spyOn(adapters, "selectAdapter").mockReturnValue(rejecting);
+      try {
+        const app = await bootGameApp();
+        app.loop.start();
+        app.audio.unmute();
+
+        const startSpy = vi.spyOn(app.loop, "start");
+        const unmuteSpy = vi.spyOn(app.audio, "unmute");
+
+        // A rejected rewarded ad grants no reward, but must still restore the game.
+        await expect(app.platform.rewardedAd()).resolves.toBe(false);
+        expect(rejecting.rewardedAd).toHaveBeenCalledTimes(1);
+        expect(startSpy).toHaveBeenCalledTimes(1);
+        expect(unmuteSpy).toHaveBeenCalledTimes(1);
+        expect(app.loop.isRunning()).toBe(true);
+        expect(app.audio.isMuted()).toBe(false);
+        await app.stop();
+      } finally {
+        selectSpy.mockRestore();
+      }
     });
   });
 

@@ -81,13 +81,14 @@ describe("api — guarded no-ops before start", () => {
     expect(log.warn).toHaveBeenCalled();
   });
 
-  it("burst / shake / stopShake / pop / configure / enable / remove are silent no-ops", () => {
+  it("burst / shake / stopShake / pop / flash / configure / enable / remove are silent no-ops", () => {
     const { api, state } = unstartedCtx();
     expect(() => {
       api.burst(0, 0, { count: 5, speed: 10, lifetime: 1 });
       api.shake(1, 1);
       api.stopShake();
       api.pop(asEntity(1));
+      api.flash(asEntity(1));
       api.configureEmitter(asEntity(1), { rate: 5 });
       api.setEmitterEnabled(asEntity(1), false);
       api.removeEmitter(asEntity(1));
@@ -274,6 +275,73 @@ describe("api — pop", () => {
   });
 });
 
+describe("api — flash", () => {
+  it("captures the view's ACTUAL base tint, adds a Flash, and snaps the tint to the flash color", () => {
+    const { api, s, renderer } = startedCtx();
+    // Non-white base tint so the capture is genuinely proven (not the white fallback).
+    const view = { tint: 0x12_34_56 } as unknown as Container;
+    renderer.getEntityView.mockReturnValue(view);
+    const target = s.world.spawn(s.transform({ x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 }));
+
+    api.flash(target, { color: 0xff_00_00, duration: 0.2 });
+
+    expect(s.world.has(target, s.Flash)).toBe(true);
+    const flash = s.world.get(target, s.Flash);
+    expect(flash?.baseTint).toBe(0x12_34_56); // captured the view's real tint, not white
+    expect(flash?.color).toBe(0xff_00_00);
+    expect(flash?.duration).toBe(0.2);
+    expect((view as unknown as { tint: number }).tint).toBe(0xff_00_00); // snapped immediately
+  });
+
+  it("defaults to a white flash over 0.12s", () => {
+    const { api, s, renderer } = startedCtx();
+    renderer.getEntityView.mockReturnValue({ tint: 0xff_ff_ff } as unknown as Container);
+    const target = s.world.spawn(s.transform({ x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 }));
+
+    api.flash(target);
+
+    const flash = s.world.get(target, s.Flash);
+    expect(flash?.color).toBe(0xff_ff_ff);
+    expect(flash?.duration).toBeCloseTo(0.12, 6);
+  });
+
+  it("captures white as the base tint when the entity has no view (headless)", () => {
+    const { api, s } = startedCtx({ headless: true });
+    const target = s.world.spawn(s.transform({ x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 }));
+
+    expect(() => api.flash(target, { color: 0xff_00_00 })).not.toThrow();
+    expect(s.world.get(target, s.Flash)?.baseTint).toBe(0xff_ff_ff);
+  });
+
+  it("is a no-op on a dead entity", () => {
+    const { api, s } = startedCtx();
+    const dead = s.world.spawn(s.transform({ x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 }));
+    s.world.despawn(dead);
+    expect(() => api.flash(dead)).not.toThrow();
+    expect(s.world.has(dead, s.Flash)).toBe(false);
+  });
+
+  it("refreshes an in-flight flash without recapturing the (mid-flash) base tint", () => {
+    const { api, s, renderer } = startedCtx();
+    const view = { tint: 0xff_ff_ff } as unknown as Container;
+    renderer.getEntityView.mockReturnValue(view);
+    const target = s.world.spawn(s.transform({ x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 }));
+    api.flash(target, { color: 0xff_00_00, duration: 0.2 });
+
+    // Simulate the flash mid-flight (tint drifted) then re-flash.
+    (view as unknown as { tint: number }).tint = 0xab_cd_ef;
+    s.world.set(target, s.Flash, { age: 0.1 });
+    api.flash(target, { color: 0x00_ff_00, duration: 0.3 });
+
+    const flash = s.world.get(target, s.Flash);
+    expect(flash?.age).toBe(0); // refreshed
+    expect(flash?.color).toBe(0x00_ff_00); // updated
+    expect(flash?.duration).toBe(0.3); // updated
+    expect(flash?.baseTint).toBe(0xff_ff_ff); // ORIGINAL base kept, not the drifted 0xabcdef
+    expect((view as unknown as { tint: number }).tint).toBe(0x00_ff_00); // re-snapped to the new color
+  });
+});
+
 describe("api — floatText", () => {
   it("spawns an entity, builds + attaches a Text, and retains the handle", () => {
     const { api, s, renderer } = startedCtx();
@@ -317,6 +385,8 @@ describe("api — type-level contracts", () => {
       api.burst(0, 0, { count: 5 });
       // @ts-expect-error — pop options reject unknown fields.
       api.pop(e, { scale: 1.5, bogus: true });
+      // @ts-expect-error — flash options reject unknown fields.
+      api.flash(e, { color: 0xff_00_00, bogus: true });
     };
     expect(typeof contracts).toBe("function");
   });

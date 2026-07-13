@@ -126,6 +126,18 @@ export type PopValue = {
   baseScaleY: number;
 };
 
+/** Hit-flash tint juice, carried transiently by any entity `flash()` targets. */
+export type FlashValue = {
+  /** Seconds since the flash began. */
+  age: number;
+  /** Total flash duration, seconds. */
+  duration: number;
+  /** The flash (peak) color, hex int — the view snaps here and eases back to base. */
+  color: number;
+  /** Captured base tint (`view.tint` at flash start), restored exactly when the flash ends. */
+  baseTint: number;
+};
+
 /** Floating rising/fading number/text runtime (view = a Text handle in state.views). */
 export type FloatingTextValue = {
   /** Seconds since spawn. */
@@ -150,6 +162,8 @@ export type EmitterComponent = Component<EmitterValue>;
 export type ParticleComponent = Component<ParticleValue>;
 /** The `Pop` component token defined on the ECS world in onStart. */
 export type PopComponent = Component<PopValue>;
+/** The `Flash` component token defined on the ECS world in onStart. */
+export type FlashComponent = Component<FlashValue>;
 /** The `FloatingText` component token defined on the ECS world in onStart. */
 export type FloatingTextComponent = Component<FloatingTextValue>;
 /** The renderer's `Transform` component token, captured in onStart. */
@@ -177,6 +191,8 @@ export type State = {
   Particle: ParticleComponent | undefined;
   /** The `Pop` token (undefined before onStart defines it on the world). */
   Pop: PopComponent | undefined;
+  /** The `Flash` token (undefined before onStart defines it on the world). */
+  Flash: FlashComponent | undefined;
   /** The `FloatingText` token (undefined before onStart defines it on the world). */
   FloatingText: FloatingTextComponent | undefined;
   /**
@@ -294,6 +310,14 @@ export type PopOptions = {
   duration?: number;
 };
 
+/** Options for a hit-flash tint. */
+export type FlashOptions = {
+  /** Flash (peak) color, hex int (default `0xffffff` — a white hit flash). */
+  color?: number;
+  /** Flash duration, seconds (default 0.12). */
+  duration?: number;
+};
+
 /** The vfx plugin public API (exposed as `app.vfx`). */
 export type Api = {
   /**
@@ -358,6 +382,17 @@ export type Api = {
    */
   pop(entity: Entity, opts?: PopOptions): void;
   /**
+   * Hit-flash an entity's view (hit feedback): snaps the view's `tint` to `color`
+   * then eases it back to the captured base tint over `duration`, restoring it
+   * exactly. Requires the entity to be alive; the tint is only visible when the
+   * entity has an attached view (no-op tint when headless). Re-calling refreshes
+   * the flash without recapturing the (mid-flash) base tint.
+   *
+   * @param entity - The entity whose view to flash.
+   * @param opts - Optional flash color + duration.
+   */
+  flash(entity: Entity, opts?: FlashOptions): void;
+  /**
    * Spawn a rising, alpha-fading floating number/text at (x, y). Returns the
    * entity handle (despawns itself after `lifetime`).
    *
@@ -416,4 +451,6 @@ export type RendererDep = {
   markDirty(entity: Entity): void;
   /** The root stage Container, or undefined when headless / before start. */
   getStage(): Container | undefined;
+  /** The Pixi view attached to an entity, or undefined when headless / unattached (flash tint). */
+  getEntityView(entity: Entity): Container | undefined;
 };

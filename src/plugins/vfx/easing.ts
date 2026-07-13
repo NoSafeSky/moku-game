@@ -3,8 +3,10 @@
  *
  * Every curve maps `f(0) = 0`, `f(1) = 1` and is finite on `[0, 1]`. These are
  * reused by the vfx systems (particle fade, pop pulse) and re-exported on the
- * public API (`app.vfx.easing`, `app.vfx.lerp`) for consumer juice and a future
- * `tween` plugin. No dependencies — pure math only.
+ * public API (`app.vfx.easing`, `app.vfx.lerp`) for consumer juice. The `tween`
+ * plugin ships the identical table (and `camera` reuses it); de-duplicating vfx
+ * onto `tween` is deferred — it needs a `depends: [tweenPlugin]` + `ctx.require`
+ * edge, not a bare cross-plugin import. No dependencies — pure math only.
  */
 import type { EasingName } from "./types";
 

@@ -41,10 +41,10 @@ describe("vfx integration", () => {
     await app.stop();
   });
 
-  it("defines the four vfx components by name (MCP-introspectable)", async () => {
+  it("defines the five vfx components by name (MCP-introspectable)", async () => {
     const app = await bootApp();
     const names = app.ecs.componentNames();
-    for (const n of ["Emitter", "Particle", "Pop", "FloatingText"]) {
+    for (const n of ["Emitter", "Particle", "Pop", "Flash", "FloatingText"]) {
       expect(names).toContain(n);
     }
     await app.stop();
@@ -103,6 +103,43 @@ describe("vfx integration", () => {
 
     app.scheduler.tick(0.06); // past the duration → restored + Pop removed
     expect(app.ecs.get(entity, Transform)?.scaleX).toBeCloseTo(1, 6);
+    expect(app.ecs.isAlive(entity)).toBe(true);
+    await app.stop();
+  });
+
+  it("flash tints an attached view, eases it back, and removes the Flash across ticks", async () => {
+    const app = await bootApp();
+    const Transform = app.renderer.Transform as Component<{
+      x: number;
+      y: number;
+      rotation: number;
+      scaleX: number;
+      scaleY: number;
+    }>;
+    const entity = app.ecs.spawn(Transform({ x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 }));
+
+    // Headless builds no real Pixi view — attach a minimal sync-safe tintable stand-in.
+    const view = {
+      tint: 0xff_ff_ff,
+      rotation: 0,
+      position: { set: () => {} },
+      scale: { set: () => {} },
+      destroy: () => {}
+    } as unknown as Parameters<typeof app.renderer.attach>[1];
+    app.renderer.attach(entity, view);
+    const tint = () => (view as unknown as { tint: number }).tint;
+
+    app.vfx.flash(entity, { color: 0xff_00_00, duration: 0.1 });
+    expect(tint()).toBe(0xff_00_00); // snapped to the flash color immediately
+    expect(countByName(app, "Flash")).toBe(1);
+
+    app.scheduler.tick(0.05); // mid-flash → eased between red and white
+    expect(tint()).not.toBe(0xff_00_00);
+    expect(tint()).not.toBe(0xff_ff_ff);
+
+    app.scheduler.tick(0.06); // past the duration → base tint restored + Flash removed
+    expect(tint()).toBe(0xff_ff_ff);
+    expect(countByName(app, "Flash")).toBe(0);
     expect(app.ecs.isAlive(entity)).toBe(true);
     await app.stop();
   });

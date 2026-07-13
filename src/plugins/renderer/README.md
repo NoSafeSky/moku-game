@@ -54,6 +54,15 @@ document.body.appendChild(app.renderer.getView()!);
 
 Returns the root Pixi stage `Container`, or `undefined` before start. For advanced consumers and the `scene` plugin that need to add children directly to the stage.
 
+### `getEntityView(entity): Container | undefined`
+
+Returns the Pixi view attached to an entity (via `attach`/`attachPrimitive`), or `undefined` when the entity has no view / before start / headless. Exposes the per-entity view registry so effect plugins can read/write **view-local** visual state the `Transform` sync does not manage — notably `tint` and `alpha`. Positioning still flows through `Transform` + the sync system; this accessor is only for view-local properties (e.g. the `vfx` plugin's `flash` reads it to write `view.tint`).
+
+```ts
+const view = app.renderer.getEntityView(entity);
+if (view) view.tint = 0xff0000;
+```
+
 ### `markDirty(entity): void`
 
 Marks an entity dirty so the next `sync` tick repositions its view. Called by gameplay/scene code after writing a new `Transform` value.

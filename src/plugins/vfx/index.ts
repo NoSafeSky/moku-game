@@ -2,8 +2,9 @@
  * vfx plugin — Complex tier.
  *
  * ECS-native particles (Emitter/Particle entities driven by scheduler systems),
- * trauma-based screen shake, Transform scale-pop, floating damage/score text, and
- * pure easing helpers. Emits no events (per-frame hot path). Headless-safe.
+ * trauma-based screen shake, Transform scale-pop, hit-flash tint, floating
+ * damage/score text, and pure easing helpers. Emits no events (per-frame hot path).
+ * Headless-safe.
  * Depends on ecs, scheduler, renderer. No new package dependencies (Pixi via
  * renderer).
  *

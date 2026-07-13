@@ -153,6 +153,26 @@ describe("createApi", () => {
     });
   });
 
+  describe("getEntityView", () => {
+    it("returns the view attached to an entity", () => {
+      const ctx = createMockCtx();
+      const api = createApi(ctx);
+      const entity = makeEntity(11);
+      const view = makeContainer() as unknown as Container;
+
+      api.attach(entity, view);
+
+      expect(api.getEntityView(entity)).toBe(view);
+    });
+
+    it("returns undefined for an entity with no view", () => {
+      const ctx = createMockCtx();
+      const api = createApi(ctx);
+
+      expect(api.getEntityView(makeEntity(12))).toBeUndefined();
+    });
+  });
+
   describe("detach", () => {
     it("disposes and removes the view", () => {
       const ctx = createMockCtx();

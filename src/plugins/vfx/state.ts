@@ -31,6 +31,7 @@ export const createState = (_ctx: {
   Emitter: undefined,
   Particle: undefined,
   Pop: undefined,
+  Flash: undefined,
   FloatingText: undefined,
   views: new Map(),
   trauma: 0,

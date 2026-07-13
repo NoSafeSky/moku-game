@@ -1,8 +1,8 @@
 # vfx
 
-> Complex plugin — the **game-juice / visual-feedback** layer: **ECS-native particle emitters**, **trauma-based screen shake**, **Transform scale-pop**, **floating damage/score text**, and a set of **pure easing helpers**. Every effect runs as a scheduler system over ordinary ECS entities. Emits **no** events (per-frame hot path). **Headless-safe**. Depends on `ecs`, `scheduler`, and `renderer`. **No new package dependency** (Pixi comes in via `renderer`).
+> Complex plugin — the **game-juice / visual-feedback** layer: **ECS-native particle emitters**, **trauma-based screen shake**, **Transform scale-pop**, **hit-flash tint**, **floating damage/score text**, and a set of **pure easing helpers**. Every effect runs as a scheduler system over ordinary ECS entities. Emits **no** events (per-frame hot path). **Headless-safe**. Depends on `ecs`, `scheduler`, and `renderer`. **No new package dependency** (Pixi comes in via `renderer`).
 
-The `vfx` plugin adds the "juice" that makes hits, pickups, and score changes *feel* good. It is a pure **API that your own game code calls** — `app.vfx.burst()` / `shake()` / `pop()` / `floatText()` from your collision and scoring systems — so vfx never couples to any specific gameplay event. Because effects are modelled as ECS entities driven by systems (not a third-party emitter running outside the world), every particle and emitter is queryable through `world.query(...)` and introspectable by name through the `mcp` plugin out of the box.
+The `vfx` plugin adds the "juice" that makes hits, pickups, and score changes *feel* good. It is a pure **API that your own game code calls** — `app.vfx.burst()` / `shake()` / `pop()` / `flash()` / `floatText()` from your collision and scoring systems — so vfx never couples to any specific gameplay event. Because effects are modelled as ECS entities driven by systems (not a third-party emitter running outside the world), every particle and emitter is queryable through `world.query(...)` and introspectable by name through the `mcp` plugin out of the box.
 
 ## ECS-native particles (no `@pixi/particle-emitter`)
 
@@ -14,6 +14,7 @@ Particles **fade by scaling out** (`startScale → endScale ≈ 0`) rather than 
 // In a collision system, on an enemy hit:
 app.vfx.burst(hit.x, hit.y, { count: 16, speed: 220, lifetime: 0.5, color: 0xffcc00, radius: 3 });
 app.vfx.pop(enemy, { scale: 1.4, duration: 0.12 });   // squash-pop the sprite
+app.vfx.flash(enemy, { color: 0xffffff, duration: 0.12 }); // white hit-flash the sprite
 app.vfx.floatText(hit.x, hit.y - 20, "+50", { color: 0xffffff });
 app.vfx.shake(0.5, 0.3);                               // punchy screen shake
 
@@ -28,6 +29,7 @@ app.ecs.set(trail, app.renderer.Transform, { x: player.x, y: player.y }); // mov
 - **Burst** — one-shot `burst(x, y, spec)` for hit sparks, explosions, and pickups. No persistent entity is retained; particles default to a full-circle spread.
 - **Screen shake** — trauma-based. `shake(amplitude, duration)` banks trauma (0..1); the render-stage system offsets the Pixi stage root by `trauma² · shakeMaxOffset` in a random direction and decays trauma by `shakeDecay` each second, snapping back to (0, 0) at rest. `stopShake()` clears it immediately.
 - **Pop** — `pop(entity, { scale, duration })` gives any entity's Transform a squash-and-return scale pulse (a smooth base → apex → base curve). It captures and restores the entity's **exact** base scale, and re-calling refreshes the pop without recapturing a mid-pop scale.
+- **Hit-flash** — `flash(entity, { color, duration })` tints the entity's view to `color` (default white) then eases it back to the captured base tint over `duration` (default 0.12 s), restoring it **exactly**; re-calling refreshes without recapturing a mid-flash tint. It reads the entity's view via the renderer's `getEntityView` and writes `view.tint` directly (tint is a view-local property, not a Transform channel). Headless / view-less entities age the effect out with no tint write.
 - **Floating text** — `floatText(x, y, text, opts)` spawns a rising, alpha-fading `Text` (e.g. `"+50"` damage numbers). vfx retains this one handle to fade its alpha each frame (the renderer's sync system positions it but never touches alpha); it despawns itself at end of life.
 - **Easing** — `app.vfx.easing` is a frozen table of pure `f(t): [0,1]→[0,1]` curves (`linear`, `easeInQuad`, `easeOutQuad`, `easeInOutQuad`, `easeOutCubic`, `easeOutBack`, `easeOutElastic`) plus `app.vfx.lerp`. Reused internally and exported for your own juice (and a future `tween` plugin).
 
@@ -63,6 +65,10 @@ Add screen-shake trauma (`amplitude` sets minimum intensity; `duration` banks en
 
 Scale-pop an entity's Transform to `opts.scale`× (default 1.3) over `opts.duration` (default 0.15 s) and back. No-op without a Transform.
 
+### `flash(entity, opts?)`
+
+Hit-flash an entity's view: snap its `tint` to `opts.color` (default white) then ease it back to the captured base tint over `opts.duration` (default 0.12 s), restored exactly. Requires the entity to be alive; the tint is only visible when the entity has an attached view (headless → the effect ages out with no tint write). Re-calling refreshes the flash while preserving the originally-captured base tint.
+
 ### `floatText(x, y, text, opts?): Entity`
 
 Spawn a rising, alpha-fading floating number/text. Returns its entity handle.
@@ -88,7 +94,7 @@ Per-plugin config under `pluginConfigs.vfx`.
 
 ## Lifecycle
 
-`onStart` is justified as **deps-ready wiring** (the renderer's own onStart shape — not a per-frame or resource-owning path): after `ecs`/`scheduler`/`renderer` have started, it (1) captures `renderer.Transform` (reading it earlier throws), (2) defines the four named components (`Emitter`/`Particle`/`Pop`/`FloatingText`) so they exist before any spawn and are MCP-introspectable by name, and (3) registers the five effect systems (emit/particle/pop/floating in `"update"`, shake in `"render"`).
+`onStart` is justified as **deps-ready wiring** (the renderer's own onStart shape — not a per-frame or resource-owning path): after `ecs`/`scheduler`/`renderer` have started, it (1) captures `renderer.Transform` (reading it earlier throws), (2) defines the five named components (`Emitter`/`Particle`/`Pop`/`Flash`/`FloatingText`) so they exist before any spawn and are MCP-introspectable by name, and (3) registers the six effect systems (emit/particle/pop/flash/floating in `"update"`, shake in `"render"`).
 
 There is **no `onStop`**: vfx owns no external OS/GPU resource of its own. Every view it builds is registered with the renderer — particle `Graphics` via `attachPrimitive`, floating-text `Text` via `attach` — so the renderer disposes them (its `onStop` destroys all managed views, and its per-tick despawn reconciliation destroys a view when its entity dies). vfx's own state (the `Text` handle map, `trauma`, `particleCount`) is plain GC-able data.
 
@@ -99,14 +105,14 @@ Every system is registered and runs identically headless; entities simulate with
 ## Design Notes
 
 - **ECS-native over `@pixi/particle-emitter`** — a third-party emitter adds a runtime dependency and a second particle lifecycle *outside* the world (invisible to `world.query`, MCP introspection, and scene-unload reconciliation). vfx instead owns a small emit/integrate/despawn system set and reuses the renderer's draw path — deps-light and fully queryable.
-- **Easing here, `tween` deferred** — vfx ships the pure easing curves + `lerp` it needs and exports them, but **not** a general property-tween scheduler. When a title needs generic tweening, extract `easing.ts` into a `tween` plugin that vfx, `ui`, and a future `camera` can depend on.
+- **Easing here (`tween` dedupe deferred)** — vfx ships the pure easing curves + `lerp` it needs and exports them (`app.vfx.easing`/`app.vfx.lerp`), but **not** a general property-tween scheduler — that is `tween`'s job. The `tween` plugin ships the identical 7-curve table (and `camera` reuses it); de-duplicating vfx onto `tween` is **deferred** — the correct form is a `depends: [tweenPlugin]` + `ctx.require` edge (as `camera` does), not a bare cross-plugin import.
 - **Particle owner reference** — `ParticleValue` carries an `emitter` handle (the sentinel dead handle for burst particles). This is what lets `removeEmitter` despawn an emitter together with only *its* particles without a separate ownership map.
 
 ## Dependencies
 
 - **`ecs`** — `defineComponent` (the four named components), `spawn`/`despawn`, `query(...).updateEach`, `add`/`remove`/`get`/`set`/`has`/`isAlive`. Structural ops inside systems route through the command buffer.
-- **`scheduler`** — `addSystem(stage, system)` to register the emit/particle/pop/floating systems (`"update"`) and the shake system (`"render"`); `dt` arrives via the `(world, dt)` system signature.
-- **`renderer`** — the `Transform` token (captured in onStart); `attachPrimitive` (particle `Graphics`, renderer-owned); `attach` + `getStage` (floating-text `Text` handles vfx retains to fade alpha); `markDirty` (repaint after a Transform write).
+- **`scheduler`** — `addSystem(stage, system)` to register the emit/particle/pop/flash/floating systems (`"update"`) and the shake system (`"render"`); `dt` arrives via the `(world, dt)` system signature.
+- **`renderer`** — the `Transform` token (captured in onStart); `attachPrimitive` (particle `Graphics`, renderer-owned); `attach` + `getStage` (floating-text `Text` handles vfx retains to fade alpha); `markDirty` (repaint after a Transform write); `getEntityView` (read an entity's view to write `tint` for `flash`).
 - **Not `loop` / not `audio`** — vfx never calls the loop (dt flows through the system signature; the loop already drives `scheduler.tick`) and does not cross-wire audio (a title composes them at the app layer).
 - **Core `ctx.log`** (Layer 1) — the once-per-over-budget-frame particle-cap notice. No raw `console.*`.
 - **No package dependency** — Pixi `Graphics`/`Text` come from `pixi.js`, already a direct dependency via `renderer`; Pixi imports are confined to vfx's domain files.

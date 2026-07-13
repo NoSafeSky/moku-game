@@ -16,6 +16,7 @@ describe("createState", () => {
     expect(state.Emitter).toBeUndefined();
     expect(state.Particle).toBeUndefined();
     expect(state.Pop).toBeUndefined();
+    expect(state.Flash).toBeUndefined();
     expect(state.FloatingText).toBeUndefined();
     expect(state.trauma).toBe(0);
     expect(state.particleCount).toBe(0);
