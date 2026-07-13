@@ -2,7 +2,7 @@
 
 > An ECS game framework for Moku — Spark-style public API and memory layout, PixiJS v8 rendering, built on @moku-labs/core, composable with @moku-labs/web, with a first-class MCP plugin exposing the live runtime to agent clients.
 
-`game` is a typed Entity-Component-System runtime composed of fifteen plugins. It is unpublished
+`game` is a typed Entity-Component-System runtime composed of sixteen plugins. It is unpublished
 (version 0.0.0) and not a game engine UI or editor — it owns the data model (archetype object-SoA
 storage), the fixed-timestep frame, and the GPU lifecycle; you write components and systems in
 TypeScript. Hot-path frame work bypasses the Moku kernel for performance and is NOT emitted as
@@ -366,6 +366,31 @@ lerp(a, b, t): number                           // linear interpolation a + (b �
 // Config: defaultDuration (@default 0.3), defaultEasing (@default "easeOutCubic"), updateStage (@default "update"), maxActive (@default 2048).
 ```
 
+### app.camera (Standard) — 2D follow/shake/parallax camera (consumes app.tween; zero new deps)
+
+```ts
+world: Container | undefined                    // the default world layer (parallax factor 1); undefined headless — add world content here
+addLayer(name: string, factor: number): Container | undefined // create/return a named parallax layer (idempotent by name; factor NOT overwritten); undefined headless
+layer(name: string): Container | undefined      // look up a previously-added layer container
+follow(target?: { x: number; y: number }): void // continuously ease the centre toward a LIVE { x, y } each frame (a Container / entity Transform value / bare point); no arg clears
+setPosition(x, y): void                         // snap the centre immediately (clears follow)
+moveTo(x, y, opts?: MoveOptions): TweenHandle   // animated pan via app.tween (clears follow); returns the tween handle
+getPosition(): Point                            // the current centre (a fresh copy — never the mutable state object)
+setZoom(zoom): void                             // set zoom immediately, clamped to [minZoom, maxZoom]
+zoomTo(zoom, opts?: MoveOptions): TweenHandle   // animated zoom via app.tween (final value clamped)
+getZoom(): number
+setRotation(radians): void                      // set rotation immediately
+rotateTo(radians, opts?: MoveOptions): TweenHandle // animated rotate via app.tween
+getRotation(): number
+shake(intensity, duration, opts?: ShakeOptions): void // additive screen shake decaying to 0 over duration s via app.tween; replaces any in-flight shake
+screenToWorld(point: Point): Point              // map a screen point to world space (picking); pure, works before start
+worldToScreen(point: Point): Point              // map a world point to screen space (place UI over a world object); pure
+// MoveOptions = Pick<TweenOptions, "duration"|"easing"|"delay"|"onComplete"|"onUpdate"> (NO repeat/yoyo — a repeating pan is nonsensical). ShakeOptions = { easing? } (decay curve, @default "linear").
+// Transforms world-space LAYER containers it OWNS (world at stage index 0 via addChildAt, below the ui overlay), NEVER the root stage — so the HUD stays screen-fixed and parallax works (one plane per layer). Limitation: renderer.attachPrimitive self-parents to the stage root → NOT camera-transformed; the camera path is renderer.attach + camera.world/a layer.
+// One "sync"-stage system eases centre→target (via app.tween.lerp), writes each layer's pivot/position/scale/rotation, and adds the shake offset. moveTo/zoomTo/rotateTo/shake + follow-lerp all delegate to app.tween → pause-safe for free (rides scheduler.tick; NO platform/loop edge). Depends on renderer + scheduler + tween (all real edges); NOT ecs (structural {x,y} target) / NOT loop. onStart-only (@no-resource-check); NO onStop (containers parented under the renderer-owned stage; no external resource). Emits NO events. Headless-safe (numeric state + screen↔world still track).
+// Config: zoom (@default 1), minZoom (@default 0.1), maxZoom (@default 10), followLerp (@default 0.15), width (@default 800), height (@default 600), updateStage (@default "sync"). width/height = reference viewport (the renderer exposes no canvas dims via API — the ui-plugin precedent).
+```
+
 ## Events
 
 The catalog is intentionally tiny — per-frame work is on the hot path, off the event bus.
@@ -397,7 +422,7 @@ systems via `GameContext.emit`, but owns no events of its own.
 game/
 ├── src/
 │   ├── config.ts            # Layer 1: createCoreConfig, Config = {}, Events, createPlugin/createCore
-│   ├── index.ts             # Layer 2: createCore assembles the 15 plugins; exports createApp/createPlugin (+ createCore/createCoreConfig for advanced/headless assembly)
+│   ├── index.ts             # Layer 2: createCore assembles the 16 plugins; exports createApp/createPlugin (+ createCore/createCoreConfig for advanced/headless assembly)
 │   └── plugins/
 │       ├── index.ts         # plugin barrel (instances + type namespaces)
 │       ├── ecs/             # data/runtime core + introspection + resource registry (world.ts, types.ts, README.md, __tests__/)
@@ -414,7 +439,8 @@ game/
 │       ├── platform/        # portal-SDK adapter layer (api.ts, lifecycle.ts, prefs.ts, adapters/{crazygames,poki,newgrounds,noop})
 │       ├── vfx/             # game-juice / visual-feedback layer (api.ts, lifecycle.ts, easing.ts, views.ts, state.ts, systems/{emit,particles,shake,pop,floating})
 │       ├── ui/              # PixiJS-native UI: screen stack + widgets + HUD + pointer hit-testing (widgets.ts, system.ts, api.ts, lifecycle.ts, state.ts)
-│       └── tween/           # shared ECS-agnostic tweening advanced by one scheduler system (api.ts, advance.ts, easing.ts, state.ts)
+│       ├── tween/           # shared ECS-agnostic tweening advanced by one scheduler system (api.ts, advance.ts, easing.ts, state.ts)
+│       └── camera/          # 2D follow/shake/parallax camera over world-space layer containers; delegates animated moves + follow-lerp to app.tween (api.ts, apply.ts, transform.ts, state.ts)
 ├── tests/                   # framework-level unit + integration tests
 ├── .planning/specs/         # design specs (intent)
 ├── README.md
@@ -530,6 +556,20 @@ Built/resolved in dependency order. (depends → resolved with `ctx.require`.)
   `TweenHandle`, `Easing`, `EasingName`, `NumericProperties` | config: `defaultDuration`/`defaultEasing`/
   `updateStage`/`maxActive` | events: none | onStart-only (no onStop) | depends: scheduler only
   (registered after ui, before mcp).
+- **camera** — a 2D game camera. `follow(target?)` continuously eases the centre toward a LIVE `{ x, y }`
+  (a Container / entity Transform value / bare point — no `ecs` edge); instant `setPosition`/`setZoom`/
+  `setRotation` and animated `moveTo`/`zoomTo`/`rotateTo` (delegate to `app.tween`, return a `TweenHandle`);
+  decaying `shake(intensity, duration)` (drives magnitude→0 via `app.tween.value`); parallax via
+  `world`/`addLayer(name, factor)`/`layer(name)`; and `screenToWorld`/`worldToScreen` mapping. Transforms
+  world-space LAYER containers it OWNS (world at stage index 0, below the ui overlay), NEVER the root stage
+  — so the HUD stays screen-fixed and parallax works. One `"sync"`-stage system eases centre→target (via
+  `app.tween.lerp`) and writes each layer's pivot/position/scale/rotation + shake offset. Pause-safe (rides
+  `scheduler.tick`) and headless-safe (numeric state + screen↔world still track). | Standard |
+  `follow`/`setPosition`/`moveTo`/`getPosition`/`setZoom`/`zoomTo`/`getZoom`/`setRotation`/`rotateTo`/
+  `getRotation`/`shake`/`world`/`addLayer`/`layer`/`screenToWorld`/`worldToScreen` | new types: `Layer`,
+  `FollowTarget`, `Point`, `MoveOptions`, `ShakeOptions` | config: `zoom`/`minZoom`/`maxZoom`/`followLerp`/
+  `width`/`height`/`updateStage` | events: none | onStart-only (no onStop) | depends: renderer + scheduler
+  + tween (registered after tween, before mcp).
 
 ## Requirements
 

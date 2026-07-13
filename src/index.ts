@@ -6,6 +6,7 @@ import { coreConfig, createCore } from "./config";
 import {
   assetsPlugin,
   audioPlugin,
+  cameraPlugin,
   contextPlugin,
   ecsPlugin,
   inputPlugin,
@@ -37,6 +38,7 @@ const framework = createCore(coreConfig, {
     vfxPlugin,
     uiPlugin,
     tweenPlugin,
+    cameraPlugin,
     mcpPlugin
   ],
   // Framework default plugin configuration. Consumers override via createApp({ pluginConfigs }).

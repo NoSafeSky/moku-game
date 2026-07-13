@@ -7,6 +7,7 @@
 // ─── Plugin Instances ────────────────────────────────────────
 export { assetsPlugin } from "./assets";
 export { audioPlugin } from "./audio";
+export { cameraPlugin } from "./camera";
 export { contextPlugin } from "./context";
 export { ecsPlugin } from "./ecs";
 export { inputPlugin } from "./input";
@@ -24,6 +25,7 @@ export { vfxPlugin } from "./vfx";
 // ─── Plugin Types (namespace re-exports) ─────────────────────
 export * as Assets from "./assets/types";
 export * as Audio from "./audio/types";
+export * as Camera from "./camera/types";
 export * as Context from "./context/types";
 export * as Ecs from "./ecs/types";
 export * as Input from "./input/types";

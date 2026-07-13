@@ -157,12 +157,14 @@ platform       (depends: audio, loop, storage — Wave 2; registered after them,
 vfx            (depends: ecs, scheduler, renderer — Wave 3; registered after platform, before mcp)
 ui             (depends: renderer, scheduler, input — leaf; registered after vfx, before mcp)
 tween          (depends: scheduler — leaf; registered after ui, before mcp)
+camera         (depends: renderer, scheduler, tween — leaf; registered after tween, before mcp)
 ```
 
 Build/resolve order: ecs → scheduler → renderer + input → loop + assets → context → scene → audio →
-storage → platform → vfx → ui → tween → mcp (the dependency-free `audio` + `storage`, then `platform` which depends
+storage → platform → vfx → ui → tween → camera → mcp (the dependency-free `audio` + `storage`, then `platform` which depends
 on `audio` + `loop` + `storage`, then `vfx` on `ecs` + `scheduler` + `renderer`, then `ui` on `renderer` +
-`scheduler` + `input`, then `tween` on `scheduler` only, all registered before `mcp` so `mcp` stays last).
+`scheduler` + `input`, then `tween` on `scheduler` only, then `camera` on `renderer` + `scheduler` + `tween`,
+all registered before `mcp` so `mcp` stays last).
 Each plugin declares `depends: [...]` and resolves the API at runtime with `ctx.require(...)`.
 There are no dependency cycles. `loop` depends on `ecs` (to publish the `Time` resource), the
 `context` plugin depends on `ecs` + `assets`, and `mcp` depends on its seven build-dependency plugins (its
@@ -1703,7 +1705,91 @@ re-entrant `onComplete` that creates a new tween does not advance it the same fr
 coerced to a tiny epsilon so it resolves to the end on the first tick.
 
 --------------------------------------------------------------------------------
-## 19. End-to-end example (scene → spawn → resources → loop → MCP)
+
+## 19. camera — 2D follow/shake/parallax camera (Standard)
+--------------------------------------------------------------------------------
+
+The missing "where the viewport looks" layer, and the first real **consumer of `app.tween`**. A 2D game
+camera that `follow`s a moving target with per-frame exponential smoothing, pans/zooms/rotates instantly
+or animated over time (the animated forms delegate to `app.tween`, so they are pause-safe for free),
+applies a decaying **screen shake** (also `app.tween`-driven), renders **parallax** across world-space
+**layer containers it owns**, and maps points between screen and world space. Depends on `renderer` +
+`scheduler` + `tween`. Emits no events. Headless-safe and pause-safe. No new package dependency.
+
+**Design calls:** (1) **Transforms world-space LAYER containers it OWNS, NOT the renderer root stage** —
+a default `world` `Container` parented at stage index 0 (`stage.addChildAt(world, 0)`, below the ui
+overlay) plus optional parallax layers via `addLayer(name, factor)`. Transforming the root stage would
+drag the HUD along with the world and makes parallax impossible (one stage = one plane); the world-vs-screen
+split is the idiomatic Pixi camera. Composes with the renderer's `"sync"` system: the parent (a camera
+layer) carries the *camera* transform, the child view carries its *entity* `Transform` — they multiply
+correctly. *Limitation:* `renderer.attachPrimitive` self-parents to the stage root → NOT camera-transformed;
+the camera path is `renderer.attach` + `camera.world`/a layer. (2) **The follow target is a structural
+`{ x, y }` read each frame → NO `ecs` dependency** — a Pixi `Container`, an entity `Transform` value, and a
+bare point all satisfy it; smoothing reuses `app.tween.lerp` (the single canonical `lerp`). `follow()` with
+no arg clears (uses `undefined` throughout — no `unicorn/no-null` override). (3) **`moveTo`/`zoomTo`/
+`rotateTo`/`shake` consume `app.tween`** (the reason for the tween edge) → smooth, pause-safe camera work
+for free; instant setters bypass tween; `moveTo` clears follow; `shake` replaces any in-flight shake.
+(4) **Apply system in `"sync"`** (after physics writes the target, before render); **headless-safe** — no
+stage → layers `undefined`, container writes are guarded no-ops, but numeric state (centre/zoom/rotation)
+and `screenToWorld`/`worldToScreen` still track. (5) **onStart-only** (`@no-resource-check` deps-ready
+wiring in `lifecycle.ts`: capture renderer/scheduler/tween, seed zoom, build the world `Container`, register
+the apply system, flip `started`); **NO onStop** — every `Container` is parented under the renderer-owned
+stage (the renderer disposes the subtree), the system owns no external resource, and `state.tween` is a
+captured reference.
+
+Public API (`app.camera`):
+
+```ts
+readonly world: Container | undefined;             // the default world layer (factor 1); undefined headless
+addLayer(name: string, factor: number): Container | undefined; // create/return a named parallax layer (idempotent by name; factor NOT overwritten); undefined headless
+layer(name: string): Container | undefined;        // look up a previously-added layer container
+follow(target?: { readonly x: number; readonly y: number }): void; // ease the centre toward a LIVE { x, y } each frame; no arg clears
+setPosition(x: number, y: number): void;           // snap the centre immediately (clears follow)
+moveTo(x: number, y: number, opts?: MoveOptions): TweenHandle;  // animated pan via app.tween (clears follow)
+getPosition(): Point;                              // the current centre (a fresh copy — never the mutable state object)
+setZoom(zoom: number): void;                       // set zoom immediately, clamped to [minZoom, maxZoom]
+zoomTo(zoom: number, opts?: MoveOptions): TweenHandle;          // animated zoom via app.tween (final value clamped)
+getZoom(): number;
+setRotation(radians: number): void;                // set rotation immediately
+rotateTo(radians: number, opts?: MoveOptions): TweenHandle;     // animated rotate via app.tween
+getRotation(): number;
+shake(intensity: number, duration: number, opts?: ShakeOptions): void; // additive screen shake decaying to 0 over duration s via app.tween; replaces any in-flight shake
+screenToWorld(point: Point): Point;                // map a screen point to world space (picking); pure, works before start
+worldToScreen(point: Point): Point;                // map a world point to screen space (place UI over a world object); pure
+
+// MoveOptions = Pick<TweenOptions, "duration" | "easing" | "delay" | "onComplete" | "onUpdate">  (NO repeat/yoyo)
+// ShakeOptions = { easing?: Easing }  (the intensity → 0 decay curve, @default "linear")
+// Point = { x: number; y: number }  ·  FollowTarget = { readonly x: number; readonly y: number }
+// Layer = { readonly container: Container; factor: number }  (0 = static … 1 = world … >1 = foreground)
+```
+
+```ts
+// Put world content under the camera; the HUD stays screen-fixed on the stage root.
+app.camera.world?.addChild(playerSprite);
+const far = app.camera.addLayer("far", 0.3);       // slow-scrolling background (parallax)
+app.camera.follow(playerSprite);                   // follow any live { x, y }
+await app.camera.moveTo(640, 360, { duration: 0.6, easing: "easeOutCubic" }).done;
+app.camera.shake(16, 0.4);                          // hit impact — decays via app.tween
+const screen = app.camera.worldToScreen({ x: enemy.x, y: enemy.y }); // place a marker over a world object
+```
+
+**Config** (`pluginConfigs.camera`): `zoom` (@default 1), `minZoom` (@default 0.1), `maxZoom` (@default 10),
+`followLerp` (@default 0.15 — per-fixed-step smoothing in `[0,1]`; 1 = snap), `width` (@default 800),
+`height` (@default 600), `updateStage` (@default `"sync"`). `width`/`height` are a **reference viewport**
+(the renderer exposes no canvas dims via its API — the ui-plugin precedent) used for centering and the
+screen↔world math.
+
+**Apply semantics:** the `"sync"`-stage system, each frame, (1) eases the centre toward the follow target
+via `app.tween.lerp` (frame-rate-stable under the fixed timestep), (2) computes one random shake offset
+vector scaled by the current `shakeIntensity` (injectable `random` for deterministic tests), (3) returns
+early when headless (numeric state already updated), else (4) writes each layer `{ container, factor }`:
+`scale.set(zoom)`, `rotation`, `pivot.set(center*factor)`, `position.set(width/2 + offX, height/2 + offY)`
+— so factor 1 centres `center` at the viewport centre and factor < 1 scrolls slower (parallax). The camera
+advances via its **tweens** (stepped by the tween plugin's own `"update"` system), so a paused loop freezes
+all camera motion for free.
+
+--------------------------------------------------------------------------------
+## 20. End-to-end example (scene → spawn → resources → loop → MCP)
 --------------------------------------------------------------------------------
 
 ```ts
@@ -1786,7 +1872,7 @@ const reinit = createPlugin("reinit", {
 ```
 
 --------------------------------------------------------------------------------
-## 20. Extension patterns
+## 21. Extension patterns
 --------------------------------------------------------------------------------
 
 - **Add a gameplay plugin:** `createPlugin("name", { depends: [ecsPlugin, schedulerPlugin], api, lifecycle })`.
@@ -1808,7 +1894,7 @@ const reinit = createPlugin("reinit", {
   snapshot.
 
 --------------------------------------------------------------------------------
-## 21. Error handling & gotchas
+## 22. Error handling & gotchas
 --------------------------------------------------------------------------------
 
 - `createApp(...)` is synchronous; `app.start()` / `app.stop()` are async and must be awaited.
@@ -1846,7 +1932,7 @@ const reinit = createPlugin("reinit", {
   boundaries; outside iteration they apply immediately. Resource ops are always immediate.
 
 --------------------------------------------------------------------------------
-## 22. Scripts, requirements, layout
+## 23. Scripts, requirements, layout
 --------------------------------------------------------------------------------
 
 Scripts (package.json, run with `bun`):
@@ -1871,7 +1957,7 @@ Layout:
 
 ```
 src/config.ts              # Layer 1 — createCoreConfig, Config = {}, Events, createPlugin/createCore
-src/index.ts               # Layer 2 — createCore(15 plugins); exports createApp/createPlugin (+ createCore/createCoreConfig)
+src/index.ts               # Layer 2 — createCore(16 plugins); exports createApp/createPlugin (+ createCore/createCoreConfig)
 src/plugins/index.ts       # plugin barrel (instances + Ecs/Scheduler/Context/... type namespaces)
 src/plugins/<name>/        # api.ts, types.ts, index.ts, lifecycle.ts / resources.ts / primitives.ts (where applicable), README.md, __tests__/
 tests/                     # framework-level unit + integration tests
