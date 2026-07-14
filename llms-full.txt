@@ -158,13 +158,25 @@ vfx            (depends: ecs, scheduler, renderer — Wave 3; registered after p
 ui             (depends: renderer, scheduler, input — leaf; registered after vfx, before mcp)
 tween          (depends: scheduler — leaf; registered after ui, before mcp)
 camera         (depends: renderer, scheduler, tween — leaf; registered after tween, before mcp)
+
+# Editor subsystem (Layer-2, additive — plugins #17–#24, registered AFTER mcp; all edges point backwards)
+commands          (depends: ecs — the single write-authority; owns the branded EditorId)
+reflection        (depends: ecs — field-schema registry)
+serialization     (depends: ecs, storage, commands, reflection — scene (de)serializer)
+editor-selection  (depends: ecs, renderer, camera, input — viewport picking + selection)
+editor-history    (depends: commands — undo/redo)
+editor-gizmos     (depends: renderer, camera, editor-selection, commands — translate gizmo)
+editor-runtime    (depends: loop, scheduler, serialization, commands, tween, vfx, camera — edit/play FSM)
+editor-bridge     (depends: ecs, reflection, commands, editor-selection, editor-gizmos, editor-history, editor-runtime, serialization, mcp — the terminal facade; registered LAST)
 ```
 
 Build/resolve order: ecs → scheduler → renderer + input → loop + assets → context → scene → audio →
-storage → platform → vfx → ui → tween → camera → mcp (the dependency-free `audio` + `storage`, then `platform` which depends
+storage → platform → vfx → ui → tween → camera → mcp → commands + reflection → serialization + editor-selection
+→ editor-history + editor-gizmos + editor-runtime → editor-bridge (the dependency-free `audio` + `storage`, then `platform` which depends
 on `audio` + `loop` + `storage`, then `vfx` on `ecs` + `scheduler` + `renderer`, then `ui` on `renderer` +
 `scheduler` + `input`, then `tween` on `scheduler` only, then `camera` on `renderer` + `scheduler` + `tween`,
-all registered before `mcp` so `mcp` stays last).
+all registered before `mcp`; then the additive **Layer-2 editor subsystem** #17–#24 after `mcp`, `editor-bridge` last).
+The editor subsystem is supported by additive **extension deltas** on already-built plugins: `ecs` gains `changeEpoch()` (per-write counter) + `setActiveStages`/`activeStages` (stage gate); `scheduler` forwards `setActiveStages`/`activeStages`; `assets` gains `entries()`/`manifest()`/`metadata()`; `tween`/`vfx`/`camera` gain `reset()`. All non-breaking; a non-editor game pays nothing (`editor-runtime` never gates until `enterEdit()`).
 Each plugin declares `depends: [...]` and resolves the API at runtime with `ctx.require(...)`.
 There are no dependency cycles. `loop` depends on `ecs` (to publish the `Time` resource), the
 `context` plugin depends on `ecs` + `assets`, and `mcp` depends on its seven build-dependency plugins (its
@@ -1796,8 +1808,62 @@ early when headless (numeric state already updated), else (4) writes each layer 
 advances via its **tweens** (stepped by the tween plugin's own `"update"` system), so a paused loop freezes
 all camera motion for free.
 
+## 20. Editor subsystem — Layer-2 in-browser editor (#17–#24, additive)
 --------------------------------------------------------------------------------
-## 20. End-to-end example (scene → spawn → resources → loop → MCP)
+
+An in-browser, Unity-style editor over the LIVE ECS, added as 8 Layer-2 plugins registered after `mcp`
+(`editor-bridge` last). Design pillars: a **single validated write-authority** (`commands`), **poll-on-epoch**
+reactivity (no per-frame `emit`), a **two-`createApp` split** (the Layer-3 `@moku-labs/web` editor app is a
+separate `createApp` that consumes only `app["editor-bridge"]`), and **pay-for-what-you-use** (a non-editor
+game never calls these and `editor-runtime` never gates the scheduler until `enterEdit()`). Per-plugin READMEs
+under `src/plugins/<name>/README.md` remain the authoritative API detail; this consolidates the surface.
+
+Extension deltas on already-built plugins (all additive, non-breaking):
+- **ecs** — `changeEpoch(): number` (monotone per-write counter, powering poll-on-epoch with NO emit) +
+  `setActiveStages(stages | undefined)` / `activeStages()` (the stage gate on `world.tick`; `undefined` = all).
+- **scheduler** — forwards `setActiveStages`/`activeStages` to the world (the edit-vs-play mechanism).
+- **assets** — `entries(): AssetEntry[]` / `manifest()` / `metadata(alias)` (read-only enumeration for the asset browser).
+- **tween** / **vfx** / **camera** — `reset()` (clear transient runtime; `editor-runtime.stop()` calls all three on exit-play).
+
+The 8 editor plugins:
+- **commands** (Standard, depends ecs) — the SINGLE validated write-authority; owns the branded, save-durable
+  `EditorId`. `apply(command): CommandResult` (returns the inverse), `applyRaw` (primitive editor-history wraps),
+  `restore(entities, "reload"|"exit-play")` (non-undoable reseed → emits `commands:restored`),
+  `resolve`/`editorIdOf` (validate-before-return recycled-id guard), `setValidator` (inject reflection.validate), `count`.
+  `Command` = a discriminated union addressed by component NAME (spawn/despawn/setField/addComponent/removeComponent).
+- **reflection** (Standard, depends ecs) — field-schema registry: `describe(name)` (registered schema, else inferred
+  from a live value by `typeof`, else `[]`), `register(name, schema)`, `validate(name, partial)` (pure — the function
+  `commands.setValidator` receives), `field.*` builders (number/boolean/string/color/select/vector2/readonly).
+- **serialization** (Complex, depends ecs/storage/commands/reflection) — scene (de)serializer keyed by `EditorId`.
+  `serialize()`/`deserialize()`, `save`/`load` (storage-backed JSON), `list`, `export`/`import`. Migrates via
+  `storage`'s Migration chain, validates via `reflection`, routes loads through `commands.restore`. Emits `serialization:loaded`.
+- **editor-selection** (Standard, depends ecs/renderer/camera/input) — viewport picking + selection. `enable`/`disable`
+  flip Pixi `eventMode` on ONE camera pick layer (zero cost outside edit mode); `pickAt(screen)` resolves the topmost
+  entity via a non-enumerable stamped handle; `select`/`toggle`/`clear`/`selected`/`isSelected`. Emits `editor-selection:changed`.
+- **editor-history** (Standard, depends commands) — undo/redo. `applyTracked` wraps `commands.applyRaw` synchronously +
+  records a bounded field-diff inverse; `undo`/`redo`; `beginGesture`/`endGesture` coalesce a drag into one entry; ring
+  buffer capped at `maxDepth`; clears on `commands:restored` (via hooks). `canUndo`/`canRedo` polled on `changeEpoch`.
+- **editor-gizmos** (Complex, depends renderer/camera/editor-selection/commands) — direct-manipulation translate gizmo
+  (a Pixi overlay OUTSIDE the ECS). Drag deltas recomputed via `camera.screenToWorld` EVERY event (anti-drift); commits
+  ≤2 `setField` on pointerup through `commands`, gesture-coalesced via an injected `setGestureSink`. MVP translate only.
+  `enable`/`disable`/`setMode`/`setSnap`/`mode`/`setGestureSink`.
+- **editor-runtime** (Complex, depends loop/scheduler/serialization/commands/tween/vfx/camera) — edit/play FSM via
+  scheduler stage-gating over ONE world. `enterEdit` gates gameplay off, `enterPlay` snapshots + un-gates + starts the
+  loop, `stop` restores the snapshot (`commands.restore`) THEN `reset()`s tween/vfx/camera THEN re-gates, `step` advances
+  one frame. Emits `editor-runtime:modeChanged`. Does NOT gate at boot (pay-for-what-you-use).
+- **editor-bridge** (Complex, depends all 9 editor seams + mcp; registered LAST) — the terminal facade, the one typed
+  seam the Layer-3 web editor consumes. `snapshot(): EditorSnapshot` is immutable + poll-on-epoch (epoch mirrors
+  `world.changeEpoch()`; entities memoized by epoch; selection/mode/canUndo/canRedo read fresh). Writes forward through
+  the authority (`apply`/`setField` → editor-history.applyTracked → commands.applyRaw); `select`/`clearSelection`/`undo`/
+  `redo`/`play`/`stop`/`step`/`save`/`load`/`describe` forward to the owning plugin. At onStart wires
+  `commands.setValidator(reflection.validate)` and probes `mcp` readiness (the `editor://schema` + `editor:apply` mirror is a fast-follow).
+
+Editor events (all coarse, user-gesture frequency — never per-frame): `commands:restored { source }`,
+`serialization:loaded { name, entityCount }`, `editor-selection:changed { selected }`, `editor-runtime:modeChanged { mode }`.
+
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+## 21. End-to-end example (scene → spawn → resources → loop → MCP)
 --------------------------------------------------------------------------------
 
 ```ts
@@ -1880,7 +1946,7 @@ const reinit = createPlugin("reinit", {
 ```
 
 --------------------------------------------------------------------------------
-## 21. Extension patterns
+## 22. Extension patterns
 --------------------------------------------------------------------------------
 
 - **Add a gameplay plugin:** `createPlugin("name", { depends: [ecsPlugin, schedulerPlugin], api, lifecycle })`.
@@ -1902,7 +1968,7 @@ const reinit = createPlugin("reinit", {
   snapshot.
 
 --------------------------------------------------------------------------------
-## 22. Error handling & gotchas
+## 23. Error handling & gotchas
 --------------------------------------------------------------------------------
 
 - `createApp(...)` is synchronous; `app.start()` / `app.stop()` are async and must be awaited.
@@ -1940,7 +2006,7 @@ const reinit = createPlugin("reinit", {
   boundaries; outside iteration they apply immediately. Resource ops are always immediate.
 
 --------------------------------------------------------------------------------
-## 23. Scripts, requirements, layout
+## 24. Scripts, requirements, layout
 --------------------------------------------------------------------------------
 
 Scripts (package.json, run with `bun`):
@@ -1965,7 +2031,7 @@ Layout:
 
 ```
 src/config.ts              # Layer 1 — createCoreConfig, Config = {}, Events, createPlugin/createCore
-src/index.ts               # Layer 2 — createCore(16 plugins); exports createApp/createPlugin (+ createCore/createCoreConfig)
+src/index.ts               # Layer 2 — createCore(24 plugins: 16 runtime + 8 editor); exports createApp/createPlugin (+ createCore/createCoreConfig)
 src/plugins/index.ts       # plugin barrel (instances + Ecs/Scheduler/Context/... type namespaces)
 src/plugins/<name>/        # api.ts, types.ts, index.ts, lifecycle.ts / resources.ts / primitives.ts (where applicable), README.md, __tests__/
 tests/                     # framework-level unit + integration tests

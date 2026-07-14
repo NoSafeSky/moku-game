@@ -2,7 +2,7 @@
 
 > An ECS game framework for Moku — Spark-style public API and memory layout, PixiJS v8 rendering, built on @moku-labs/core, composable with @moku-labs/web, with a first-class MCP plugin exposing the live runtime to agent clients.
 
-`game` is a typed Entity-Component-System runtime composed of sixteen plugins. It is unpublished
+`game` is a typed Entity-Component-System runtime composed of twenty-four plugins (sixteen runtime plugins + an additive 8-plugin Layer-2 in-browser editor subsystem, #17–#24). It is unpublished
 (version 0.0.0) and not a game engine UI or editor — it owns the data model (archetype object-SoA
 storage), the fixed-timestep frame, and the GPU lifecycle; you write components and systems in
 TypeScript. Hot-path frame work bypasses the Moku kernel for performance and is NOT emitted as
@@ -12,7 +12,7 @@ kernel events. Systems reach shared services (assets, logging, frame time) throu
 ## Core Concepts
 
 - **Three-layer Moku model.** `createCoreConfig` (Layer 1: config + events) → `createCore`
-  (Layer 2: framework + the 15 built-in plugins) → `createApp({ pluginConfigs })` (Layer 3: your
+  (Layer 2: framework + the 24 built-in plugins) → `createApp({ pluginConfigs })` (Layer 3: your
   app). Consumers import `createApp` / `createPlugin` from `game` and never import
   `@moku-labs/core` directly. `createApp(...)` returns an App synchronously; `await app.start()`
   boots the Pixi Application and registers DOM listeners. Each plugin's API is reached as
@@ -391,6 +391,58 @@ worldToScreen(point: Point): Point              // map a world point to screen s
 // Transforms world-space LAYER containers it OWNS (world at stage index 0 via addChildAt, below the ui overlay), NEVER the root stage — so the HUD stays screen-fixed and parallax works (one plane per layer). Limitation: renderer.attachPrimitive self-parents to the stage root → NOT camera-transformed; the camera path is renderer.attach + camera.world/a layer.
 // One "sync"-stage system eases centre→target (via app.tween.lerp), writes each layer's pivot/position/scale/rotation, and adds the shake offset. moveTo/zoomTo/rotateTo/shake + follow-lerp all delegate to app.tween → pause-safe for free (rides scheduler.tick; NO platform/loop edge). Depends on renderer + scheduler + tween (all real edges); NOT ecs (structural {x,y} target) / NOT loop. onStart-only (@no-resource-check); NO onStop (containers parented under the renderer-owned stage; no external resource). Emits NO events. Headless-safe (numeric state + screen↔world still track).
 // Config: zoom (@default 1), minZoom (@default 0.1), maxZoom (@default 10), followLerp (@default 0.15), width (@default 800), height (@default 600), updateStage (@default "sync"). width/height = reference viewport (the renderer exposes no canvas dims via API — the ui-plugin precedent).
+reset(): void                                   // EDITOR DELTA: recentre (0,0), zoom→config.zoom, rotation→0, clear follow, stop shake — editor-runtime.stop() calls this on exit-play
+```
+
+### Editor subsystem (Layer-2, additive — plugins #17–#24)
+
+An in-browser Unity-style editor over the live ECS. Single write-authority, poll-on-epoch reactivity (no per-frame emit), two-`createApp` split. **Pay-for-what-you-use:** a non-editor game never calls these; `editor-runtime` does not gate the scheduler until `enterEdit()`. The extension deltas that support it: `ecs` gains `changeEpoch()` (per-write counter) + `setActiveStages`/`activeStages` (stage gate); `scheduler` forwards `setActiveStages`/`activeStages`; `assets` gains `entries()`/`manifest()`/`metadata()`; `tween`/`vfx`/`camera` gain `reset()`.
+
+```ts
+// app.commands (Standard) — the SINGLE validated write-authority; owns the save-durable branded EditorId. Depends on ecs only.
+apply(command: Command): CommandResult          // validate + apply, returns the inverse ({ ok:true; inverse } | { ok:false; error })
+applyRaw(command: Command): RawResult           // the primitive editor-history wraps (no inverse)
+restore(entities: readonly RestoreEntity[], source: "reload"|"exit-play"): void // non-undoable bulk reseed; emits commands:restored
+resolve(id: EditorId): Entity | undefined       // validate-before-return against world.isAlive (prunes stale); editorIdOf(entity): EditorId | undefined; count(): number
+setValidator(fn: FieldValidator | undefined): void // inject reflection.validate (the decoupling seam)
+// Command = discriminated union: spawn | despawn | setField | addComponent | removeComponent (components by NAME, plain data)
+
+// app.reflection (Standard) — field-schema registry for named components. Depends on ecs only.
+describe(componentName: string): FieldDescriptor[] // registered schema, else inferred from a live value by typeof, else []
+register(componentName: string, schema: Schema): void // typed field.* schema (registered wins over inference)
+validate(componentName: string, partial): ValidationResult // pure check used by commands.setValidator
+field: FieldBuilders                            // number/boolean/string/color/select/vector2/readonly builders (also re-exported standalone)
+
+// app.serialization (Complex) — scene (de)serializer. Depends on ecs/storage/commands/reflection.
+serialize(): SceneDocument                      // walk liveEntities, capture editor-owned entities' named components, keyed by EditorId
+deserialize(doc): void                          // migrate (via storage chain) → validate (reflection) → commands.restore atomically → emit serialization:loaded
+save(name)/load(name): boolean; list(): string[]; export(): string; import(json): void
+
+// app["editor-selection"] (Standard) — viewport picking + selection. Depends on ecs/renderer/camera/input.
+enable()/disable(): void                        // flip Pixi eventMode on ONE camera pick layer (zero cost outside edit mode)
+pickAt(screen: Point): Entity | undefined       // topmost entity via a non-enumerable stamped handle; select/toggle/clear; selected(): readonly Entity[]; isSelected(e): boolean
+// emits editor-selection:changed only on a real change; headless-safe
+
+// app["editor-history"] (Standard) — undo/redo authority. Depends on commands.
+applyTracked(command): CommandResult            // wraps commands.applyRaw synchronously + records a bounded field-diff inverse
+undo()/redo(): boolean; canUndo()/canRedo(): boolean // poll on ecs changeEpoch
+beginGesture()/endGesture(): void               // coalesce a drag burst into ONE undo entry; clear(): void (also on commands:restored, via hooks)
+
+// app["editor-gizmos"] (Complex) — direct-manipulation translate gizmo (overlay outside the ECS). Depends on renderer/camera/editor-selection/commands.
+enable()/disable(): void; setMode(mode)/mode(): translate only in MVP (rotate/scale warn+no-op); setSnap(n): void
+setGestureSink(sink | undefined): void          // injected editor-history {begin,applyTracked,end}; drag deltas recomputed via camera.screenToWorld EVERY event (anti-drift), commits ≤2 setField on pointerup
+
+// app["editor-runtime"] (Complex) — edit/play FSM via scheduler stage-gating. Depends on loop/scheduler/serialization/commands/tween/vfx/camera.
+enterEdit(): void                               // gate to config.editStages (update/physics OFF); does NOT gate at boot (pay-for-what-you-use)
+enterPlay(): void                               // snapshot (serialize) + un-gate (setActiveStages undefined) + loop.start
+stop(): void                                    // restore snapshot (commands.restore) THEN tween/vfx/camera reset() THEN re-gate; step(): TimeStepResult; mode()/isPlaying()
+// emits editor-runtime:modeChanged on each flip
+
+// app["editor-bridge"] (Complex) — the terminal facade (Layer-3 web editor's single seam). Depends on all 9 editor seams + mcp; registered LAST.
+snapshot(): EditorSnapshot                      // immutable, poll-on-epoch (epoch mirrors world.changeEpoch; entities memoized by epoch; selection/mode/canUndo/canRedo read fresh)
+apply(command)/setField(id, component, field, value): CommandResult // → editor-history.applyTracked → commands.applyRaw (undo-tracked)
+select/clearSelection; undo/redo; play/stop/step; save/load; describe(component) // forward to the owning plugin
+// onStart wires commands.setValidator(reflection.validate); probes mcp readiness (mirror is fast-follow). Emits nothing; no hooks; headless-safe.
 ```
 
 ## Events
@@ -411,10 +463,18 @@ The catalog is intentionally tiny — per-frame work is on the hot path, off the
   paused + `audio` muted. (platform plugin event)
 - `platform:adEnd` — `{ type: "interstitial" | "rewarded"; rewarded?: boolean }` — when an ad ends,
   after `loop` + `audio` are restored; `rewarded` set for rewarded ads. (platform plugin event)
+- `commands:restored` — `{ source: "reload" | "exit-play" }` — after a non-undoable `commands.restore()`
+  reseeds the world + EditorId map; editor-history listens + clears its stacks. (commands plugin event)
+- `serialization:loaded` — `{ name: string; entityCount: number }` — after `deserialize()`/`load()` and
+  the named scene is live (distinct from the lower-level commands:restored). (serialization plugin event)
+- `editor-selection:changed` — `{ selected: readonly Entity[] }` — after the editor selection set changes
+  (user-gesture frequency, never per-frame). (editor-selection plugin event)
+- `editor-runtime:modeChanged` — `{ mode: "edit" | "play" }` — after an edit↔play flip. (editor-runtime plugin event)
 
 `assets:loaded`/`scene:loaded` are declared in `src/config.ts` (framework `Events`); `game:reset`
-(mcp), `audio:muteChanged`/`audio:volumeChanged` (audio), and `platform:ready`/`platform:adStart`/`platform:adEnd`
-(platform) are declared on their plugins' `Events`.
+(mcp), `audio:muteChanged`/`audio:volumeChanged` (audio), `platform:ready`/`platform:adStart`/`platform:adEnd`
+(platform), and the editor milestones `commands:restored`/`serialization:loaded`/`editor-selection:changed`/`editor-runtime:modeChanged`
+are declared on their plugins' `Events`. The editor subsystem is otherwise POLL-ON-EPOCH — panels read `app["editor-bridge"].snapshot()` on their own tick.
 Subscribe from a consumer plugin's `hooks`. The `context` plugin exposes the framework emitter to
 systems via `GameContext.emit`, but owns no events of its own.
 
@@ -424,7 +484,7 @@ systems via `GameContext.emit`, but owns no events of its own.
 game/
 ├── src/
 │   ├── config.ts            # Layer 1: createCoreConfig, Config = {}, Events, createPlugin/createCore
-│   ├── index.ts             # Layer 2: createCore assembles the 16 plugins; exports createApp/createPlugin (+ createCore/createCoreConfig for advanced/headless assembly)
+│   ├── index.ts             # Layer 2: createCore assembles the 24 plugins (16 runtime + 8 editor); exports createApp/createPlugin (+ createCore/createCoreConfig for advanced/headless assembly)
 │   └── plugins/
 │       ├── index.ts         # plugin barrel (instances + type namespaces)
 │       ├── ecs/             # data/runtime core + introspection + resource registry (world.ts, types.ts, README.md, __tests__/)
@@ -573,7 +633,17 @@ Built/resolved in dependency order. (depends → resolved with `ctx.require`.)
   `getRotation`/`shake`/`world`/`addLayer`/`layer`/`screenToWorld`/`worldToScreen` | new types: `Layer`,
   `FollowTarget`, `Point`, `MoveOptions`, `ShakeOptions` | config: `zoom`/`minZoom`/`maxZoom`/`followLerp`/
   `width`/`height`/`updateStage` | events: none | onStart-only (no onStop) | depends: renderer + scheduler
-  + tween (registered after tween, before mcp).
+  + tween (registered after tween, before mcp). EDITOR DELTA: gains `reset()` (recentre/zoom/rotation/follow/shake).
+
+**Editor subsystem (Layer-2, additive — #17–#24, registered after `mcp`).** In-browser Unity-style editor over the live ECS; single write-authority, poll-on-epoch reactivity, pay-for-what-you-use (a non-editor game pays nothing). Supported by extension deltas: `ecs` gains `changeEpoch()` + `setActiveStages`/`activeStages`; `scheduler` forwards `setActiveStages`/`activeStages`; `assets` gains `entries`/`manifest`/`metadata`; `tween`/`vfx` gain `reset()`.
+- **commands** — the SINGLE validated write-authority; owns the branded save-durable `EditorId`. | Standard | `apply`/`applyRaw`/`restore`/`resolve`/`editorIdOf`/`setValidator`/`count` | events: `commands:restored` | depends: ecs.
+- **reflection** — field-schema registry for named components (infer or typed `field.*` schema; `validate`). | Standard | `describe`/`register`/`validate`/`field` | events: none | depends: ecs.
+- **serialization** — scene (de)serializer keyed by `EditorId`; migrates via `storage`, validates via `reflection`, routes loads through `commands.restore`. | Complex | `serialize`/`deserialize`/`save`/`load`/`list`/`export`/`import` | events: `serialization:loaded` | depends: ecs, storage, commands, reflection.
+- **editor-selection** — viewport picking + selection (`enable`/`disable` flip Pixi eventMode on one camera layer; `pickAt` via a stamped handle). | Standard | `enable`/`disable`/`select`/`toggle`/`clear`/`selected`/`isSelected`/`pickAt` | events: `editor-selection:changed` | depends: ecs, renderer, camera, input.
+- **editor-history** — undo/redo authority (`applyTracked` wraps `commands.applyRaw`; gesture coalescing; ring buffer; clears on `commands:restored`). | Standard | `applyTracked`/`undo`/`redo`/`canUndo`/`canRedo`/`beginGesture`/`endGesture`/`clear` | events: none | depends: commands.
+- **editor-gizmos** — direct-manipulation translate gizmo (overlay outside the ECS; anti-drift via `camera.screenToWorld` per event; commits via `commands`, coalesced via an injected sink). | Complex | `enable`/`disable`/`setMode`/`setSnap`/`mode`/`setGestureSink` | events: none | depends: renderer, camera, editor-selection, commands.
+- **editor-runtime** — edit/play FSM via scheduler stage-gating; `stop()` restores the snapshot then `reset()`s tween/vfx/camera. Does NOT gate at boot (pay-for-what-you-use). | Complex | `enterEdit`/`enterPlay`/`stop`/`step`/`mode`/`isPlaying` | events: `editor-runtime:modeChanged` | depends: loop, scheduler, serialization, commands, tween, vfx, camera.
+- **editor-bridge** — the terminal facade (Layer-3 web editor's single seam); `snapshot()` poll-on-epoch; forwards writes through the authority; wires `commands.setValidator(reflection.validate)` at onStart. Registered LAST. | Complex | `snapshot`/`apply`/`setField`/`select`/`clearSelection`/`undo`/`redo`/`play`/`stop`/`step`/`save`/`load`/`describe` | events: none | depends: ecs, reflection, commands, editor-selection, editor-gizmos, editor-history, editor-runtime, serialization, mcp.
 
 ## Requirements
 
