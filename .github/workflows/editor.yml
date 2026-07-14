@@ -1,0 +1,90 @@
+name: Editor
+
+# PR validation + GitHub Pages deploy for the Layer-3 editor app (editor/). The app consumes the
+# framework via `@nosafesky/moku-game: file:..`, so every job builds the framework's dist/ FIRST, then
+# resolves the editor against it.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "editor/**"
+      - "src/**"
+      - ".github/workflows/editor.yml"
+
+concurrency:
+  group: editor-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      # Build the framework so the editor's file:.. link resolves its published dist/.
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+
+      - name: Install editor dependencies
+        working-directory: editor
+        run: bun install --frozen-lockfile
+      - name: Lint (biome + eslint)
+        working-directory: editor
+        run: bun run lint
+      - name: Typecheck
+        working-directory: editor
+        run: bun run typecheck
+      - name: Unit + integration tests (with coverage gate)
+        working-directory: editor
+        run: bun run test:coverage
+
+      # Functional e2e + the node-free bundle audit. Visual baselines (@visual) are win32-specific, so
+      # they are excluded here — they run locally as a regression aid, not on Linux CI.
+      - name: Install Playwright browser
+        working-directory: editor
+        run: bunx playwright install --with-deps chromium
+      - name: E2E (functional drives + bundle audit)
+        working-directory: editor
+        run: bunx playwright test --grep-invert @visual
+
+  deploy:
+    # Ship the static editor/dist to GitHub Pages on main only, after validation passes.
+    if: github.ref == 'refs/heads/main'
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - run: bun install --frozen-lockfile
+      - run: bun run build # framework dist/
+      - name: Build the editor
+        working-directory: editor
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+      - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
+        with:
+          path: editor/dist
+      - id: deploy
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
+
+# NOTE: GitHub Pages *project* sites serve under https://<owner>.github.io/<repo>/, but the built shell
+# uses root-relative asset paths (/assets/...). Serve the editor from a user/org root Pages site or a
+# custom domain (root) so those paths resolve — or set a matching base path in the build.

@@ -132,6 +132,7 @@ export const inspector = createIsland("inspector", {
         control.dataset.invalid = "";
         control.title = result.error;
       }
+      // The edited entity's view re-syncs via editor-host's epoch-gated poll (the write bumps the epoch).
     };
     fields.addEventListener("change", onChange);
     ctx.cleanup(() => fields.removeEventListener("change", onChange));

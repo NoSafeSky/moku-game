@@ -14,8 +14,10 @@ export default defineConfig({
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
-    command: "bun run preview",
+    // Build a fresh bundle (the bundle-audit spec reads dist/, the browser tests load it), then serve it.
+    command: "bun run build && bun run preview",
     url: PREVIEW_URL,
-    reuseExistingServer: !process.env.CI
+    reuseExistingServer: !process.env.CI,
+    timeout: 120_000
   }
 });

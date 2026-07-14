@@ -24,10 +24,29 @@ let handles: EditorHandles | undefined;
 let latest: EditorBridge.EditorSnapshot | undefined;
 const listeners = new Set<(snapshot: EditorBridge.EditorSnapshot) => void>();
 let rafId = 0;
+let lastSyncedEpoch = -1;
 
-// The one poll: read the epoch-memoized snapshot and fan it out to every island subscriber.
+// Re-sync every entity's view whenever a world write bumps the epoch. The framework renderer only
+// repositions views it has been told are dirty (its gizmo self-marks after a drag); a bridge write —
+// an inspector `setField`, an `undo`/`redo`, a `load` — mutates `Transform` through `commands` WITHOUT
+// marking dirty, so the canvas would lag the data. Gating on `epoch` keeps this off the per-frame path:
+// it only runs on an actual write (rare, user-driven), and marking already-current views dirty is a
+// cheap no-op. This is the single place the shell nudges the renderer — islands never touch it.
+const syncViewsOnWrite = (snapshot: EditorBridge.EditorSnapshot): void => {
+  if (snapshot.epoch === lastSyncedEpoch) return;
+  lastSyncedEpoch = snapshot.epoch;
+
+  const { gameApp } = getEditor();
+  for (const entity of snapshot.entities) {
+    const handle = gameApp.commands.resolve(entity.id);
+    if (handle !== undefined) gameApp.renderer.markDirty(handle);
+  }
+};
+
+// The one poll: read the epoch-memoized snapshot, re-sync views on a write, fan out to island subscribers.
 const poll = (): void => {
   const snapshot = getEditor().bridge.snapshot();
+  syncViewsOnWrite(snapshot);
   latest = snapshot;
   for (const notify of listeners) notify(snapshot);
 };
@@ -148,6 +167,7 @@ export async function stopEditor(): Promise<void> {
 
   cancelAnimationFrame(rafId);
   rafId = 0;
+  lastSyncedEpoch = -1;
   listeners.clear();
 
   // Clear handles BEFORE awaiting stop so any late getEditor() fails loud rather than racing teardown.

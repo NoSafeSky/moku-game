@@ -4,13 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun run scripts/serve.ts",
+    "dev": "bun run build && bun run preview",
     "build": "bun run scripts/build.ts",
     "preview": "bun run scripts/preview.ts",
     "lint": "biome check . && eslint .",
     "lint:fix": "biome check --write . && eslint --fix .",
     "format": "biome format --write .",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "typecheck": "tsc --noEmit"
   },
