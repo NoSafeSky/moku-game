@@ -5,12 +5,16 @@
  * Everything exported uses structural types from types.ts so no SDK namespace
  * leaks into tools.ts, resources.ts, api.ts, lifecycle.ts, or the public .d.ts.
  *
+ * Node-only dependencies stay LAZY: the stdio transport (`node:process` under the
+ * hood) and `node:crypto` are loaded with `await import(...)` inside their
+ * respective transport branches, so a browser bundle configured for `["inMemory"]`
+ * ships node-free. Only `McpServer` + `InMemoryTransport` are statically imported —
+ * both are browser-safe (their static graph reaches no `node:*` builtin).
+ *
  * v1 boundary: to swap the SDK (e.g. v2, browser transport) only edit this file.
  */
-import { timingSafeEqual } from "node:crypto";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { Config, InMemoryClientTransportLike, McpHandle, McpServerLike } from "./types";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -66,6 +70,22 @@ export const defaultTransports = (): ReadonlyArray<"stdio" | "http" | "inMemory"
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * Assemble the stdio transport module specifier at call time (from parts, via `join`)
+ * so a browser bundler cannot constant-fold it and pull the stdio module — which
+ * statically imports `node:process` — into the client bundle. Only invoked under
+ * Node/Bun when the stdio transport is configured; the resulting runtime `import()`
+ * resolves there and is never reached in a browser.
+ *
+ * @returns The `@modelcontextprotocol/sdk/server/stdio.js` module specifier.
+ * @example
+ * ```ts
+ * const { StdioServerTransport } = await import(stdioTransportSpecifier());
+ * ```
+ */
+const stdioTransportSpecifier = (): string =>
+  ["@modelcontextprotocol", "sdk", "server", "stdio.js"].join("/");
+
+/**
  * Constant-time string comparison for bearer-token checks.
  *
  * Compares lengths first (a length mismatch returns false immediately — this
@@ -74,13 +94,20 @@ export const defaultTransports = (): ReadonlyArray<"stdio" | "http" | "inMemory"
  *
  * @param a - First string (e.g. the incoming Authorization header).
  * @param b - Second string (e.g. the expected `Bearer <token>` value).
+ * @param timingSafeEqual - `node:crypto`'s `timingSafeEqual`, injected by the caller
+ *   so this module keeps `node:crypto` a lazy (HTTP-path-only) dependency.
  * @returns True when the two strings are byte-for-byte equal.
  * @example
  * ```ts
- * if (!constantTimeEqual(authHeader, expected)) return unauthorized();
+ * const { timingSafeEqual } = await import("node:crypto");
+ * if (!constantTimeEqual(authHeader, expected, timingSafeEqual)) return unauthorized();
  * ```
  */
-const constantTimeEqual = (a: string, b: string): boolean => {
+const constantTimeEqual = (
+  a: string,
+  b: string,
+  timingSafeEqual: typeof import("node:crypto").timingSafeEqual
+): boolean => {
   const bufferA = Buffer.from(a);
   const bufferB = Buffer.from(b);
   if (bufferA.length !== bufferB.length) return false;
@@ -186,6 +213,18 @@ export const buildMcpHandle = async (opts: BuildHandleOptions): Promise<McpHandl
       // (reading 'on')` — skip + warn instead. (`&&` already coerces to boolean,
       // so no explicit Boolean() wrapper is needed.)
       if (typeof process !== "undefined" && process?.stdin) {
+        // Lazy + bundler-opaque: the stdio transport statically pulls `node:process`
+        // (no browser polyfill for its default export), so the specifier is assembled at
+        // runtime — a browser bundler cannot statically follow it into the graph. This
+        // branch only runs under Node/Bun when stdio is configured (browser apps use
+        // `["inMemory"]`), so the runtime import resolves there and is never reached in
+        // a browser.
+        const stdioSpecifier = stdioTransportSpecifier();
+        // The `typeof import(...)` annotation is type-only (erased at emit — it does NOT
+        // add a static import), so it restores precise typing over the opaque specifier.
+        const { StdioServerTransport } = (await import(
+          stdioSpecifier
+        )) as typeof import("@modelcontextprotocol/sdk/server/stdio.js");
         const stdioTransport = new StdioServerTransport();
         await server.connect(stdioTransport);
         closers.push(async () => {
@@ -359,6 +398,9 @@ const startHttpServer = async (
   const { WebStandardStreamableHTTPServerTransport } = await import(
     "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js"
   );
+  // Lazy: `node:crypto` is only needed for bearer-token constant-time compare on the
+  // (Bun-only) HTTP path — loading it here keeps it off the browser bundle graph.
+  const { timingSafeEqual } = await import("node:crypto");
 
   const bunGlobal = globalThis as GlobalWithBun;
 
@@ -417,7 +459,7 @@ const startHttpServer = async (
       // Bearer auth gate — constant-time compare to avoid token-guessing via timing
       if (bearerToken !== undefined) {
         const auth = request.headers.get("authorization");
-        if (!auth || !constantTimeEqual(auth, `Bearer ${bearerToken}`)) {
+        if (!auth || !constantTimeEqual(auth, `Bearer ${bearerToken}`, timingSafeEqual)) {
           return new Response("Unauthorized", { status: 401 });
         }
       }

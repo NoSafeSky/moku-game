@@ -5,13 +5,8 @@
  * POLLS — Moku `App` has no subscribe member; the rAF loop re-reads bridge.snapshot()'s cheap scalars
  * (selection/mode/canUndo/canRedo) every frame, so changes surface next frame with no event.
  */
-import type {
-  Assets,
-  createApp,
-  EditorBridge,
-  EditorGizmos,
-  EditorSelection
-} from "@nosafesky/moku-game";
+import type { Assets, EditorBridge, EditorGizmos, EditorSelection } from "@nosafesky/moku-game";
+import { createApp } from "@nosafesky/moku-game";
 
 /**
  * The runtime handles every island consumes.
@@ -27,22 +22,77 @@ export type EditorHandles = {
 
 let handles: EditorHandles | undefined;
 let latest: EditorBridge.EditorSnapshot | undefined;
-// eslint-disable-next-line sonarjs/no-unused-collection -- W1's poll loop iterates listeners each tick
 const listeners = new Set<(snapshot: EditorBridge.EditorSnapshot) => void>();
+let rafId = 0;
+
+// The one poll: read the epoch-memoized snapshot and fan it out to every island subscriber.
+const poll = (): void => {
+  const snapshot = getEditor().bridge.snapshot();
+  latest = snapshot;
+  for (const notify of listeners) notify(snapshot);
+};
 
 /**
- * Boot + start the game app, mount its canvas into `mountEl`, enter edit mode, begin polling. Idempotent.
+ * Boot + start the game app, mount its canvas into `mountElement`, enter edit mode, begin polling.
+ * Idempotent — a second call returns the already-booted handles (spa.tsx and islands may both reach in).
  *
- * @param _mountElement - The viewport container the Pixi canvas is appended into.
- * @throws {Error} Until W1 implements the boot + poll loop.
+ * @param mountElement - The viewport container the Pixi canvas is appended into.
+ * @returns The resolved editor handles (also retrievable synchronously via `getEditor`).
+ * @throws {Error} If the renderer produced no canvas (a headless/non-browser renderer).
  * @example
  * ```ts
  * const el = document.querySelector<HTMLElement>('[data-island="viewport"]')!;
  * const { bridge } = await startEditor(el);
  * ```
  */
-export async function startEditor(_mountElement: HTMLElement): Promise<EditorHandles> {
-  throw new Error("[editor-host] not implemented");
+export async function startEditor(mountElement: HTMLElement): Promise<EditorHandles> {
+  // Idempotent boot: never spin up a second game runtime.
+  if (handles) return handles;
+
+  // Boot the game runtime node-free: manual canvas mount + in-page mcp transport only (no stdio/http).
+  const gameApp = createApp({
+    pluginConfigs: {
+      loop: { autoStart: true },
+      renderer: { mount: undefined },
+      mcp: { transports: ["inMemory"], inMemoryGlobalKey: "" }
+    }
+  });
+  await gameApp.start();
+
+  // Host the live Pixi canvas in the viewport region — the editor requires a real (non-headless) renderer.
+  const canvas = gameApp.renderer.getView();
+  if (!canvas) {
+    // Tear the just-booted app back down before failing, so a retry starts clean rather
+    // than orphaning this app (handles is still unset, so this stays idempotent).
+    await gameApp.stop();
+    throw new Error(
+      "[editor-host] Renderer produced no canvas.\n  The editor needs a browser (non-headless) renderer."
+    );
+  }
+  mountElement.append(canvas);
+
+  // Gate to editStages (input/sync/render): viewport stays live, gameplay frozen — Unity-like idle.
+  gameApp["editor-runtime"].enterEdit();
+  gameApp["editor-selection"].enable();
+  gameApp["editor-gizmos"].enable();
+
+  handles = {
+    gameApp,
+    bridge: gameApp["editor-bridge"],
+    selection: gameApp["editor-selection"],
+    gizmos: gameApp["editor-gizmos"],
+    assets: gameApp.assets,
+    canvas
+  };
+
+  // ONE poll loop, in one place: snapshot() is epoch-memoized, so re-reading every frame is cheap.
+  const tick = (): void => {
+    poll();
+    rafId = requestAnimationFrame(tick);
+  };
+  rafId = requestAnimationFrame(tick);
+
+  return handles;
 }
 
 /**
@@ -83,14 +133,26 @@ export function onSnapshot(fn: (snapshot: EditorBridge.EditorSnapshot) => void):
 }
 
 /**
- * Tear down (tests / HMR): cancel the poll loop, stop the game app.
+ * Tear down (tests / HMR): cancel the poll loop, drop subscribers, stop the game app.
+ * Idempotent — a no-op when the editor was never started.
  *
- * @throws {Error} Until W1 implements teardown.
+ * @returns A promise that resolves once the loop is cancelled and the game app has stopped.
  * @example
  * ```ts
  * await stopEditor();
  * ```
  */
 export async function stopEditor(): Promise<void> {
-  throw new Error("[editor-host] not implemented");
+  // No-op when never started (or already torn down).
+  if (!handles) return;
+
+  cancelAnimationFrame(rafId);
+  rafId = 0;
+  listeners.clear();
+
+  // Clear handles BEFORE awaiting stop so any late getEditor() fails loud rather than racing teardown.
+  const { gameApp } = handles;
+  handles = undefined;
+  latest = undefined;
+  await gameApp.stop();
 }
