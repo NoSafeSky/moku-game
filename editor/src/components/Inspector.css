@@ -57,4 +57,25 @@
   [data-invalid] {
     border-color: var(--accent);
   }
+
+  /* Component group heading the inspector island injects — spans both label/control columns. */
+  [data-component] {
+    grid-column: 1 / -1;
+    margin-block-start: 0.35rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+  }
+
+  [data-component]:first-child {
+    margin-block-start: 0;
+  }
+
+  /* The label cell paired with each control (grid column 1). */
+  [data-field-label] {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+  }
 }

@@ -11,4 +11,14 @@
     inline-size: 100%;
     block-size: 100%;
   }
+
+  /* The viewport island sets [data-has-selection] from the snapshot — a focus ring, drawn in DOM so
+     it never competes with the in-canvas selection/gizmo overlay the game plugins paint. */
+  :scope[data-has-selection]::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    box-shadow: inset 0 0 0 2px var(--accent);
+  }
 }
