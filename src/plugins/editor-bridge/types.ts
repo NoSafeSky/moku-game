@@ -1,8 +1,24 @@
 /**
  * @file editor-bridge plugin — public type surface (Config, State, EditorSnapshot tree, Api).
  */
-import type { Command, CommandResult, EditorId } from "../commands/types";
-import type { FieldDescriptor } from "../reflection/types";
+import type { commandsPlugin } from "../commands";
+import type { Command, CommandResult, Api as CommandsApi, EditorId } from "../commands/types";
+import type { ecsPlugin } from "../ecs";
+import type { World } from "../ecs/types";
+import type { editorGizmosPlugin } from "../editor-gizmos";
+import type { Api as EditorGizmosApi } from "../editor-gizmos/types";
+import type { editorHistoryPlugin } from "../editor-history";
+import type { Api as EditorHistoryApi } from "../editor-history/types";
+import type { editorRuntimePlugin } from "../editor-runtime";
+import type { Api as EditorRuntimeApi } from "../editor-runtime/types";
+import type { editorSelectionPlugin } from "../editor-selection";
+import type { Api as EditorSelectionApi } from "../editor-selection/types";
+import type { mcpPlugin } from "../mcp";
+import type { Api as McpApi } from "../mcp/types";
+import type { reflectionPlugin } from "../reflection";
+import type { FieldDescriptor, Api as ReflectionApi } from "../reflection/types";
+import type { serializationPlugin } from "../serialization";
+import type { Api as SerializationApi } from "../serialization/types";
 
 /**
  * editor-bridge configuration — intentionally EMPTY. The bridge is a pure aggregation + forwarding
@@ -92,3 +108,31 @@ export type Api = {
   /** The field descriptors for a component name (`reflection.describe`) — for panels needing a schema for a not-yet-instantiated component. */
   describe(componentName: string): FieldDescriptor[];
 };
+
+/** Logger surface injected by the common logPlugin (`ctx.log`). */
+export type Log = {
+  /** Log at debug level. */
+  debug(message: string): void;
+  /** Log at info level. */
+  info(message: string): void;
+  /** Log a warning. */
+  warn(message: string): void;
+  /** Log an error. */
+  error(message: string): void;
+};
+
+/**
+ * Every dependency editor-bridge reaches via `ctx.require`, one call signature per plugin
+ * instance — the `serialization`/`editor-runtime` intersection pattern for a plugin with several
+ * `require`d dependencies resolved at call time rather than captured in `onStart`. Shared between
+ * `api.ts` (snapshot aggregation + forwarding) and `lifecycle.ts` (the onStart decoupling seams).
+ */
+export type EditorBridgeRequire = ((plugin: typeof ecsPlugin) => World) &
+  ((plugin: typeof reflectionPlugin) => ReflectionApi) &
+  ((plugin: typeof commandsPlugin) => CommandsApi) &
+  ((plugin: typeof editorSelectionPlugin) => EditorSelectionApi) &
+  ((plugin: typeof editorGizmosPlugin) => EditorGizmosApi) &
+  ((plugin: typeof editorHistoryPlugin) => EditorHistoryApi) &
+  ((plugin: typeof editorRuntimePlugin) => EditorRuntimeApi) &
+  ((plugin: typeof serializationPlugin) => SerializationApi) &
+  ((plugin: typeof mcpPlugin) => McpApi);

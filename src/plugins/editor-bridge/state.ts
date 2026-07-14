@@ -1,23 +1,24 @@
 /**
- * @file editor-bridge plugin — state factory skeleton.
+ * @file editor-bridge plugin — state factory.
+ *
+ * The bridge holds no dependency references — every API call resolves its deps via
+ * `ctx.require(...)` at call time (the `reflection`/`scheduler` no-capture precedent). The only
+ * state is the poll-on-epoch memoization cache that makes repeated `snapshot()` calls between
+ * world writes cheap: `lastEpoch` seeded to `-1` and `entities` seeded `undefined` so the FIRST
+ * `snapshot()` call always (re)materializes the entity tree regardless of `world.changeEpoch()`'s
+ * initial value.
  */
-import type { Config, State } from "./types";
+import type { State } from "./types";
 
 /**
- * Creates initial editor-bridge plugin state.
+ * Creates the initial editor-bridge plugin state — the memoization cache only.
  *
- * @param _ctx - Minimal context with global and config.
- * @param _ctx.global - Global plugin registry.
- * @param _ctx.config - Resolved plugin configuration.
- * @throws {Error} Always in the skeleton — implemented during build.
+ * @returns The initial {@link State} — `{ lastEpoch: -1, entities: undefined }`.
  * @example
  * ```ts
- * const state = createState({ global: {}, config: {} });
+ * const state = createState();
+ * state.lastEpoch; // -1
+ * state.entities; // undefined
  * ```
  */
-export function createState(_ctx: {
-  readonly global: Readonly<Record<string, unknown>>;
-  readonly config: Readonly<Config>;
-}): State {
-  throw new Error("not implemented");
-}
+export const createState = (): State => ({ lastEpoch: -1, entities: undefined });

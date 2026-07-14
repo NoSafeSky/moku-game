@@ -10,6 +10,7 @@ import {
   commandsPlugin,
   contextPlugin,
   ecsPlugin,
+  editorBridgePlugin,
   editorGizmosPlugin,
   editorHistoryPlugin,
   editorRuntimePlugin,
@@ -50,15 +51,17 @@ const framework = createCore(coreConfig, {
     // ─── Editor subsystem (Layer-2) — registered after mcp; commands/reflection are the
     //     E1 foundations (write-authority + field-schema registry); serialization +
     //     editor-selection are E2 (scene persistence + viewport picking); editor-history +
-    //     editor-gizmos + editor-runtime are E3 (undo/redo, transform gizmo, edit/play FSM).
-    //     editor-bridge (E4) depends on mcp + all editor plugins and becomes the last entry.
+    //     editor-gizmos + editor-runtime are E3 (undo/redo, transform gizmo, edit/play FSM);
+    //     editor-bridge (E4) is the terminal facade — depends on mcp + all editor plugins and is
+    //     registered LAST (all nine editor edges point backwards, so this is topologically valid).
     commandsPlugin,
     reflectionPlugin,
     serializationPlugin,
     editorSelectionPlugin,
     editorHistoryPlugin,
     editorGizmosPlugin,
-    editorRuntimePlugin
+    editorRuntimePlugin,
+    editorBridgePlugin
   ],
   // Framework default plugin configuration. Consumers override via createApp({ pluginConfigs }).
   pluginConfigs: {
