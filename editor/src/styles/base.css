@@ -1,0 +1,7 @@
+@layer base {
+  body {
+    font-family: system-ui, sans-serif;
+    background: var(--surface-page);
+    color: var(--text-primary);
+  }
+}

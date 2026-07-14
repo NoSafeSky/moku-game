@@ -1,0 +1,10 @@
+@scope ([data-island="scene-tree"]) {
+  :scope {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+    padding: 0.5rem;
+    overflow-y: auto;
+    background: var(--surface-panel);
+  }
+}

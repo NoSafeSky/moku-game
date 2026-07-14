@@ -10,26 +10,27 @@ export default [
     ignores: [
       "dist/**",
       "coverage/**",
+      "playwright-report/**",
+      "test-results/**",
       "bun.lock",
       ".claude/**",
       ".planning/**",
-      "node_modules/**",
-      "editor/**",
-      "declarations.d.ts"
+      "node_modules/**"
     ]
   },
 
   // 2. TypeScript parser for all TS files
   tseslint.configs.base,
 
-  // 3. Unicorn recommended + abbreviation allowlist
+  // 3. Unicorn recommended + abbreviation allowlist + PascalCase components
   eslintPluginUnicorn.configs.recommended,
   {
     rules: {
+      // Components are PascalCase (EditorPage.tsx); islands/lib are kebab-case — allow both.
+      "unicorn/filename-case": ["error", { cases: { kebabCase: true, pascalCase: true } }],
       "unicorn/prevent-abbreviations": [
         "error",
         {
-          // Pre-expanded so builds don't have to widen this mid-flight. See references/glossary.md.
           allowList: {
             ctx: true,
             fn: true,
@@ -74,7 +75,8 @@ export default [
             req: true,
             res: true,
             opts: true,
-            attr: true
+            attr: true,
+            el: true
           }
         }
       ]
@@ -82,9 +84,6 @@ export default [
   },
 
   // 4. SonarJS recommended
-  // NOTE: The `!` non-null assertion is required because sonarjs types mark `configs` as
-  // potentially undefined, but the `recommended` preset always exists at runtime.
-  // If this causes type errors in future sonarjs versions, use: `sonarjs.configs?.recommended ?? {}`
   // biome-ignore lint/style/noNonNullAssertion: sonarjs types mark configs as possibly undefined but it exists at runtime
   sonarjs.configs!.recommended,
 
@@ -99,7 +98,8 @@ export default [
     }
   },
 
-  // 6. Source files: strict JSDoc requirements
+  // 6. Source .ts files: documented exports. Scoped to declarations — island method
+  //    shorthands (createIsland) and inline route render arrows do NOT each require JSDoc.
   {
     files: ["src/**/*.ts"],
     rules: {
@@ -107,11 +107,8 @@ export default [
         "error",
         {
           require: {
-            ArrowFunctionExpression: true,
             ClassDeclaration: true,
-            FunctionDeclaration: true,
-            FunctionExpression: true,
-            MethodDefinition: true
+            FunctionDeclaration: true
           },
           contexts: ["TSInterfaceDeclaration", "TSTypeAliasDeclaration"]
         }
@@ -122,25 +119,33 @@ export default [
       "jsdoc/require-returns": "error",
       "jsdoc/require-returns-description": "error",
       "jsdoc/require-example": "error",
-      "@typescript-eslint/consistent-type-imports": ["error", { prefer: "type-imports" }],
       "unicorn/require-module-specifiers": "off"
     }
   },
 
-  // 6b. storage + platform plugins: model the Web Storage API, whose `getItem`
-  // returns `string | null`. `null` is part of the public `StorageBackend` contract
-  // (so a localStorage-shaped backend is drop-in) — the platform plugin's CrazyGames
-  // adapter implements that same contract — so `unicorn/no-null` is scoped off here.
+  // 6b. Consistent type imports across all source (.ts + .tsx)
   {
-    files: ["src/plugins/storage/**/*.ts", "src/plugins/platform/**/*.ts"],
+    files: ["src/**/*.{ts,tsx}"],
     rules: {
-      "unicorn/no-null": "off"
+      "@typescript-eslint/consistent-type-imports": ["error", { prefer: "type-imports" }]
+    }
+  },
+
+  // 6c. Preact component/entry files (.tsx): documented by the @file header + component name,
+  //     not per-function JSDoc (pure SSG components take no params and return a VNode).
+  {
+    files: ["src/**/*.tsx"],
+    rules: {
+      "jsdoc/require-jsdoc": "off",
+      "jsdoc/require-returns": "off",
+      "jsdoc/require-param": "off",
+      "jsdoc/require-example": "off"
     }
   },
 
   // 7. Test files: relaxed rules
   {
-    files: ["tests/**/*.ts", "src/plugins/**/__tests__/**/*.ts"],
+    files: ["tests/**/*.ts"],
     rules: {
       "jsdoc/require-jsdoc": "off",
       "jsdoc/require-description": "off",
@@ -153,13 +158,14 @@ export default [
     }
   },
 
-  // 8. Config files: relaxed rules
+  // 8. Scripts + config files: relaxed rules
   {
-    files: ["*.config.ts"],
+    files: ["scripts/**/*.ts", "*.config.ts"],
     rules: {
       "jsdoc/require-jsdoc": "off",
       "jsdoc/require-description": "off",
-      "unicorn/no-abusive-eslint-disable": "off"
+      "unicorn/no-abusive-eslint-disable": "off",
+      "unicorn/prevent-abbreviations": "off"
     }
   },
 

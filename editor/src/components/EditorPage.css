@@ -1,0 +1,15 @@
+@scope ([data-editor-shell]) {
+  :scope {
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    block-size: 100dvh;
+    background: var(--surface-page);
+    color: var(--text-primary);
+  }
+
+  [data-editor-body] {
+    display: grid;
+    grid-template-columns: 16rem 1fr 20rem;
+    min-block-size: 0;
+  }
+}

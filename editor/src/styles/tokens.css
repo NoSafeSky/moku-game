@@ -1,0 +1,14 @@
+@layer tokens {
+  :root {
+    color-scheme: light dark;
+    /* Primitives */
+    --color-stone-950: #1c1917;
+    --color-stone-100: #f5f5f4;
+    --color-blue-500: #3b82f6;
+    /* Semantic */
+    --surface-page: light-dark(var(--color-stone-100), var(--color-stone-950));
+    --surface-panel: light-dark(#ffffff, #26211d);
+    --text-primary: light-dark(var(--color-stone-950), var(--color-stone-100));
+    --accent: var(--color-blue-500);
+  }
+}

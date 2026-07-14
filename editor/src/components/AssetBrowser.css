@@ -1,0 +1,10 @@
+@scope ([data-island="asset-browser"]) {
+  :scope {
+    display: flex;
+    gap: 0.5rem;
+    padding: 0.5rem;
+    overflow-x: auto;
+    border-block-start: 1px solid var(--text-primary);
+    background: var(--surface-panel);
+  }
+}

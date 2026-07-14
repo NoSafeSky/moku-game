@@ -1,0 +1,14 @@
+@scope ([data-island="viewport"]) {
+  :scope {
+    position: relative;
+    min-inline-size: 0;
+    overflow: hidden;
+    background: var(--surface-panel);
+  }
+
+  canvas {
+    display: block;
+    inline-size: 100%;
+    block-size: 100%;
+  }
+}
