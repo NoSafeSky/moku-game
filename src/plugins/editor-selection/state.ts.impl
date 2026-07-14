@@ -1,0 +1,42 @@
+/**
+ * @file editor-selection plugin — state factory.
+ *
+ * Creates the initial mutable editor-selection state: no captured deps yet, an empty
+ * selection `Set`, disabled/not-started flags, and zeroed pointer-edge bookkeeping.
+ * All dep handles (`world` / `renderer` / `camera` / `input`) and the pick layer /
+ * canvas are captured later — the deps in `onStart` (the `camera` precedent), the
+ * pick layer / canvas in `enable()`.
+ */
+import type { Config, State } from "./types";
+
+/**
+ * Creates the initial editor-selection plugin state.
+ *
+ * @param _ctx - Minimal context providing global registry and resolved config.
+ * @param _ctx.global - Global plugin registry (unused; required by the kernel).
+ * @param _ctx.config - Resolved editor-selection configuration (unused at creation).
+ * @returns The initial editor-selection state (`started: false`, `enabled: false`,
+ *   an empty selection `Set`, all captured deps `undefined`, `prevButtons: 0`).
+ * @example
+ * ```ts
+ * const state = createState({ global: {}, config: defaultConfig });
+ * state.started; // false
+ * state.selected.size; // 0
+ * ```
+ */
+export const createState = (_ctx: {
+  readonly global: Readonly<Record<string, unknown>>;
+  readonly config: Readonly<Config>;
+}): State => ({
+  started: false,
+  enabled: false,
+  selected: new Set(),
+  world: undefined,
+  renderer: undefined,
+  camera: undefined,
+  input: undefined,
+  pickLayer: undefined,
+  canvas: undefined,
+  prevButtons: 0,
+  detach: undefined
+});

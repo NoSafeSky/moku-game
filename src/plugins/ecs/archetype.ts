@@ -188,7 +188,7 @@ export function createArchetypeStore(): ArchetypeStore {
   /**
    * Swap-remove an entity from its current archetype and return its saved component values.
    *
-   * @param entity - The entity to remove.
+   * @param _entity - Unused; kept for a positional call signature (the row is located via `location`).
    * @param location - The entity's current archetype and row index.
    * @returns A record mapping component IDs to the removed entity's saved values.
    * @example
@@ -197,7 +197,7 @@ export function createArchetypeStore(): ArchetypeStore {
    * ```
    */
   const removeFromArchetype = (
-    entity: Entity,
+    _entity: Entity,
     location: EntityLocation
   ): Record<number, unknown> => {
     const { archetype, row } = location;

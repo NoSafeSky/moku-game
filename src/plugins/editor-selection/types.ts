@@ -70,6 +70,18 @@ export type State = {
   detach: (() => void) | undefined;
 };
 
+/** Logger surface injected by the common logPlugin (`ctx.log`). */
+export type Log = {
+  /** Log at debug level. */
+  debug(message: string): void;
+  /** Log at info level. */
+  info(message: string): void;
+  /** Log a warning. */
+  warn(message: string): void;
+  /** Log an error. */
+  error(message: string): void;
+};
+
 /** Public API surface (`app["editor-selection"]`). */
 export type Api = {
   /** Enter edit mode: make the pick layer interactive, stamp live views, attach the pointerdown listener. No-op headless / before start / if the layer is missing. */

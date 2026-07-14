@@ -10,6 +10,7 @@ import {
   commandsPlugin,
   contextPlugin,
   ecsPlugin,
+  editorSelectionPlugin,
   inputPlugin,
   loopPlugin,
   mcpPlugin,
@@ -18,6 +19,7 @@ import {
   rendererPlugin,
   scenePlugin,
   schedulerPlugin,
+  serializationPlugin,
   storagePlugin,
   tweenPlugin,
   uiPlugin,
@@ -43,10 +45,13 @@ const framework = createCore(coreConfig, {
     cameraPlugin,
     mcpPlugin,
     // ─── Editor subsystem (Layer-2) — registered after mcp; commands/reflection are the
-    //     E1 foundations (write-authority + field-schema registry). editor-bridge (E4)
+    //     E1 foundations (write-authority + field-schema registry); serialization +
+    //     editor-selection are E2 (scene persistence + viewport picking). editor-bridge (E4)
     //     depends on mcp + all editor plugins and becomes the last array entry.
     commandsPlugin,
-    reflectionPlugin
+    reflectionPlugin,
+    serializationPlugin,
+    editorSelectionPlugin
   ],
   // Framework default plugin configuration. Consumers override via createApp({ pluginConfigs }).
   pluginConfigs: {
