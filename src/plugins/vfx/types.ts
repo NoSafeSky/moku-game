@@ -373,6 +373,15 @@ export type Api = {
    */
   stopShake(): void;
   /**
+   * Clear all transient vfx runtime (the editor **exit-play** reset — see editor-runtime's
+   * `reset()` Retrofit Convention). Despawns every live `Emitter`/`Particle`/`FloatingText` effect
+   * entity through the ECS command buffer (the renderer disposes their views on despawn), zeroes
+   * `trauma` and `particleCount`, resets the shake stage offset to (0, 0), and clears the
+   * floating-text view handle map. The named component tokens stay **defined** — only the live
+   * instances go.
+   */
+  reset(): void;
+  /**
    * Scale-pop an entity's Transform (hit/pickup juice): pops to `scale`× then
    * eases back. Requires a Transform on the entity; no-op otherwise. Re-calling
    * refreshes the pop.

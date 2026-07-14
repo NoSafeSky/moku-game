@@ -1,23 +1,45 @@
 /**
- * @file editor-gizmos plugin — state factory skeleton.
+ * @file editor-gizmos plugin — state factory.
+ *
+ * Creates the initial mutable editor-gizmos state: not started, disabled, no overlay/
+ * handle (built in `onStart` only when a renderer stage exists), mode seeded to
+ * `"translate"`, no in-flight drag, no injected gesture sink, and every captured
+ * dependency handle `undefined` until `onStart` captures them. `snap` is re-seeded
+ * from `config.snap` in `onStart`.
  */
 import type { Config, State } from "./types";
 
 /**
- * Creates initial editor-gizmos plugin state.
+ * Creates the initial editor-gizmos plugin state.
  *
- * @param _ctx - Minimal context with global and config.
- * @param _ctx.global - Global plugin registry.
- * @param _ctx.config - Resolved plugin configuration.
- * @throws {Error} Always in the skeleton — implemented during build.
+ * @param _ctx - Minimal context providing the global registry and resolved config.
+ * @param _ctx.global - Global plugin registry (unused; required by the kernel).
+ * @param _ctx.config - Resolved editor-gizmos configuration (unused at creation; `snap` is
+ *   seeded from it in `onStart`).
+ * @returns The initial editor-gizmos state (no overlay/handle/drag, `started: false`,
+ *   `mode: "translate"`, `snap: 0`).
  * @example
  * ```ts
  * const state = createState({ global: {}, config: defaultConfig });
+ * state.started; // false
+ * state.mode; // "translate"
  * ```
  */
-export function createState(_ctx: {
+export const createState = (_ctx: {
   readonly global: Readonly<Record<string, unknown>>;
   readonly config: Readonly<Config>;
-}): State {
-  throw new Error("not implemented");
-}
+}): State => ({
+  started: false,
+  enabled: false,
+  overlay: undefined,
+  handle: undefined,
+  mode: "translate",
+  snap: 0,
+  drag: undefined,
+  gestureSink: undefined,
+  stage: undefined,
+  renderer: undefined,
+  camera: undefined,
+  selection: undefined,
+  commands: undefined
+});

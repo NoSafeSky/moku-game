@@ -218,6 +218,14 @@ export type Api = {
   shake(intensity: number, duration: number, opts?: ShakeOptions): void;
 
   /**
+   * Clear all transient camera runtime (the editor **exit-play** reset — see editor-runtime's
+   * `reset()` Retrofit Convention; realizes camera Follow-up F4). Recentres to `(0, 0)`, sets
+   * `zoom → config.zoom` and `rotation → 0`, clears any `follow` target, and stops an in-flight
+   * `shake` (`shakeIntensity → 0`). The layer containers and captured tween API stay intact.
+   */
+  reset(): void;
+
+  /**
    * Map a screen-space point to world space (picking), using the current
    * centre / zoom / rotation / viewport. Works before start (reads numeric state).
    *

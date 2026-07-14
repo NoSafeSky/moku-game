@@ -1,23 +1,26 @@
 /**
- * @file editor-runtime plugin — state factory skeleton.
+ * @file editor-runtime plugin — state factory.
+ *
+ * Creates the initial mutable editor-runtime state: seeded in author (`"edit"`) mode, no
+ * pre-play snapshot, and `started: false` (the API's before-start guard no-ops every mutator
+ * until `onStart` applies the initial stage gate and flips this flag).
  */
-import type { Config, State } from "./types";
+import type { State } from "./types";
 
 /**
- * Creates initial editor-runtime plugin state.
+ * Creates the initial editor-runtime plugin state.
  *
- * @param _ctx - Minimal context with global and config.
- * @param _ctx.global - Global plugin registry.
- * @param _ctx.config - Resolved plugin configuration.
- * @throws {Error} Always in the skeleton — implemented during build.
+ * @returns The initial {@link State} — `{ mode: "edit", preplaySnapshot: undefined, started: false }`.
  * @example
  * ```ts
- * const state = createState({ global: {}, config: defaultConfig });
+ * const state = createState();
+ * state.mode; // "edit"
+ * state.preplaySnapshot; // undefined
+ * state.started; // false
  * ```
  */
-export function createState(_ctx: {
-  readonly global: Readonly<Record<string, unknown>>;
-  readonly config: Readonly<Config>;
-}): State {
-  throw new Error("not implemented");
-}
+export const createState = (): State => ({
+  mode: "edit",
+  preplaySnapshot: undefined,
+  started: false
+});

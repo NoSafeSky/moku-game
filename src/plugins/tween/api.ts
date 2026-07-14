@@ -334,6 +334,20 @@ export const createApi = (ctx: TweenApiContext): Api => {
     return makeHandle(id, done);
   };
 
+  /**
+   * Stop + drop every active tween: settle each `done` (no `onComplete`) and clear the registry.
+   * Shared by `killAll` (scene teardown) and `reset` (editor exit-play). Leaves `started`/`nextId`.
+   *
+   * @example
+   * ```ts
+   * dropAllTweens();
+   * ```
+   */
+  const dropAllTweens = (): void => {
+    for (const record of ctx.state.tweens.values()) record.settle();
+    ctx.state.tweens.clear();
+  };
+
   return {
     /**
      * Tween the numeric props of `target` to the given values (mutating `target`).
@@ -418,8 +432,20 @@ export const createApi = (ctx: TweenApiContext): Api => {
      * ```
      */
     killAll(): void {
-      for (const record of ctx.state.tweens.values()) record.settle();
-      ctx.state.tweens.clear();
+      dropAllTweens();
+    },
+
+    /**
+     * Clear all transient tween runtime (the editor exit-play reset). `killAll` semantics:
+     * settle + drop every active tween; `started`/`nextId` are left intact.
+     *
+     * @example
+     * ```ts
+     * api.reset(); // called by editor-runtime.stop() on exit-play
+     * ```
+     */
+    reset(): void {
+      dropAllTweens();
     },
 
     /**

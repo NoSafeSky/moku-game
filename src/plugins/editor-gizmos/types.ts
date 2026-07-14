@@ -110,6 +110,18 @@ export type State = {
   commands: CommandsApi | undefined;
 };
 
+/** Logger surface injected by the common logPlugin (`ctx.log`). */
+export type Log = {
+  /** Log at debug level. */
+  debug(message: string): void;
+  /** Log at info level. */
+  info(message: string): void;
+  /** Log a warning. */
+  warn(message: string): void;
+  /** Log an error. */
+  error(message: string): void;
+};
+
 /** Public API surface (`app["editor-gizmos"]`). */
 export type Api = {
   /** Show the gizmo overlay and begin responding to selection + pointer drags. Idempotent; no-op when headless. */

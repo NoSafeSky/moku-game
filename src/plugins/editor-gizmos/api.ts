@@ -1,18 +1,170 @@
 /**
- * @file editor-gizmos plugin — API factory skeleton.
+ * @file editor-gizmos plugin — API factory (the `app["editor-gizmos"]` surface).
+ *
+ * `createApi` assembles the public control surface: `enable`/`disable` toggle the overlay
+ * (guarded no-ops before start or when headless — no renderer stage means no overlay was
+ * built), `setMode`/`setSnap`/`mode`/`setGestureSink` are pure state writers that work
+ * before start and headless (they never touch Pixi). The drag pipeline itself
+ * (`onHandleDown`/`onGlobalMove`/`onGlobalUp`) lives in `interaction.ts`, which this file
+ * delegates to for `enable`'s handle sync and `disable`'s drag-abort — mirroring how
+ * `editor-selection`'s `api.ts` delegates to `pick.ts`. No dependency is `require`d at call
+ * time: every dependency API (`renderer`/`camera`/`editor-selection`/`commands`) is captured
+ * once into `state` by `onStart` (the `camera` captured-deps pattern).
  */
-import type { Api } from "./types";
+import { abortDrag, syncHandle } from "./interaction";
+import type { Api, Config, GestureSink, GizmoMode, Log, State } from "./types";
+
+/**
+ * Structural context required by {@link createApi} (and shared with `interaction.ts`), so
+ * unit tests can pass a minimal mock without wiring the full kernel. No `require` — every
+ * dependency is captured into `state` by `onStart` and read from `state` at call time.
+ */
+export type GizmosApiContext = {
+  /** Resolved editor-gizmos configuration (`overlayLayer`, `snap`, `translateOnly`). */
+  readonly config: Readonly<Config>;
+  /** editor-gizmos plugin state — overlay/handle chrome, mode/snap, drag, captured deps. */
+  readonly state: State;
+  /** Logger from the common logPlugin (before-start / headless / MVP-stub warnings). */
+  readonly log: Log;
+};
 
 /**
  * Creates the editor-gizmos plugin API surface.
  *
- * @param _ctx - Plugin context (unused in skeleton).
- * @throws {Error} Always in the skeleton — implemented during build.
+ * @param ctx - Plugin context (structural — `config` + `state` + `log`).
+ * @returns The editor-gizmos {@link Api} object.
  * @example
  * ```ts
  * const api = createApi(ctx);
+ * api.enable();
+ * api.setSnap(32);
  * ```
  */
-export function createApi(_ctx: unknown): Api {
-  throw new Error("not implemented");
-}
+export const createApi = (ctx: GizmosApiContext): Api => {
+  /**
+   * Before-start guard shared by `enable`/`disable`: warns and returns `false` when
+   * `onStart` has not yet run.
+   *
+   * @param method - The API method name, for the warning message.
+   * @returns `true` when the plugin has started, else `false`.
+   * @example
+   * ```ts
+   * if (!requireStarted("enable")) return;
+   * ```
+   */
+  const requireStarted = (method: string): boolean => {
+    if (ctx.state.started) return true;
+    ctx.log.warn(`[editor-gizmos] ${method}() called before the plugin started — no-op.`);
+    return false;
+  };
+
+  return {
+    /**
+     * Show the gizmo overlay and begin responding to selection + pointer drags: makes the
+     * overlay visible + interactive and syncs the handle to the current selection.
+     * Idempotent — re-calling refreshes the handle position (the MVP's "refresh on selection
+     * change" path). No-op (warns) before start or when headless (no renderer stage).
+     *
+     * @example
+     * ```ts
+     * app["editor-gizmos"].enable();
+     * ```
+     */
+    enable(): void {
+      if (!requireStarted("enable")) return;
+      const { overlay } = ctx.state;
+      if (!overlay) {
+        ctx.log.warn("[editor-gizmos] enable() ignored — no renderer stage (headless).");
+        return;
+      }
+      ctx.state.enabled = true;
+      overlay.visible = true;
+      overlay.eventMode = "static";
+      overlay.interactiveChildren = true;
+      syncHandle(ctx);
+    },
+
+    /**
+     * Hide the overlay and stop responding to pointer input. Aborts any in-flight drag
+     * WITHOUT committing (no `commands` write happens before `pointerup`, so an abort leaves
+     * the world untouched). Idempotent.
+     *
+     * @example
+     * ```ts
+     * app["editor-gizmos"].disable();
+     * ```
+     */
+    disable(): void {
+      if (!requireStarted("disable")) return;
+      abortDrag(ctx);
+      ctx.state.enabled = false;
+      const { overlay } = ctx.state;
+      if (overlay) {
+        overlay.visible = false;
+        overlay.interactiveChildren = false;
+      }
+    },
+
+    /**
+     * Set the active manipulation mode. MVP: only `"translate"` is functional —
+     * `"rotate"`/`"scale"` warn via `ctx.log` and no-op while `config.translateOnly` is
+     * `true` (`mode()` stays `"translate"`).
+     *
+     * @param mode - The manipulation mode to switch to.
+     * @example
+     * ```ts
+     * app["editor-gizmos"].setMode("translate");
+     * ```
+     */
+    setMode(mode: GizmoMode): void {
+      if (mode !== "translate" && ctx.config.translateOnly) {
+        ctx.log.warn(
+          `[editor-gizmos] '${mode}' mode is not implemented in the MVP (translate only) — staying in translate.`
+        );
+        return;
+      }
+      ctx.state.mode = mode;
+    },
+
+    /**
+     * Set the translate snap increment in world units, clamped to `>= 0` (`0` disables
+     * snapping). Works before start and headless.
+     *
+     * @param n - The desired snap increment in world units.
+     * @example
+     * ```ts
+     * app["editor-gizmos"].setSnap(32);
+     * ```
+     */
+    setSnap(n: number): void {
+      ctx.state.snap = Math.max(0, n);
+    },
+
+    /**
+     * The current active manipulation mode.
+     *
+     * @returns The current {@link GizmoMode}.
+     * @example
+     * ```ts
+     * app["editor-gizmos"].mode(); // "translate"
+     * ```
+     */
+    mode(): GizmoMode {
+      return ctx.state.mode;
+    },
+
+    /**
+     * Inject the editor-history gesture sink (the decoupling seam — wired by
+     * `editor-bridge`); pass `undefined` to clear it back to the no-history commit path.
+     *
+     * @param sink - The gesture sink to inject, or `undefined` to clear.
+     * @example
+     * ```ts
+     * app["editor-gizmos"].setGestureSink(historySink);
+     * ```
+     */
+    setGestureSink(sink: GestureSink | undefined): void {
+      ctx.state.gestureSink = sink;
+    }
+  };
+};

@@ -347,6 +347,42 @@ export const createApi = (ctx: VfxApiContext): Api => {
     },
 
     /**
+     * Clear all transient vfx runtime (the editor exit-play reset). Despawns every live
+     * Emitter/Particle/FloatingText effect entity (the ghost state a SceneDocument does not
+     * capture), zeroes `trauma`/`particleCount`, resets the shake stage offset, and clears the
+     * floating-text view handle map. Named component tokens stay defined; no-op before start.
+     *
+     * @example
+     * ```ts
+     * api.reset(); // called by editor-runtime.stop() on exit-play
+     * ```
+     */
+    reset(): void {
+      const r = resolved();
+      if (!r) return; // not started — nothing to reset
+
+      // Despawn every live effect entity via `updateEach` — which buffers the despawns so the
+      // scan is not corrupted mid-iteration (the `removeEmitter` precedent). The renderer disposes
+      // each entity's view on despawn.
+      r.world.query(r.Emitter).updateEach((_value, entity) => {
+        r.world.despawn(entity);
+      });
+      r.world.query(r.Particle).updateEach((_value, entity) => {
+        r.world.despawn(entity);
+      });
+      r.world.query(r.FloatingText).updateEach((_value, entity) => {
+        r.world.despawn(entity);
+      });
+
+      // Drop the floating-text handle references (views disposed by the renderer above) and zero
+      // the shake + particle accumulators, including the live stage shake offset.
+      ctx.state.views.clear();
+      ctx.state.trauma = 0;
+      ctx.state.particleCount = 0;
+      r.renderer.getStage()?.position.set(0, 0);
+    },
+
+    /**
      * Scale-pop an entity's Transform: pops to `scale`× then eases back over
      * `duration`. No-op if the entity is dead or lacks a Transform. Re-calling
      * refreshes the pop while preserving the originally-captured base scale.

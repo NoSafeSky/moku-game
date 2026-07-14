@@ -1,9 +1,19 @@
 /**
- * @file editor-runtime plugin — public type surface (Config, State, Mode, Api, Events).
+ * @file editor-runtime plugin — public type surface (Config, State, Mode, Api, Events) plus the
+ * structural dependency types the API resolves via `ctx.require` at call time (the `platform`
+ * precedent — no dependency API is captured on state).
  */
+import type { cameraPlugin } from "../camera";
+import type { commandsPlugin } from "../commands";
+import type { RestoreEntity, RestoreSource } from "../commands/types";
+import type { loopPlugin } from "../loop";
 import type { TimeStepResult } from "../loop/types";
+import type { schedulerPlugin } from "../scheduler";
 import type { Stage } from "../scheduler/types";
+import type { serializationPlugin } from "../serialization";
 import type { SceneDocument } from "../serialization/types";
+import type { tweenPlugin } from "../tween";
+import type { vfxPlugin } from "../vfx";
 
 /** The two editor modes. */
 export type Mode = "edit" | "play";
@@ -59,4 +69,68 @@ export type Api = {
 export type Events = {
   /** Fired after an edit↔play flip — a coarse, user-gesture-frequency milestone. */
   "editor-runtime:modeChanged": { mode: Mode };
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Structural dependency types (obtained via ctx.require — no internal imports)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The subset of the `loop` API editor-runtime calls: start the frame loop, single-step it. */
+export type LoopDep = {
+  /** Start the rAF loop (no-op if already running). Called by `enterPlay`. */
+  start(): void;
+  /** Advance exactly one fixed step + render, returning the just-advanced clock. Called by `step`. */
+  step(): TimeStepResult;
+};
+
+/** The subset of the `scheduler` API editor-runtime calls: gate which stages `tick` runs. */
+export type SchedulerDep = {
+  /** Gate active stages (`undefined` = all). `enterEdit`/`stop` pass `config.editStages`; `enterPlay` passes `undefined`. */
+  setActiveStages(stages: readonly Stage[] | undefined): void;
+};
+
+/** The subset of the `serialization` API editor-runtime calls: capture the pre-play snapshot. */
+export type SerializationDep = {
+  /** Capture the live editor-owned ECS world as a versioned `SceneDocument`. Called by `enterPlay`. */
+  serialize(): SceneDocument;
+};
+
+/** The subset of the `commands` API editor-runtime calls: the non-undoable exit-play reseed. */
+export type CommandsDep = {
+  /** Non-undoable bulk reseed from the pre-play snapshot's entities. Called by `stop`. */
+  restore(entities: readonly RestoreEntity[], source: RestoreSource): void;
+};
+
+/**
+ * The subset of the `tween` / `vfx` / `camera` APIs editor-runtime calls — just `reset()`, the
+ * ghost-state sweep each MVP target implements (see `## reset() Retrofit Convention`).
+ */
+export type ResettableDep = {
+  /** Clear this plugin's transient runtime state (the editor exit-play reset). Called by `stop`. */
+  reset(): void;
+};
+
+/**
+ * The `require` surface editor-runtime's context exposes: a single overloaded function mapping
+ * each dependency plugin instance to its structural API subset (the `platform` precedent — no
+ * dependency API is captured on state; every transition resolves what it needs at call time).
+ */
+export type EditorRuntimeRequire = ((plugin: typeof loopPlugin) => LoopDep) &
+  ((plugin: typeof schedulerPlugin) => SchedulerDep) &
+  ((plugin: typeof serializationPlugin) => SerializationDep) &
+  ((plugin: typeof commandsPlugin) => CommandsDep) &
+  ((plugin: typeof tweenPlugin) => ResettableDep) &
+  ((plugin: typeof vfxPlugin) => ResettableDep) &
+  ((plugin: typeof cameraPlugin) => ResettableDep);
+
+/** Logger surface injected by the common logPlugin (`ctx.log`). */
+export type Log = {
+  /** Log at debug level. */
+  debug(message: string): void;
+  /** Log at info level. */
+  info(message: string): void;
+  /** Log a warning. */
+  warn(message: string): void;
+  /** Log an error. */
+  error(message: string): void;
 };

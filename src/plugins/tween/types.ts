@@ -167,6 +167,13 @@ export type Api = {
    */
   killAll(): void;
   /**
+   * Clear all transient tween runtime (the editor **exit-play** reset — see editor-runtime's
+   * `reset()` Retrofit Convention). `killAll` semantics: settle + drop every active tween
+   * (onComplete does NOT fire). `started` stays true and `nextId` is not rewound; the advance
+   * system, easing table, and `lerp` remain.
+   */
+  reset(): void;
+  /**
    * Number of currently-active tweens (diagnostics/tests).
    *
    * @returns The count of active tweens.

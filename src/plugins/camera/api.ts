@@ -406,6 +406,28 @@ export const createApi = (ctx: CameraApiContext): Api => {
     },
 
     /**
+     * Clear all transient camera runtime (the editor exit-play reset; realizes Follow-up F4).
+     * Recentres to (0, 0), sets `zoom → config.zoom`, `rotation → 0`, clears any `follow` target,
+     * and stops an in-flight `shake`. Layer containers + captured tween API stay intact. Reads only
+     * numeric state, so it is safe/idempotent (works before start).
+     *
+     * @example
+     * ```ts
+     * api.reset(); // called by editor-runtime.stop() on exit-play
+     * ```
+     */
+    reset(): void {
+      ctx.state.center.x = 0;
+      ctx.state.center.y = 0;
+      ctx.state.zoom = ctx.config.zoom;
+      ctx.state.rotation = 0;
+      ctx.state.follow = undefined;
+      ctx.state.shakeHandle?.stop();
+      ctx.state.shakeHandle = undefined;
+      ctx.state.shakeIntensity = 0;
+    },
+
+    /**
      * Map a screen-space point to world space (picking). Pure — works before start.
      *
      * @param point - The screen-space point.
