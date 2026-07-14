@@ -2,9 +2,51 @@
   :scope {
     display: flex;
     flex-direction: column;
-    gap: 0.125rem;
-    padding: 0.5rem;
-    overflow-y: auto;
+    min-block-size: 0;
+    overflow: hidden;
     background: var(--surface-panel);
+    border-inline-end: 1px solid var(--border-default);
+  }
+
+  [data-panel-header] {
+    padding: 0.5rem 0.75rem;
+    border-block-end: 1px solid var(--border-default);
+  }
+
+  h2 {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+  }
+
+  [data-tree] {
+    flex: 1;
+    list-style: none;
+    padding: 0.25rem;
+    overflow-y: auto;
+  }
+
+  [data-tree]:empty::before {
+    content: "No entities";
+    display: block;
+    padding: 0.75rem;
+    color: var(--text-muted);
+  }
+
+  li {
+    padding: 0.3rem 0.5rem;
+    border-radius: 0.25rem;
+    cursor: pointer;
+
+    &:hover {
+      background: var(--surface-control);
+    }
+
+    &[data-selected] {
+      background: var(--accent);
+      color: var(--accent-contrast);
+    }
   }
 }

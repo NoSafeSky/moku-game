@@ -1,4 +1,0 @@
-@layer reset, tokens, base, components, panels, utilities;
-@import "./reset.css" layer(reset);
-@import "./tokens.css" layer(tokens);
-@import "./base.css" layer(base);

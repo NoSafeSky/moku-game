@@ -2,7 +2,10 @@
 export function SceneTree() {
   return (
     <section data-island="scene-tree" data-panel="scene-tree" aria-label="Scene tree">
-      {/* scene-tree island renders entity rows here */}
+      <header data-panel-header>
+        <h2>Scene</h2>
+      </header>
+      <ul data-tree aria-label="Entities" />
     </section>
   );
 }

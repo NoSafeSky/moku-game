@@ -2,7 +2,10 @@
 export function Inspector() {
   return (
     <section data-island="inspector" data-panel="inspector" aria-label="Inspector">
-      {/* inspector island renders selected-entity field controls here */}
+      <header data-panel-header>
+        <h2>Inspector</h2>
+      </header>
+      <div data-fields aria-live="polite" />
     </section>
   );
 }

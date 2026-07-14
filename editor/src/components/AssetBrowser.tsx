@@ -2,7 +2,10 @@
 export function AssetBrowser() {
   return (
     <section data-island="asset-browser" data-panel="asset-browser" aria-label="Asset browser">
-      {/* asset-browser island renders asset entries here */}
+      <header data-panel-header>
+        <h2>Assets</h2>
+      </header>
+      <ul data-assets aria-label="Assets" />
     </section>
   );
 }

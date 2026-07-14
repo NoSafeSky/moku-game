@@ -2,9 +2,44 @@
   :scope {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    padding: 0.375rem 0.75rem;
-    border-block-end: 1px solid var(--text-primary);
+    gap: 1rem;
+    padding: 0.5rem 0.75rem;
     background: var(--surface-panel);
+    border-block-end: 1px solid var(--border-default);
+  }
+
+  [data-brand] {
+    font-weight: 600;
+    margin-inline-end: auto;
+  }
+
+  [data-group] {
+    display: flex;
+    gap: 0.25rem;
+  }
+
+  button {
+    padding: 0.35rem 0.7rem;
+    background: var(--surface-control);
+    color: var(--text-primary);
+    border: 1px solid var(--border-default);
+    border-radius: 0.375rem;
+    cursor: pointer;
+
+    &:hover {
+      background: var(--surface-control-hover);
+    }
+
+    &[data-disabled] {
+      opacity: 0.5;
+      pointer-events: none;
+    }
+  }
+
+  /* The island sets [data-mode] from the snapshot; the active mode's button reads as accented. */
+  :scope[data-mode="play"] [data-action="play"] {
+    background: var(--accent);
+    color: var(--accent-contrast);
+    border-color: var(--accent);
   }
 }

@@ -1,10 +1,49 @@
 @scope ([data-island="asset-browser"]) {
   :scope {
     display: flex;
-    gap: 0.5rem;
-    padding: 0.5rem;
-    overflow-x: auto;
-    border-block-start: 1px solid var(--text-primary);
+    flex-direction: column;
+    block-size: 10rem;
+    overflow: hidden;
     background: var(--surface-panel);
+    border-block-start: 1px solid var(--border-default);
+  }
+
+  [data-panel-header] {
+    padding: 0.5rem 0.75rem;
+    border-block-end: 1px solid var(--border-default);
+  }
+
+  h2 {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+  }
+
+  [data-assets] {
+    flex: 1;
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-content: start;
+    padding: 0.75rem;
+    overflow-y: auto;
+  }
+
+  [data-assets]:empty::before {
+    content: "No assets";
+    color: var(--text-muted);
+  }
+
+  li {
+    inline-size: 5rem;
+    padding: 0.4rem;
+    text-align: center;
+    font-size: 0.7rem;
+    background: var(--surface-control);
+    border: 1px solid var(--border-default);
+    border-radius: 0.375rem;
   }
 }

@@ -2,9 +2,59 @@
   :scope {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
+    min-block-size: 0;
+    overflow: hidden;
+    background: var(--surface-panel);
+    border-inline-start: 1px solid var(--border-default);
+  }
+
+  [data-panel-header] {
+    padding: 0.5rem 0.75rem;
+    border-block-end: 1px solid var(--border-default);
+  }
+
+  h2 {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+  }
+
+  [data-fields] {
+    flex: 1;
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.4rem 0.6rem;
+    align-content: start;
+    align-items: center;
     padding: 0.75rem;
     overflow-y: auto;
-    background: var(--surface-panel);
+  }
+
+  [data-fields]:empty::before {
+    content: "Select an entity";
+    grid-column: 1 / -1;
+    color: var(--text-muted);
+  }
+
+  /* Controls the inspector island injects via field-controls.renderControl(). */
+  input,
+  select {
+    inline-size: 100%;
+    padding: 0.25rem 0.4rem;
+    background: var(--surface-control);
+    color: var(--text-primary);
+    border: 1px solid var(--border-default);
+    border-radius: 0.25rem;
+  }
+
+  [data-field-kind="vector2"] {
+    display: flex;
+    gap: 0.4rem;
+  }
+
+  [data-invalid] {
+    border-color: var(--accent);
   }
 }

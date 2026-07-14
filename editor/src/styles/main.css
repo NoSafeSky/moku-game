@@ -1,0 +1,18 @@
+/*
+ * Style entry — the framework build's CSS pass resolves `src/styles/main.css` and follows these
+ * @imports (bundled by Bun.build into a content-hashed `assets/main-<hash>.css`). Layer order is
+ * declared once here; reset/tokens/base self-assign their layer, and each component sheet is
+ * assigned its layer at import (component sheets carry a bare @scope with no self-layer).
+ */
+@layer reset, tokens, base, components, panels, utilities;
+
+@import "./reset.css";
+@import "./tokens.css";
+@import "./base.css";
+
+@import "../components/EditorPage.css" layer(components);
+@import "../components/Toolbar.css" layer(panels);
+@import "../components/SceneTree.css" layer(panels);
+@import "../components/Viewport.css" layer(panels);
+@import "../components/Inspector.css" layer(panels);
+@import "../components/AssetBrowser.css" layer(panels);
