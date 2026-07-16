@@ -1,11 +1,13 @@
 /**
  * @file camera plugin — onStart lifecycle wiring.
  *
- * `start` runs after `renderer` / `scheduler` / `tween` have started (guaranteed by
- * `depends`) to (1) capture the tween API and seed `zoom` from config, (2) capture
- * `renderer.getStage()` and — when a stage exists — build the default `world`
- * Container at stage index 0 (below the ui overlay), and (3) register the `"sync"`-stage
- * apply system, then flip `started` so the API leaves its before-start guard.
+ * `start` runs after `renderer` / `scheduler` / `tween` / `input` have started
+ * (guaranteed by `depends`) to (1) capture the tween API and seed `zoom` from config,
+ * (2) capture `renderer.getStage()` and — when a stage exists — build the default
+ * `world` Container at stage index 0 (below the ui overlay), (3) register the
+ * `"sync"`-stage apply system, (4) **when `config.editorControls`** capture the input
+ * API and register the `"update"`-stage editor-control system, then flip `started` so
+ * the API leaves its before-start guard.
  *
  * This is deps-ready wiring — the renderer / ui / vfx onStart shape — NOT a per-frame
  * or resource-owning path. There is no onStop: every Container the camera builds is
@@ -14,8 +16,14 @@
  *
  * **Headless-safe:** with no stage the `world` layer is never created, so the apply
  * system's container writes are guarded no-ops while the numeric state still updates.
+ *
+ * **Phase-1 F2:** when `config.editorControls` is `false` (the default), step (4) is
+ * skipped entirely — no input is captured, no editor-control system is registered, and
+ * the `inputPlugin` dependency edge stays declared-but-inert.
  */
 import { Container } from "pixi.js";
+import { inputPlugin } from "../input";
+import type { Api as InputApi } from "../input/types";
 import { rendererPlugin } from "../renderer";
 import type { Api as RendererApi } from "../renderer/types";
 import { schedulerPlugin } from "../scheduler";
@@ -23,6 +31,7 @@ import type { Api as SchedulerApi } from "../scheduler/types";
 import { tweenPlugin } from "../tween";
 import type { Api as TweenApi } from "../tween/types";
 import { createApplySystem } from "./apply";
+import { createEditorControlSystem } from "./editor-controls";
 import type { Config, State } from "./types";
 
 /**
@@ -30,26 +39,29 @@ import type { Config, State } from "./types";
  * unit tests can pass a minimal mock without wiring the full kernel.
  */
 export type StartContext = {
-  /** Resolved camera configuration (seed zoom + apply-system stage). */
+  /** Resolved camera configuration (seed zoom + apply-system stage + editorControls gate). */
   readonly config: Readonly<Config>;
-  /** camera plugin state (mutated to store the captured stage / tween / world layer). */
+  /** camera plugin state (mutated to store the captured stage / tween / input / world layer). */
   readonly state: State;
-  /** Require a dependency's API by plugin instance (`renderer` / `scheduler` / `tween`). */
+  /** Require a dependency's API by plugin instance (`renderer` / `scheduler` / `tween` / `input`). */
   require: ((plugin: typeof rendererPlugin) => RendererApi) &
     ((plugin: typeof schedulerPlugin) => SchedulerApi) &
-    ((plugin: typeof tweenPlugin) => TweenApi);
+    ((plugin: typeof tweenPlugin) => TweenApi) &
+    ((plugin: typeof inputPlugin) => InputApi);
 };
 
 /**
  * Starts the camera plugin: captures the tween API + stage, builds the default `world`
- * layer when a stage exists, and registers the apply system. Runs identically headless
- * — with no stage the world layer stays absent and the apply system's container writes
- * no-op, while the numeric camera state still tracks.
+ * layer when a stage exists, registers the apply system, and — only when
+ * `config.editorControls` — captures the input API and registers the editor-control
+ * system. Runs identically headless — with no stage the world layer stays absent and
+ * the apply system's container writes no-op, while the numeric camera state still
+ * tracks.
  *
  * @param ctx - Structural start context (config + state + require).
  * @example
  * ```ts
- * start(ctx); // after renderer/scheduler/tween have started
+ * start(ctx); // after renderer/scheduler/tween/input have started
  * ```
  */
 export const start = (ctx: StartContext): void => {
@@ -67,9 +79,24 @@ export const start = (ctx: StartContext): void => {
     ctx.state.layers.set("world", { container: world, factor: 1 });
   }
 
-  // (3) Register the apply system, then leave the before-start guard.
-  ctx
-    .require(schedulerPlugin)
-    .addSystem(ctx.config.updateStage, createApplySystem({ state: ctx.state, config: ctx.config }));
+  // (3) Register the apply system.
+  const scheduler = ctx.require(schedulerPlugin);
+  scheduler.addSystem(
+    ctx.config.updateStage,
+    createApplySystem({ state: ctx.state, config: ctx.config })
+  );
+
+  // (4) Phase-1 F2 — only when opted in: capture input + register the editor-control
+  //     system. Left entirely skipped when false — no input read, no extra system.
+  if (ctx.config.editorControls) {
+    const input = ctx.require(inputPlugin);
+    ctx.state.input = input;
+    scheduler.addSystem(
+      "update",
+      createEditorControlSystem({ state: ctx.state, config: ctx.config, input })
+    );
+  }
+
+  // Leave the before-start guard.
   ctx.state.started = true;
 };

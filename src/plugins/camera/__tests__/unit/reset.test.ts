@@ -18,6 +18,7 @@ const makeConfig = (over: Partial<Config> = {}): Config => ({
   width: 800,
   height: 600,
   updateStage: "sync",
+  editorControls: false,
   ...over
 });
 

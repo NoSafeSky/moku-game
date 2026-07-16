@@ -15,7 +15,8 @@ const config: Config = {
   followLerp: 0.15,
   width: 800,
   height: 600,
-  updateStage: "sync"
+  updateStage: "sync",
+  editorControls: false
 };
 
 describe("createState", () => {
@@ -32,6 +33,7 @@ describe("createState", () => {
     expect(state.shakeIntensity).toBe(0);
     expect(state.shakeHandle).toBeUndefined();
     expect(state.tween).toBeUndefined();
+    expect(state.input).toBeUndefined();
   });
 
   it("returns a fresh layers Map and center on each call (no shared references)", () => {

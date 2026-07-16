@@ -25,6 +25,7 @@ const makeConfig = (over: Partial<Config> = {}): Config => ({
   width: 800,
   height: 600,
   updateStage: "sync",
+  editorControls: false,
   ...over
 });
 
@@ -266,6 +267,55 @@ describe("api — pure readers (work before start)", () => {
     const { api } = unstartedCtx();
     expect(api.getZoom()).toBe(1);
     expect(api.getRotation()).toBe(0);
+  });
+});
+
+describe("api — editor controls (Phase-1 F2; instant, valid before start)", () => {
+  it("focus snaps the center to the target and clears follow, before start", () => {
+    const { api, state } = unstartedCtx();
+    state.follow = { x: 9, y: 9 };
+    api.focus({ x: 100, y: 50 });
+    expect(state.center).toEqual({ x: 100, y: 50 });
+    expect(state.follow).toBeUndefined();
+  });
+
+  it("focus sets zoom (clamped) when opts.zoom is provided", () => {
+    const { api, state } = unstartedCtx();
+    api.focus({ x: 0, y: 0 }, { zoom: 50 }); // clamps to maxZoom 10
+    expect(state.zoom).toBe(10);
+  });
+
+  it("zoomAt keeps the cursor's world point fixed and clears follow, before start", () => {
+    const { api, state } = unstartedCtx();
+    state.center.x = 20;
+    state.follow = { x: 1, y: 1 };
+    const cursor = { x: 500, y: 200 };
+    const before = api.screenToWorld(cursor);
+
+    api.zoomAt(cursor, 2);
+
+    const after = api.screenToWorld(cursor);
+    expect(after.x).toBeCloseTo(before.x, 6);
+    expect(after.y).toBeCloseTo(before.y, 6);
+    expect(state.zoom).toBeCloseTo(2, 6);
+    expect(state.follow).toBeUndefined();
+  });
+
+  it("panBy moves the center by the world-converted delta and clears follow, before start", () => {
+    const { api, state } = unstartedCtx();
+    state.follow = { x: 1, y: 1 };
+    api.panBy(10, -5); // identity zoom/rotation → world delta === screen delta
+    expect(state.center.x).toBeCloseTo(-10, 6);
+    expect(state.center.y).toBeCloseTo(5, 6);
+    expect(state.follow).toBeUndefined();
+  });
+
+  it("none of focus/zoomAt/panBy warn — they are not behind the started guard", () => {
+    const { api, log } = unstartedCtx();
+    api.focus({ x: 0, y: 0 });
+    api.zoomAt({ x: 400, y: 300 }, 1.1);
+    api.panBy(5, 5);
+    expect(log.warn).not.toHaveBeenCalled();
   });
 });
 

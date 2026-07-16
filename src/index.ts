@@ -8,6 +8,7 @@ import {
   audioPlugin,
   cameraPlugin,
   commandsPlugin,
+  componentRegistryPlugin,
   contextPlugin,
   ecsPlugin,
   editorBridgePlugin,
@@ -15,6 +16,7 @@ import {
   editorHistoryPlugin,
   editorRuntimePlugin,
   editorSelectionPlugin,
+  hierarchyPlugin,
   inputPlugin,
   loopPlugin,
   mcpPlugin,
@@ -56,6 +58,14 @@ const framework = createCore(coreConfig, {
     //     registered LAST (all nine editor edges point backwards, so this is topologically valid).
     commandsPlugin,
     reflectionPlugin,
+    // hierarchy owns the scene-graph Node component + the sync-stage world-transform system, so it
+    // must follow ALL FOUR of its real deps — ecs/renderer (above) and commands/reflection (just
+    // registered). A literal "after renderer" placement would splice it before commands/reflection
+    // and break its onStart ctx.require calls. component-registry is a dependency-free catalog
+    // (empty depends), so its position is arbitrary; it sits beside hierarchy for cohesion and
+    // ahead of graphics-2d (F3), which registers its addable components into it at onStart.
+    componentRegistryPlugin,
+    hierarchyPlugin,
     serializationPlugin,
     editorSelectionPlugin,
     editorHistoryPlugin,

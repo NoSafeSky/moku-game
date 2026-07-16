@@ -7,8 +7,12 @@
  * options re-use `tween`'s `TweenOptions` / `Easing` / `TweenHandle`, and
  * `updateStage` re-uses `scheduler`'s `Stage` — so nothing here re-declares easing
  * or the stage tuple.
+ *
+ * **Phase-1 F2** adds the opt-in `editorControls` config field, the captured
+ * `state.input`, and the instant `focus` / `zoomAt` / `panBy` editor-control methods.
  */
 import type { Container } from "pixi.js";
+import type { Api as InputApi } from "../input/types";
 import type { Stage } from "../scheduler/types";
 import type { Easing, Api as TweenApi, TweenHandle, TweenOptions } from "../tween/types";
 
@@ -64,6 +68,15 @@ export type Config = {
    * @default "sync"
    */
   updateStage: Stage;
+  /**
+   * When true, `onStart` captures `app.input` and registers an input-driven
+   * editor-control system (wheel → cursor-anchored `zoomAt`; middle-button/space
+   * drag → `panBy`) in the `"update"` stage. Adds the `input` dependency edge, which
+   * stays **inert** while false (no system registered, no per-frame input read).
+   *
+   * @default false
+   */
+  editorControls: boolean;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -240,6 +253,48 @@ export type Api = {
    * @returns The corresponding screen-space point.
    */
   worldToScreen(point: Point): Point;
+
+  // — Editor controls (Phase-1 F2; instant, tween-free, valid before start — mutate only numeric state) —
+
+  /**
+   * Frame a world point: snap the centre to `target` and optionally set zoom
+   * (clamped to `[minZoom, maxZoom]`). Clears follow. Instant (no tween) — valid
+   * before start (mutates only numeric state, like `setPosition` / `setZoom`).
+   *
+   * @param target - The world point to centre the camera on.
+   * @param opts - Optional zoom to set alongside the centre.
+   * @param opts.zoom - Zoom level to apply, clamped to `[minZoom, maxZoom]`.
+   * @example
+   * ```ts
+   * api.focus({ x: 100, y: 50 }, { zoom: 2 });
+   * ```
+   */
+  focus(target: Point, opts?: { zoom?: number }): void;
+  /**
+   * Cursor-anchored zoom: scale `zoom` by `factor` (clamped to `[minZoom, maxZoom]`)
+   * while keeping the world point under `screen` fixed (via `screenToWorld` before
+   * and after). Clears follow. Instant — valid before start.
+   *
+   * @param screen - The screen-space anchor point (e.g. the pointer position).
+   * @param factor - The zoom multiplier (e.g. `Math.exp(-deltaY * sensitivity)`).
+   * @example
+   * ```ts
+   * api.zoomAt({ x: pointerX, y: pointerY }, 1.1); // zoom in 10%, cursor-anchored
+   * ```
+   */
+  zoomAt(screen: Point, factor: number): void;
+  /**
+   * Free-pan by a screen-pixel delta, converted to world space (rotation-aware,
+   * `÷zoom`) and subtracted from the centre. Clears follow. Instant — valid before start.
+   *
+   * @param dxScreen - Horizontal screen-pixel delta.
+   * @param dyScreen - Vertical screen-pixel delta.
+   * @example
+   * ```ts
+   * api.panBy(dx, dy); // drag pan by a pointer-move delta
+   * ```
+   */
+  panBy(dxScreen: number, dyScreen: number): void;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -271,6 +326,12 @@ export type State = {
   shakeHandle: TweenHandle | undefined;
   /** The captured `app.tween` API (set in onStart); `undefined` before start. */
   tween: TweenApi | undefined;
+  /**
+   * The captured `app.input` API — set in onStart **only** when `config.editorControls`;
+   * `undefined` otherwise (the editor-control system is never registered, so input is
+   * never read).
+   */
+  input: InputApi | undefined;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -10,6 +10,10 @@
  *
  * - Forward:  `d = p − center`; `d' = R(rotation)·d`; `screen = d'·zoom + (w/2, h/2)`.
  * - Inverse:  `d = screen − (w/2, h/2)`; `d' = R(−rotation)·(d / zoom)`; `world = d' + center`.
+ *
+ * **Phase-1 F2** adds {@link screenDeltaToWorld} — the delta-only (no translation)
+ * counterpart of the inverse mapping, used by `panBy` / `panByScreen` to convert a
+ * screen-pixel drag delta into a world-space delta.
  */
 import type { Point } from "./types";
 
@@ -84,5 +88,37 @@ export const worldToScreen = (
   return {
     x: (dx * cos - dy * sin) * zoom + width / 2,
     y: (dx * sin + dy * cos) * zoom + height / 2
+  };
+};
+
+/**
+ * Convert a screen-pixel delta to a world-space delta (rotation-aware, zoom-scaled) —
+ * no translation, since a delta has no origin to offset. Used by `panBy` / `panByScreen`
+ * to turn a pointer-drag delta into a world-space pan.
+ *
+ * @param dxScreen - Horizontal screen-pixel delta.
+ * @param dyScreen - Vertical screen-pixel delta.
+ * @param zoom - The current zoom (screen units per world unit).
+ * @param rotation - The current rotation in radians.
+ * @returns The corresponding world-space delta.
+ * @example
+ * ```ts
+ * screenDeltaToWorld(10, 0, 2, 0); // { x: 5, y: 0 }
+ * ```
+ */
+export const screenDeltaToWorld = (
+  dxScreen: number,
+  dyScreen: number,
+  zoom: number,
+  rotation: number
+): Point => {
+  // Undo the zoom, then inverse-rotate by −rotation (no translation — this is a delta).
+  const dx = dxScreen / zoom;
+  const dy = dyScreen / zoom;
+  const cos = Math.cos(-rotation);
+  const sin = Math.sin(-rotation);
+  return {
+    x: dx * cos - dy * sin,
+    y: dx * sin + dy * cos
   };
 };

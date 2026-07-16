@@ -6,6 +6,10 @@
  * handles are `Container | undefined`, `follow` takes a structural `FollowTarget`, and
  * malformed follow targets / config fields are rejected. Mirrors the sibling `ui`
  * plugin's `types.test.ts` (one type test per API return type + config field).
+ *
+ * **Phase-1 F2** adds: `Config.editorControls` is a `boolean`; the new `focus` /
+ * `zoomAt` / `panBy` editor-control methods take their documented parameter types and
+ * return `void`.
  */
 import type { Container } from "pixi.js";
 import { describe, expect, expectTypeOf, it } from "vitest";
@@ -38,7 +42,8 @@ const typeContracts = (api: Api): readonly Config[] => {
     followLerp: 0.15,
     width: 800,
     height: 600,
-    updateStage: "sync"
+    updateStage: "sync",
+    editorControls: false
   };
   const bad: Config = {
     // @ts-expect-error — zoom must be a number, not a string.
@@ -48,7 +53,8 @@ const typeContracts = (api: Api): readonly Config[] => {
     followLerp: 0.15,
     width: 800,
     height: 600,
-    updateStage: "sync"
+    updateStage: "sync",
+    editorControls: false
   };
   return [ok, bad];
 };
@@ -75,6 +81,16 @@ describe("camera Api — return-type contracts", () => {
 
   it("follow takes an optional structural FollowTarget", () => {
     expectTypeOf<Api["follow"]>().parameter(0).toEqualTypeOf<FollowTarget | undefined>();
+  });
+
+  it("Phase-1 F2 — editor-control methods take their documented parameter/return types", () => {
+    expectTypeOf<Config["editorControls"]>().toEqualTypeOf<boolean>();
+    expectTypeOf<Api["focus"]>().parameter(0).toEqualTypeOf<Point>();
+    expectTypeOf<Api["focus"]>().returns.toEqualTypeOf<void>();
+    expectTypeOf<Api["zoomAt"]>().parameter(0).toEqualTypeOf<Point>();
+    expectTypeOf<Api["zoomAt"]>().parameter(1).toEqualTypeOf<number>();
+    expectTypeOf<Api["panBy"]>().parameter(0).toEqualTypeOf<number>();
+    expectTypeOf<Api["panBy"]>().parameter(1).toEqualTypeOf<number>();
   });
 });
 

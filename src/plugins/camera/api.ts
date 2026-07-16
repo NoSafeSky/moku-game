@@ -10,8 +10,13 @@
  * numeric state / config). The API never calls a dependency at call time — every
  * dependency call happens once in onStart — so its context is just
  * `{ config, state, log }`, and it reads the captured `state.tween` + layer `Map`.
+ *
+ * **Phase-1 F2** adds `focus` / `zoomAt` / `panBy` — thin wrappers over the shared
+ * pure `controls.ts` math. They are instant (no tween) and mutate only numeric state,
+ * so — like `setPosition` / `setZoom` — they are **not** behind the `started` guard.
  */
 import { Container } from "pixi.js";
+import { focusAt, panByScreen, zoomAtScreen } from "./controls";
 import { screenToWorld as mapScreenToWorld, worldToScreen as mapWorldToScreen } from "./transform";
 import type {
   Api,
@@ -468,6 +473,55 @@ export const createApi = (ctx: CameraApiContext): Api => {
         ctx.config.width,
         ctx.config.height
       );
+    },
+
+    /**
+     * Frame a world point: snap the centre to `target` and optionally set zoom
+     * (clamped). Clears follow. Instant (no tween) — valid before start (mutates
+     * only numeric state, like `setPosition` / `setZoom`).
+     *
+     * @param target - The world point to centre the camera on.
+     * @param opts - Optional zoom to set alongside the centre.
+     * @param opts.zoom - Zoom level to apply, clamped to `[minZoom, maxZoom]`.
+     * @example
+     * ```ts
+     * api.focus({ x: 100, y: 50 }, { zoom: 2 });
+     * ```
+     */
+    focus(target: Point, opts?: { zoom?: number }): void {
+      focusAt(ctx.state, ctx.config, target, opts?.zoom);
+    },
+
+    /**
+     * Cursor-anchored zoom: scale zoom by `factor` (clamped to `[minZoom, maxZoom]`)
+     * while keeping the world point under `screen` fixed. Clears follow. Instant —
+     * valid before start.
+     *
+     * @param screen - The screen-space anchor point (e.g. the pointer position).
+     * @param factor - The zoom multiplier (e.g. `Math.exp(-deltaY * sensitivity)`).
+     * @example
+     * ```ts
+     * api.zoomAt({ x: pointerX, y: pointerY }, 1.1); // zoom in 10%, cursor-anchored
+     * ```
+     */
+    zoomAt(screen: Point, factor: number): void {
+      zoomAtScreen(ctx.state, ctx.config, screen, factor);
+    },
+
+    /**
+     * Free-pan by a screen-pixel delta, converted to world space (rotation-aware,
+     * `÷zoom`) and subtracted from the centre. Clears follow. Instant — valid before
+     * start.
+     *
+     * @param dxScreen - Horizontal screen-pixel delta.
+     * @param dyScreen - Vertical screen-pixel delta.
+     * @example
+     * ```ts
+     * api.panBy(dx, dy); // drag pan by a pointer-move delta
+     * ```
+     */
+    panBy(dxScreen: number, dyScreen: number): void {
+      panByScreen(ctx.state, ctx.config, dxScreen, dyScreen);
     }
   };
 };

@@ -12,12 +12,13 @@
  * tween/vfx/camera ghost state, and re-gates to author mode — leaving no residual runtime behind.
  * Also asserts `editor-runtime:modeChanged` fires exactly once per real flip.
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { coreConfig } from "../../../../config";
 import { cameraPlugin } from "../../../camera";
 import { commandsPlugin } from "../../../commands";
 import { ecsPlugin } from "../../../ecs";
+import { inputPlugin } from "../../../input";
 import { loopPlugin } from "../../../loop";
 import { reflectionPlugin } from "../../../reflection";
 import { rendererPlugin } from "../../../renderer";
@@ -46,6 +47,7 @@ const bootApp = async () => {
       loopPlugin,
       tweenPlugin,
       vfxPlugin,
+      inputPlugin,
       cameraPlugin,
       editorRuntimePlugin
     ]
@@ -74,6 +76,16 @@ const countByName = (app: Awaited<ReturnType<typeof bootApp>>["app"], name: stri
 };
 
 describe("editor-runtime integration", () => {
+  // `camera` depends on `input` (Phase-1 F2), so `input` is now part of this stack and its onStart
+  // resolves "window" → an EventTarget. Node's globalThis has no addEventListener, so provide one
+  // (the editor-selection / ui / input integration-test precedent) so listeners attach cleanly.
+  beforeEach(() => {
+    (globalThis as Record<string, unknown>).window = new EventTarget();
+  });
+  afterEach(() => {
+    delete (globalThis as Record<string, unknown>).window;
+  });
+
   it("boots UNGATED (pay-for-what-you-use); enterEdit() applies the config.editStages gate", async () => {
     const { app } = await bootApp();
 
@@ -185,6 +197,7 @@ describe("editor-runtime integration", () => {
         loopPlugin,
         tweenPlugin,
         vfxPlugin,
+        inputPlugin,
         cameraPlugin,
         editorRuntimePlugin
       ]

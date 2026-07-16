@@ -27,6 +27,7 @@ const makeConfig = (over: Partial<Config> = {}): Config => ({
   width: 800,
   height: 600,
   updateStage: "sync",
+  editorControls: false,
   ...over
 });
 
@@ -47,6 +48,7 @@ const makeState = (over: Partial<State> = {}): State => ({
   shakeIntensity: 0,
   shakeHandle: undefined,
   tween: fakeTween,
+  input: undefined,
   ...over
 });
 

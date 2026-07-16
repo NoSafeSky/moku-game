@@ -7,6 +7,7 @@ import { ecsPlugin } from "../ecs";
 import { reflectionPlugin } from "../reflection";
 import { rendererPlugin } from "../renderer";
 import { createApi } from "./api";
+import { start } from "./lifecycle";
 import { createState } from "./state";
 import type { Config } from "./types";
 
@@ -28,9 +29,11 @@ export const hierarchyPlugin = createPlugin("hierarchy", {
   depends: [ecsPlugin, rendererPlugin, commandsPlugin, reflectionPlugin],
   config: defaultConfig,
   createState,
-  api: createApi
-  // onStart intentionally OMITTED in the skeleton — F2 wires `onStart: start` (from ./lifecycle) when it
-  // implements the Node-token definition, Node-schema self-registration, sync system, and resolver injection.
+  api: createApi,
+  onStart: start // @no-resource-check — defines the Node token, self-registers the Node reflection
+  //                schema, registers the world-transform sync system, and injects the renderer
+  //                world-transform resolver (deps-ready wiring; no owned external resource). No
+  //                onStop: the Node token + system live on ecs/renderer-owned structures.
 });
 
 export type { NodeValue } from "./types";

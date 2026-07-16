@@ -5,6 +5,8 @@
  * layer registry, a centre at the origin, no follow target, zoom 1, no rotation, no
  * shake, and `started: false` (the API creators no-op until onStart captures the
  * deps and flips this flag). `zoom` is re-seeded from `config.zoom` in onStart.
+ * `input` is captured in onStart only when `config.editorControls`; otherwise it
+ * stays `undefined` for the plugin's whole lifetime.
  */
 import type { Config, State } from "./types";
 
@@ -36,5 +38,6 @@ export const createState = (_ctx: {
   rotation: 0,
   shakeIntensity: 0,
   shakeHandle: undefined,
-  tween: undefined
+  tween: undefined,
+  input: undefined
 });

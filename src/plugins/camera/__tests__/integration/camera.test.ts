@@ -1,32 +1,52 @@
 /**
  * @file camera plugin — integration tests.
  *
- * Boots the real ecs + scheduler + renderer (headless) + loop + tween + camera stack
- * via `createApp` and drives it through `app.scheduler.tick` / `app.loop.step`. Proves:
- * `app.camera` exposes the full surface; `setPosition`/`getPosition` round-trips; an
- * animated `moveTo` advances the centre toward its target across real ticks and its
- * `done` resolves; a paused loop FREEZES an in-flight `moveTo` (the pause-safe
- * acceptance, with no `platform`/`loop` dependency edge) and resuming continues it;
- * `follow` pulls the centre toward a moving target; `shake` starts an `app.tween` decay
- * that completes over ticks; and — with an injected stage — `camera.world` is a
- * `Container` parented under the stage at index 0 and the live transform round-trips.
+ * Boots the real ecs + scheduler + renderer (headless) + input + loop + tween + camera
+ * stack via `createApp` and drives it through `app.scheduler.tick` / `app.loop.step`.
+ * Proves: `app.camera` exposes the full surface (incl. Phase-1 F2 `focus`/`zoomAt`/
+ * `panBy`); `setPosition`/`getPosition` round-trips; an animated `moveTo` advances the
+ * centre toward its target across real ticks and its `done` resolves; a paused loop
+ * FREEZES an in-flight `moveTo` (the pause-safe acceptance, with no `platform`/`loop`
+ * dependency edge) and resuming continues it; `follow` pulls the centre toward a moving
+ * target; `shake` starts an `app.tween` decay that completes over ticks; and — with an
+ * injected stage — `camera.world` is a `Container` parented under the stage at index 0
+ * and the live transform round-trips.
+ *
+ * **Phase-1 F2:** with `camera: { editorControls: true }` the editor-control system is
+ * registered on the `"update"` stage — a real dispatched `WheelEvent` + tick moves
+ * `getZoom()` (cursor-anchored) and a middle-button drag moves `getPosition()`; with the
+ * **default** `editorControls: false` no system runs and `input.snapshot()` is never
+ * called. `inputPlugin` is now a required `depends` edge (added to every `bootApp`
+ * boot), exercising the `"declared-but-inert while false"` contract for real.
  */
 import { Container } from "pixi.js";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { coreConfig } from "../../../../config";
 import { ecsPlugin } from "../../../ecs";
+import { inputPlugin } from "../../../input";
 import { loopPlugin } from "../../../loop";
 import { rendererPlugin } from "../../../renderer";
 import { schedulerPlugin } from "../../../scheduler";
 import { tweenPlugin } from "../../../tween";
 import { cameraPlugin } from "../../index";
 
-/** Boot a headless ecs+scheduler+renderer+loop+tween+camera app. */
-const bootApp = async () => {
+/** Per-plugin config overrides accepted by {@link bootApp}. */
+type TestPluginConfigs = { camera?: { editorControls?: boolean } };
+
+/** Boot a headless ecs+scheduler+renderer+input+loop+tween+camera app. */
+const bootApp = async (pluginConfigs: TestPluginConfigs = {}) => {
   const { createApp } = coreConfig.createCore(coreConfig, {
-    plugins: [ecsPlugin, schedulerPlugin, rendererPlugin, loopPlugin, tweenPlugin, cameraPlugin]
+    plugins: [
+      ecsPlugin,
+      schedulerPlugin,
+      rendererPlugin,
+      inputPlugin,
+      loopPlugin,
+      tweenPlugin,
+      cameraPlugin
+    ]
   });
-  const app = createApp();
+  const app = createApp({ pluginConfigs });
   await app.start();
   return app;
 };
@@ -46,10 +66,26 @@ const SURFACE = [
   "getRotation",
   "shake",
   "screenToWorld",
-  "worldToScreen"
+  "worldToScreen",
+  "focus",
+  "zoomAt",
+  "panBy"
 ] as const;
 
 describe("camera integration", () => {
+  let windowTarget: EventTarget;
+
+  beforeEach(() => {
+    // A controllable EventTarget for the input plugin's default "window" target —
+    // isolates each test's dispatched events (mirrors input's own integration test).
+    windowTarget = new EventTarget();
+    (globalThis as Record<string, unknown>).window = windowTarget;
+  });
+
+  afterEach(() => {
+    delete (globalThis as Record<string, unknown>).window;
+  });
+
   it("exposes app.camera with the full surface; world is undefined headless", async () => {
     const app = await bootApp();
     const camera = app.camera as unknown as Record<string, unknown>;
@@ -136,7 +172,15 @@ describe("camera integration", () => {
   it("with an injected stage, builds the world layer at stage index 0 and transforms it", async () => {
     const stage = new Container();
     const { createApp } = coreConfig.createCore(coreConfig, {
-      plugins: [ecsPlugin, schedulerPlugin, rendererPlugin, loopPlugin, tweenPlugin, cameraPlugin]
+      plugins: [
+        ecsPlugin,
+        schedulerPlugin,
+        rendererPlugin,
+        inputPlugin,
+        loopPlugin,
+        tweenPlugin,
+        cameraPlugin
+      ]
     });
     const app = createApp();
     app.renderer.getStage = () => stage; // inject a headless-safe stage before start
@@ -164,5 +208,95 @@ describe("camera integration", () => {
     expect(round.x).toBeCloseTo(10, 6);
     expect(round.y).toBeCloseTo(20, 6);
     await app.stop();
+  });
+
+  describe("Phase-1 F2 — editorControls", () => {
+    it("editorControls:true registers the update-stage system: wheel zooms cursor-anchored", async () => {
+      const app = await bootApp({ camera: { editorControls: true } });
+      const beforeZoom = app.camera.getZoom();
+      const cursor = { x: 500, y: 200 };
+
+      windowTarget.dispatchEvent(
+        Object.assign(new Event("pointermove"), {
+          clientX: cursor.x,
+          clientY: cursor.y,
+          buttons: 0
+        })
+      );
+      const worldBefore = app.camera.screenToWorld(cursor);
+
+      windowTarget.dispatchEvent(
+        Object.assign(new Event("wheel"), { deltaX: 0, deltaY: -100, deltaMode: 0 })
+      );
+      app.scheduler.tick(1 / 60);
+
+      expect(app.camera.getZoom()).toBeGreaterThan(beforeZoom); // scroll up → zoom in
+      const worldAfter = app.camera.screenToWorld(cursor);
+      expect(worldAfter.x).toBeCloseTo(worldBefore.x, 5); // cursor's world point stays fixed
+      expect(worldAfter.y).toBeCloseTo(worldBefore.y, 5);
+      await app.stop();
+    });
+
+    it("editorControls:true drives a middle-button drag pan across two ticks", async () => {
+      const app = await bootApp({ camera: { editorControls: true } });
+      const start = app.camera.getPosition();
+
+      windowTarget.dispatchEvent(
+        Object.assign(new Event("pointerdown"), { clientX: 400, clientY: 300, buttons: 4 })
+      );
+      app.scheduler.tick(1 / 60); // first held frame — establishes lastPointer, no delta yet
+      expect(app.camera.getPosition()).toEqual(start);
+
+      windowTarget.dispatchEvent(
+        Object.assign(new Event("pointermove"), { clientX: 420, clientY: 290, buttons: 4 })
+      );
+      app.scheduler.tick(1 / 60);
+
+      expect(app.camera.getPosition().x).toBeCloseTo(start.x - 20, 5);
+      expect(app.camera.getPosition().y).toBeCloseTo(start.y + 10, 5);
+      await app.stop();
+    });
+
+    it("editorControls:true calls input.snapshot() every update-stage tick", async () => {
+      const app = await bootApp({ camera: { editorControls: true } });
+      const snapshotSpy = vi.spyOn(app.input, "snapshot");
+
+      app.scheduler.tick(1 / 60);
+
+      expect(snapshotSpy).toHaveBeenCalled();
+      await app.stop();
+    });
+
+    it("default editorControls:false registers no system — input never moves the camera", async () => {
+      const app = await bootApp(); // default false
+      const beforeZoom = app.camera.getZoom();
+      const beforePosition = app.camera.getPosition();
+
+      windowTarget.dispatchEvent(
+        Object.assign(new Event("wheel"), { deltaX: 0, deltaY: -500, deltaMode: 0 })
+      );
+      windowTarget.dispatchEvent(
+        Object.assign(new Event("pointerdown"), { clientX: 100, clientY: 100, buttons: 4 })
+      );
+      app.scheduler.tick(1 / 60);
+      windowTarget.dispatchEvent(
+        Object.assign(new Event("pointermove"), { clientX: 300, clientY: 300, buttons: 4 })
+      );
+      app.scheduler.tick(1 / 60);
+
+      expect(app.camera.getZoom()).toBe(beforeZoom);
+      expect(app.camera.getPosition()).toEqual(beforePosition);
+      await app.stop();
+    });
+
+    it("default editorControls:false never calls input.snapshot()", async () => {
+      const app = await bootApp();
+      const snapshotSpy = vi.spyOn(app.input, "snapshot");
+
+      app.scheduler.tick(1 / 60);
+
+      expect(snapshotSpy).not.toHaveBeenCalled();
+      await app.stop();
+    });
   });
 });
