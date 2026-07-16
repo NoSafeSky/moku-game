@@ -93,6 +93,49 @@ describe("reflection plugin — integration", () => {
       });
       expect(app.reflection.validate("Enemy", { hp: 50 })).toStrictEqual({ ok: true });
     });
+
+    it("Phase-1 F1 — register with entity-ref/asset-ref surfaces them in describe()", () => {
+      const app = createTestApp();
+      const Enemy = app.ecs.defineComponent(enemyValue, { name: "Enemy" });
+      app.ecs.spawn(Enemy(enemyValue()));
+
+      app.reflection.register("Enemy", {
+        hp: field.number({ min: 0, max: 100 }),
+        state: field.select(["idle", "dead"]),
+        target: field.entityRef(),
+        icon: field.assetRef()
+      });
+
+      expect(app.reflection.describe("Enemy")).toStrictEqual([
+        { kind: "number", key: "hp", label: "Hp", min: 0, max: 100 },
+        { kind: "select", key: "state", label: "State", options: ["idle", "dead"] },
+        { kind: "entity-ref", key: "target", label: "Target" },
+        { kind: "asset-ref", key: "icon", label: "Icon" }
+      ]);
+    });
+
+    it("Phase-1 F1 — validate accepts/rejects entity-ref and asset-ref values", () => {
+      const app = createTestApp();
+      app.reflection.register("Enemy", { target: field.entityRef(), icon: field.assetRef() });
+
+      expect(app.reflection.validate("Enemy", { target: 42 })).toStrictEqual({ ok: true });
+      expect(app.reflection.validate("Enemy", { target: "x" }).ok).toBe(false);
+      expect(app.reflection.validate("Enemy", { icon: "hero" })).toStrictEqual({ ok: true });
+      expect(app.reflection.validate("Enemy", { icon: 3 }).ok).toBe(false);
+    });
+  });
+
+  describe("Phase-1 F1 — inference never originates reference kinds", () => {
+    it("describe() with no schema never yields entity-ref/asset-ref for number/string fields", () => {
+      const app = createTestApp();
+      const Enemy = app.ecs.defineComponent(enemyValue, { name: "Enemy" });
+      app.ecs.spawn(Enemy(enemyValue()));
+
+      const descriptors = app.reflection.describe("Enemy");
+
+      expect(descriptors.some(descriptor => descriptor.kind === "entity-ref")).toBe(false);
+      expect(descriptors.some(descriptor => descriptor.kind === "asset-ref")).toBe(false);
+    });
   });
 
   describe("humanizeLabels: false config", () => {

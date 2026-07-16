@@ -19,6 +19,7 @@ import type { Config, State } from "./types";
  * state.app;       // undefined
  * state.views;     // Map {}
  * state.dirty;     // Set {}
+ * state.textureResolver; // undefined — the flat-app default
  * ```
  */
 export const createState = (_ctx: {
@@ -28,5 +29,8 @@ export const createState = (_ctx: {
   app: undefined,
   transformToken: undefined,
   views: new Map(),
-  dirty: new Set()
+  dirty: new Set(),
+  textureResolver: undefined,
+  worldResolver: undefined,
+  grid: undefined
 });

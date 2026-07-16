@@ -22,6 +22,7 @@ const defaultConfig: Config = {
   target: "window",
   pointer: true,
   keyboard: true,
+  wheel: true,
   preventDefault: false
 };
 

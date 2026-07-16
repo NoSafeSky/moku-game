@@ -41,6 +41,11 @@ export type InputSnapshot = {
   justReleased(key: string): boolean;
   /** Pointer position + button bitmask for this frame. */
   readonly pointer: { readonly x: number; readonly y: number; readonly buttons: number };
+  /**
+   * Accumulated wheel/trackpad delta for this frame (`deltaMode`-normalized to
+   * pixels); `{ 0, 0 }` on a frame with no wheel motion.
+   */
+  readonly wheel: { readonly deltaX: number; readonly deltaY: number };
 };
 
 /** input plugin configuration. */
@@ -51,7 +56,9 @@ export type Config = {
   pointer: boolean;
   /** Track keyboard. `@default true` */
   keyboard: boolean;
-  /** preventDefault on tracked key events. `@default false` */
+  /** Track mouse-wheel / trackpad delta (accumulated per frame). `@default true` */
+  wheel: boolean;
+  /** preventDefault on tracked key/wheel events. `@default false` */
   preventDefault: boolean;
 };
 
@@ -65,6 +72,11 @@ export type State = {
   readonly released: Set<string>;
   /** Pointer position + button bitmask. */
   pointer: { x: number; y: number; buttons: number };
+  /**
+   * Accumulated wheel delta since the last snapshot (`deltaMode`-normalized to
+   * pixels); reset to `{ 0, 0 }` each input-stage tick.
+   */
+  wheel: { deltaX: number; deltaY: number };
   /** The current frame's snapshot exposed to systems. */
   snapshot: InputSnapshot;
   /** Bound listener handles for teardown. */
@@ -171,4 +183,21 @@ export type PointerEventLike = {
   readonly clientY: number;
   /** Bitmask of currently pressed pointer buttons. */
   readonly buttons: number;
+};
+
+/**
+ * Minimal structural wheel event shape used by the wheel handler factory.
+ *
+ * Declared here (not imported from lib.dom) because the tsconfig targets
+ * ESNext with no DOM lib — mirrors {@link KeyboardEventLike}/{@link PointerEventLike}.
+ */
+export type WheelEventLike = {
+  /** Raw horizontal wheel delta, in units given by `deltaMode`. */
+  readonly deltaX: number;
+  /** Raw vertical wheel delta, in units given by `deltaMode`. */
+  readonly deltaY: number;
+  /** `0` = pixels, `1` = lines, `2` = pages (matches `WheelEvent.deltaMode`). */
+  readonly deltaMode: number;
+  /** Prevents the default browser action for the event. */
+  preventDefault(): void;
 };

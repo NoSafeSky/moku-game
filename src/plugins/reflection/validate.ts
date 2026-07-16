@@ -101,8 +101,35 @@ const describeKindError = (descriptor: FieldDescriptor, value: unknown): string 
     case "vector2": {
       return isVector2Like(value) ? undefined : "expected a { x, y } vector";
     }
+    case "entity-ref": {
+      return describeReferenceError(value, "number", "expected an entity id");
+    }
+    case "asset-ref": {
+      return describeReferenceError(value, "string", "expected an asset alias string");
+    }
   }
 };
+
+/**
+ * Checks a reference-kind (`entity-ref`/`asset-ref`) value: accepted when `undefined` (unset) or
+ * when `typeof value` matches `expectedType`, else rejected with `message`.
+ *
+ * @param value - The candidate value.
+ * @param expectedType - The `typeof` tag the reference kind's non-`undefined` value must match.
+ * @param message - The rejection reason to return when `value` fails the check.
+ * @returns `undefined` when accepted, else `message`.
+ * @example
+ * ```ts
+ * describeReferenceError(42, "number", "expected an entity id"); // undefined (accepted)
+ * describeReferenceError("x", "number", "expected an entity id"); // "expected an entity id"
+ * ```
+ */
+const describeReferenceError = (
+  value: unknown,
+  expectedType: "number" | "string",
+  message: string
+): string | undefined =>
+  value === undefined || typeof value === expectedType ? undefined : message;
 
 /**
  * Checks a value against a number descriptor's type and `min`/`max` bounds.

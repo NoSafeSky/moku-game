@@ -42,19 +42,26 @@ export type SyncContext = {
  */
 export const createSyncSystem = (ctx: SyncContext): System => {
   /**
-   * Reposition a single container from its entity's Transform component.
+   * Reposition a single container from its entity's transform.
    *
-   * @param entity - The entity whose Transform to read.
+   * Phase-1: sources the value from `state.worldResolver` (WORLD space) when one is
+   * injected, falling back to the local Transform component otherwise. With no
+   * resolver set (every non-editor / flat app) this fallback is byte-identical to
+   * the pre-Phase-1 behavior — the hierarchy plugin injects the resolver so parented
+   * entities position from their world transform instead.
+   *
+   * @param entity - The entity whose transform to read.
    * @example
    * ```ts
-   * repositionFromTransform(entity); // reads Transform, sets container position
+   * repositionFromTransform(entity); // reads world/local transform, sets container position
    * ```
    */
   const repositionFromTransform = (entity: Entity): void => {
     const container = ctx.state.views.get(entity);
     if (!container) return;
 
-    const transform = ctx.world.get(entity, ctx.transformToken);
+    const transform =
+      ctx.state.worldResolver?.(entity) ?? ctx.world.get(entity, ctx.transformToken);
     if (!transform) return;
 
     container.position.set(transform.x, transform.y);

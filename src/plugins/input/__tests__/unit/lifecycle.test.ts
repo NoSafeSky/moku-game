@@ -5,11 +5,19 @@ import {
   createKeydownHandler,
   createKeyupHandler,
   createPointerHandler,
+  createWheelHandler,
+  normalizeWheelDelta,
   start,
   stop
 } from "../../lifecycle";
 import { createState } from "../../state";
-import type { Config, InputContext, KeyboardEventLike, PointerEventLike } from "../../types";
+import type {
+  Config,
+  InputContext,
+  KeyboardEventLike,
+  PointerEventLike,
+  WheelEventLike
+} from "../../types";
 
 // ─── helpers ──────────────────────────────────────────────────
 
@@ -17,6 +25,7 @@ const defaultConfig: Config = {
   target: "window",
   pointer: true,
   keyboard: true,
+  wheel: true,
   preventDefault: false
 };
 
@@ -32,6 +41,18 @@ const makePointer = (clientX: number, clientY: number, buttons: number): Pointer
   clientX,
   clientY,
   buttons
+});
+
+const makeWheel = (
+  deltaX: number,
+  deltaY: number,
+  deltaMode = 0,
+  preventDefaultFn = vi.fn()
+): WheelEventLike => ({
+  deltaX,
+  deltaY,
+  deltaMode,
+  preventDefault: preventDefaultFn
 });
 
 // ─── keydown handler ──────────────────────────────────────────
@@ -133,6 +154,87 @@ describe("createPointerHandler", () => {
   });
 });
 
+// ─── normalizeWheelDelta ───────────────────────────────────────
+
+describe("normalizeWheelDelta", () => {
+  it("passes deltaMode 0 (pixel) through unchanged", () => {
+    expect(normalizeWheelDelta(120, 0)).toBe(120);
+  });
+
+  it("multiplies deltaMode 1 (line) deltas by 16", () => {
+    expect(normalizeWheelDelta(3, 1)).toBe(48);
+  });
+
+  it("multiplies deltaMode 2 (page) deltas by 800", () => {
+    expect(normalizeWheelDelta(2, 2)).toBe(1600);
+  });
+
+  it("preserves sign for negative deltas", () => {
+    expect(normalizeWheelDelta(-3, 1)).toBe(-48);
+  });
+});
+
+// ─── wheel handler ─────────────────────────────────────────────
+
+describe("createWheelHandler", () => {
+  it("accumulates deltaX/deltaY into state.wheel (pixel mode passthrough)", () => {
+    const state = makeState();
+    const handler = createWheelHandler(state, false);
+
+    handler(makeWheel(10, -20, 0));
+
+    expect(state.wheel).toEqual({ deltaX: 10, deltaY: -20 });
+  });
+
+  it("accumulates across multiple wheel events within one frame", () => {
+    const state = makeState();
+    const handler = createWheelHandler(state, false);
+
+    handler(makeWheel(5, 5, 0));
+    handler(makeWheel(3, -2, 0));
+
+    expect(state.wheel).toEqual({ deltaX: 8, deltaY: 3 });
+  });
+
+  it("normalizes deltaMode line units (x16) before accumulating", () => {
+    const state = makeState();
+    const handler = createWheelHandler(state, false);
+
+    handler(makeWheel(1, 2, 1));
+
+    expect(state.wheel).toEqual({ deltaX: 16, deltaY: 32 });
+  });
+
+  it("normalizes deltaMode page units (x800) before accumulating", () => {
+    const state = makeState();
+    const handler = createWheelHandler(state, false);
+
+    handler(makeWheel(0, 1, 2));
+
+    expect(state.wheel).toEqual({ deltaX: 0, deltaY: 800 });
+  });
+
+  it("calls preventDefault when configured", () => {
+    const state = makeState();
+    const handler = createWheelHandler(state, true);
+    const preventDefaultFn = vi.fn();
+
+    handler(makeWheel(1, 1, 0, preventDefaultFn));
+
+    expect(preventDefaultFn).toHaveBeenCalledOnce();
+  });
+
+  it("does NOT call preventDefault when not configured", () => {
+    const state = makeState();
+    const handler = createWheelHandler(state, false);
+    const preventDefaultFn = vi.fn();
+
+    handler(makeWheel(1, 1, 0, preventDefaultFn));
+
+    expect(preventDefaultFn).not.toHaveBeenCalled();
+  });
+});
+
 // ─── input system (snapshot roll + edge-set clear) ────────────
 
 describe("createInputSystem", () => {
@@ -225,17 +327,48 @@ describe("createInputSystem", () => {
     const snap2 = state.snapshot;
     expect(snap1).toBe(snap2);
   });
+
+  it("rolls the accumulated wheel delta into snapshot.wheel and resets state.wheel to zero", () => {
+    const state = makeState();
+    state.wheel.deltaX = 5;
+    state.wheel.deltaY = 10;
+
+    const system = createInputSystem(state);
+    system({} as never, 0);
+
+    expect(state.snapshot.wheel).toEqual({ deltaX: 5, deltaY: 10 });
+    expect(state.wheel).toEqual({ deltaX: 0, deltaY: 0 });
+  });
+
+  it("two consecutive ticks with no wheel motion both report { 0, 0 }", () => {
+    const state = makeState();
+    const system = createInputSystem(state);
+
+    system({} as never, 0);
+    expect(state.snapshot.wheel).toEqual({ deltaX: 0, deltaY: 0 });
+
+    system({} as never, 0);
+    expect(state.snapshot.wheel).toEqual({ deltaX: 0, deltaY: 0 });
+  });
 });
 
 // ─── start() target resolution + listener wiring ──────────────
 
 /** A spy-backed EventTarget that records add/removeEventListener calls. */
 const makeSpyTarget = () => {
-  const added: Array<{ type: string; fn: EventListener }> = [];
+  const added: Array<{
+    type: string;
+    fn: EventListener;
+    options: AddEventListenerOptions | boolean | undefined;
+  }> = [];
   const removed: Array<{ type: string; fn: EventListener }> = [];
   const target: EventTarget = {
-    addEventListener: ((type: string, fn: EventListener) => {
-      added.push({ type, fn });
+    addEventListener: ((
+      type: string,
+      fn: EventListener,
+      options?: AddEventListenerOptions | boolean
+    ) => {
+      added.push({ type, fn, options });
     }) as EventTarget["addEventListener"],
     removeEventListener: ((type: string, fn: EventListener) => {
       removed.push({ type, fn });
@@ -295,6 +428,7 @@ describe("start() — target resolution", () => {
       target: "window",
       keyboard: true,
       pointer: false,
+      wheel: false,
       preventDefault: false
     });
     await start(ctx);
@@ -312,6 +446,7 @@ describe("start() — target resolution", () => {
       target: "window",
       keyboard: true,
       pointer: false,
+      wheel: false,
       preventDefault: false
     });
     await start(ctx);
@@ -334,6 +469,7 @@ describe("start() — target resolution", () => {
       target: "#app",
       keyboard: true,
       pointer: false,
+      wheel: false,
       preventDefault: false
     });
     await start(ctx);
@@ -351,6 +487,7 @@ describe("start() — target resolution", () => {
       target: "#missing",
       keyboard: true,
       pointer: false,
+      wheel: false,
       preventDefault: false
     });
     await start(ctx);
@@ -371,6 +508,7 @@ describe("start() — target resolution", () => {
       target: "#app",
       keyboard: true,
       pointer: false,
+      wheel: false,
       preventDefault: false
     });
     await start(ctx);
@@ -388,7 +526,7 @@ describe("start() — keyboard/pointer toggles", () => {
     delete (globalThis as Record<string, unknown>).window;
   });
 
-  it("attaches only keyboard listeners when {keyboard:true, pointer:false}", async () => {
+  it("attaches only keyboard listeners when {keyboard:true, pointer:false, wheel:false}", async () => {
     const { target } = makeSpyTarget();
     (globalThis as Record<string, unknown>).window = target;
 
@@ -396,6 +534,7 @@ describe("start() — keyboard/pointer toggles", () => {
       target: "window",
       keyboard: true,
       pointer: false,
+      wheel: false,
       preventDefault: false
     });
     await start(ctx);
@@ -405,7 +544,7 @@ describe("start() — keyboard/pointer toggles", () => {
     expect(addSystem).toHaveBeenCalledWith("input", expect.any(Function));
   });
 
-  it("attaches only pointer listeners when {keyboard:false, pointer:true}", async () => {
+  it("attaches only pointer listeners when {keyboard:false, pointer:true, wheel:false}", async () => {
     const { target } = makeSpyTarget();
     (globalThis as Record<string, unknown>).window = target;
 
@@ -413,6 +552,7 @@ describe("start() — keyboard/pointer toggles", () => {
       target: "window",
       keyboard: false,
       pointer: true,
+      wheel: false,
       preventDefault: false
     });
     await start(ctx);
@@ -421,7 +561,7 @@ describe("start() — keyboard/pointer toggles", () => {
     expect(types).toEqual(["pointerdown", "pointermove", "pointerup"]);
   });
 
-  it("attaches no DOM listeners when {keyboard:false, pointer:false}", async () => {
+  it("attaches no DOM listeners when {keyboard:false, pointer:false, wheel:false}", async () => {
     const { target } = makeSpyTarget();
     (globalThis as Record<string, unknown>).window = target;
 
@@ -429,6 +569,7 @@ describe("start() — keyboard/pointer toggles", () => {
       target: "window",
       keyboard: false,
       pointer: false,
+      wheel: false,
       preventDefault: false
     });
     await start(ctx);
@@ -446,6 +587,7 @@ describe("start() — keyboard/pointer toggles", () => {
       target: "window",
       keyboard: true,
       pointer: false,
+      wheel: false,
       preventDefault: true
     });
     await start(ctx);
@@ -465,6 +607,7 @@ describe("start() — keyboard/pointer toggles", () => {
       target: "window",
       keyboard: true,
       pointer: false,
+      wheel: false,
       preventDefault: false
     });
     await start(ctx);
@@ -474,6 +617,118 @@ describe("start() — keyboard/pointer toggles", () => {
     keydown?.fn({ key: "Space", preventDefault } as unknown as Event);
 
     expect(preventDefault).not.toHaveBeenCalled();
+  });
+});
+
+describe("start() — wheel toggle", () => {
+  afterEach(() => {
+    delete (globalThis as Record<string, unknown>).window;
+  });
+
+  it("attaches a wheel listener when wheel:true", async () => {
+    const { target } = makeSpyTarget();
+    (globalThis as Record<string, unknown>).window = target;
+
+    const { ctx } = makeStartCtx({
+      target: "window",
+      keyboard: false,
+      pointer: false,
+      wheel: true,
+      preventDefault: false
+    });
+    await start(ctx);
+
+    const types = ctx.state.listeners.map(l => l.type);
+    expect(types).toEqual(["wheel"]);
+  });
+
+  it("attaches no wheel listener when wheel:false", async () => {
+    const { target, added } = makeSpyTarget();
+    (globalThis as Record<string, unknown>).window = target;
+
+    const { ctx } = makeStartCtx({
+      target: "window",
+      keyboard: false,
+      pointer: false,
+      wheel: false,
+      preventDefault: false
+    });
+    await start(ctx);
+
+    expect(added.some(l => l.type === "wheel")).toBe(false);
+  });
+
+  it("registers the wheel listener with { passive: true } when preventDefault is false", async () => {
+    const { target, added } = makeSpyTarget();
+    (globalThis as Record<string, unknown>).window = target;
+
+    const { ctx } = makeStartCtx({
+      target: "window",
+      keyboard: false,
+      pointer: false,
+      wheel: true,
+      preventDefault: false
+    });
+    await start(ctx);
+
+    const wheelListener = added.find(l => l.type === "wheel");
+    expect(wheelListener?.options).toEqual({ passive: true });
+  });
+
+  it("registers the wheel listener with { passive: false } when preventDefault is true", async () => {
+    const { target, added } = makeSpyTarget();
+    (globalThis as Record<string, unknown>).window = target;
+
+    const { ctx } = makeStartCtx({
+      target: "window",
+      keyboard: false,
+      pointer: false,
+      wheel: true,
+      preventDefault: true
+    });
+    await start(ctx);
+
+    const wheelListener = added.find(l => l.type === "wheel");
+    expect(wheelListener?.options).toEqual({ passive: false });
+  });
+
+  it("the attached wheel handler accumulates normalized deltas into state.wheel", async () => {
+    const { target, added } = makeSpyTarget();
+    (globalThis as Record<string, unknown>).window = target;
+
+    const { ctx } = makeStartCtx({
+      target: "window",
+      keyboard: false,
+      pointer: false,
+      wheel: true,
+      preventDefault: false
+    });
+    await start(ctx);
+
+    const wheelListener = added.find(l => l.type === "wheel");
+    wheelListener?.fn(makeWheel(1, 2, 1) as unknown as Event);
+
+    expect(ctx.state.wheel).toEqual({ deltaX: 16, deltaY: 32 });
+  });
+
+  it("attached wheel handler calls preventDefault when preventDefault:true", async () => {
+    const { target, added } = makeSpyTarget();
+    (globalThis as Record<string, unknown>).window = target;
+
+    const { ctx } = makeStartCtx({
+      target: "window",
+      keyboard: false,
+      pointer: false,
+      wheel: true,
+      preventDefault: true
+    });
+    await start(ctx);
+
+    const wheelListener = added.find(l => l.type === "wheel");
+    const preventDefault = vi.fn();
+    wheelListener?.fn(makeWheel(1, 1, 0, preventDefault) as unknown as Event);
+
+    expect(preventDefault).toHaveBeenCalledOnce();
   });
 });
 
@@ -490,6 +745,7 @@ describe("stop() — teardown", () => {
       target: "window",
       keyboard: true,
       pointer: true,
+      wheel: false,
       preventDefault: false
     });
     await start(ctx);
@@ -498,6 +754,28 @@ describe("stop() — teardown", () => {
     await stop({ global: ctx.global });
 
     expect(removed.length).toBe(5);
+    expect(ctx.state.listeners).toHaveLength(0);
+  });
+
+  it("removes the wheel listener too when wheel:true (teardown symmetry)", async () => {
+    const { target, added, removed } = makeSpyTarget();
+    (globalThis as Record<string, unknown>).window = target;
+
+    const { ctx } = makeStartCtx({
+      target: "window",
+      keyboard: true,
+      pointer: true,
+      wheel: true,
+      preventDefault: false
+    });
+    await start(ctx);
+    expect(added.length).toBe(6);
+    expect(added.some(l => l.type === "wheel")).toBe(true);
+
+    await stop({ global: ctx.global });
+
+    expect(removed.length).toBe(6);
+    expect(removed.some(l => l.type === "wheel")).toBe(true);
     expect(ctx.state.listeners).toHaveLength(0);
   });
 
@@ -514,6 +792,7 @@ describe("stop() — teardown", () => {
       target: "window",
       keyboard: true,
       pointer: false,
+      wheel: false,
       preventDefault: false
     });
     await start(ctx);

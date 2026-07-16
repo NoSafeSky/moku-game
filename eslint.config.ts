@@ -29,6 +29,13 @@ export default [
       "unicorn/prevent-abbreviations": [
         "error",
         {
+          // `allowList` only matches a WHOLE identifier, so it cannot sanction `ref` as a word
+          // inside a compound name. `replacements` is keyed on the word, covering both.
+          // "reference" is domain vocabulary here (reflection's entity-ref/asset-ref field kinds,
+          // `EntityRefFieldSpec`, `field.assetRef()`), so the ref -> reference rewrite is off.
+          replacements: {
+            ref: false
+          },
           // Pre-expanded so builds don't have to widen this mid-flight. See references/glossary.md.
           allowList: {
             ctx: true,

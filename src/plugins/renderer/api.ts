@@ -2,19 +2,36 @@
  * @file renderer plugin — API factory.
  *
  * Exposes the renderer public surface: Transform component token, attach/detach,
- * render, getView, getStage, and markDirty.
+ * render, getView, getStage, markDirty, attachPrimitive, and the Phase-1 (Wave F1)
+ * additions — attachSprite, setTextureResolver, setWorldTransformResolver,
+ * setEntityVisible, setGridVisible.
  *
  * The Transform token lives in ctx.state.transformToken (written by onStart via
  * world.defineComponent). The getter reads it from state so the api and the sync
  * system always reference the same token instance. Accessing Transform before
  * onStart has run throws — the token is only valid after app.start().
  */
+
 import type { Container } from "pixi.js";
+import { Graphics } from "pixi.js";
 import type { ecsPlugin } from "../ecs";
 import type { Component, Entity, World } from "../ecs/types";
 import type { schedulerPlugin } from "../scheduler";
+import { drawGrid } from "./grid";
 import { buildPrimitive } from "./primitives";
-import type { Api, Config, PrimitiveSpec, SceneNode, State, TransformValue } from "./types";
+import { buildSpriteView } from "./sprites";
+import type {
+  Api,
+  Config,
+  GridSpec,
+  PrimitiveSpec,
+  SceneNode,
+  SpriteSpec,
+  State,
+  TextureResolver,
+  TransformValue,
+  WorldTransformResolver
+} from "./types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Scene-graph walk (Pixi → plain SceneNode data — keeps Pixi types out of the result)
@@ -374,6 +391,105 @@ export const createApi = (ctx: RendererContext): Api => {
       ctx.state.views.set(entity, view);
       ctx.state.dirty.add(entity);
       return true;
+    },
+
+    // ── Phase-1 additions (Wave F1) ────────────────────────────────────────
+
+    /**
+     * Build a Pixi Sprite from the injected texture resolver (or a placeholder
+     * Graphics when the alias is unresolved), self-parent it to the stage, and
+     * register it (views + dirty). Returns `false` when headless / before start.
+     *
+     * @param entity - The entity to associate the sprite view with.
+     * @param spec - Plain JSON-describable sprite spec (alias + view-local visuals).
+     * @returns `true` when a view was staged; `false` when headless / before start.
+     * @example
+     * ```ts
+     * const ok = api.attachSprite(entity, { alias: "player", tint: 0xff0000 });
+     * ```
+     */
+    attachSprite(entity: Entity, spec: SpriteSpec): boolean {
+      const app = ctx.state.app;
+      if (!app) return false;
+
+      const wrapper = buildSpriteView(spec, ctx.state.textureResolver);
+      app.stage.addChild(wrapper);
+      ctx.state.views.set(entity, wrapper);
+      ctx.state.dirty.add(entity);
+      return true;
+    },
+
+    /**
+     * Install (or clear with undefined) the alias→texture resolver seam.
+     *
+     * @param resolve - The resolver, or undefined to clear it (placeholder-only mode).
+     * @example
+     * ```ts
+     * api.setTextureResolver(alias => assets.resolveTexture(alias));
+     * ```
+     */
+    setTextureResolver(resolve: TextureResolver | undefined): void {
+      ctx.state.textureResolver = resolve;
+    },
+
+    /**
+     * Install (or clear with undefined) the entity→WORLD-transform resolver seam
+     * the sync system reads. Default undefined falls back to the local Transform.
+     *
+     * @param resolve - The resolver, or undefined to fall back to the local Transform.
+     * @example
+     * ```ts
+     * api.setWorldTransformResolver(e => hierarchy.worldOf(e));
+     * ```
+     */
+    setWorldTransformResolver(resolve: WorldTransformResolver | undefined): void {
+      ctx.state.worldResolver = resolve;
+    },
+
+    /**
+     * Toggle an entity view's visibility. No-op when the entity has no view
+     * (headless / not attached); never throws.
+     *
+     * @param entity - The entity whose view visibility to set.
+     * @param visible - Whether the view should render.
+     * @example
+     * ```ts
+     * api.setEntityVisible(entity, false);
+     * ```
+     */
+    setEntityVisible(entity: Entity, visible: boolean): void {
+      const view = ctx.state.views.get(entity);
+      if (!view) return;
+      view.visible = visible;
+    },
+
+    /**
+     * Show/update or hide the editor grid overlay — a renderer-owned Graphics
+     * inserted at stage index 0 (beneath every entity view). Lazily builds/reuses
+     * `state.grid`; `spec` restyles it on show. Headless-tolerant (no-op when
+     * there is no app).
+     *
+     * @param visible - Whether the grid overlay is shown.
+     * @param spec - Optional grid cell size + line color.
+     * @example
+     * ```ts
+     * api.setGridVisible(true, { size: 16, color: 0x334155 });
+     * ```
+     */
+    setGridVisible(visible: boolean, spec?: GridSpec): void {
+      const app = ctx.state.app;
+      if (!app) return;
+
+      if (!visible) {
+        if (ctx.state.grid) ctx.state.grid.visible = false;
+        return;
+      }
+
+      ctx.state.grid ??= new Graphics();
+      const grid = ctx.state.grid as Graphics;
+      app.stage.addChildAt(grid, 0);
+      drawGrid(grid, ctx.config.width, ctx.config.height, spec);
+      grid.visible = true;
     }
   };
 };

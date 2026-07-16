@@ -8,15 +8,21 @@ import type { InputSnapshot } from "../../types";
 
 // ─── helpers ──────────────────────────────────────────────────
 
+/** Per-plugin config overrides accepted by createTestApp. */
+type TestPluginConfigs = { input?: { wheel?: boolean; preventDefault?: boolean } };
+
 /**
  * Create a minimal test app with ecs + scheduler + input.
  * Uses a controllable EventTarget set as globalThis.window.
+ *
+ * @param pluginConfigs - Optional per-plugin config overrides (e.g. `{ input: { wheel: false } }`).
+ * @returns The synchronous app instance.
  */
-const createTestApp = () => {
+const createTestApp = (pluginConfigs: TestPluginConfigs = {}) => {
   const { createApp } = coreConfig.createCore(coreConfig, {
     plugins: [ecsPlugin, schedulerPlugin, inputPlugin]
   });
-  return createApp({});
+  return createApp({ pluginConfigs });
 };
 
 // ─── integration ──────────────────────────────────────────────
@@ -61,9 +67,10 @@ describe("input plugin — integration", () => {
       const app = createTestApp();
       await app.start();
 
-      // Default config attaches keyboard (keydown/keyup) + pointer (move/down/up) = 5.
+      // Default config attaches keyboard (keydown/keyup) + pointer (move/down/up)
+      // + wheel (wheel) = 6.
       const added = addSpy.mock.calls.length;
-      expect(added).toBeGreaterThanOrEqual(5);
+      expect(added).toBeGreaterThanOrEqual(6);
 
       await app.stop();
 
@@ -73,6 +80,9 @@ describe("input plugin — integration", () => {
         const wasRemoved = removeSpy.mock.calls.some(([t, f]) => t === type && f === fn);
         expect(wasRemoved).toBe(true);
       }
+      // The new "wheel" listener rides the same teardown path — no new path needed.
+      expect(addSpy.mock.calls.some(([type]) => type === "wheel")).toBe(true);
+      expect(removeSpy.mock.calls.some(([type]) => type === "wheel")).toBe(true);
 
       addSpy.mockRestore();
       removeSpy.mockRestore();
@@ -205,6 +215,87 @@ describe("input plugin — integration", () => {
       expect(snap.pointer.y).toBe(200);
 
       await app.stop();
+    });
+  });
+
+  describe("wheel input via tick", () => {
+    it("accumulates wheel deltaX/deltaY and exposes them in the next snapshot", async () => {
+      const app = createTestApp();
+      await app.start();
+
+      target.dispatchEvent(
+        Object.assign(new Event("wheel"), { deltaX: 10, deltaY: -20, deltaMode: 0 })
+      );
+      app.scheduler.tick(0.016);
+
+      expect(app.input.snapshot().wheel).toEqual({ deltaX: 10, deltaY: -20 });
+
+      await app.stop();
+    });
+
+    it("accumulates multiple wheel events dispatched within the same tick", async () => {
+      const app = createTestApp();
+      await app.start();
+
+      target.dispatchEvent(
+        Object.assign(new Event("wheel"), { deltaX: 5, deltaY: 5, deltaMode: 0 })
+      );
+      target.dispatchEvent(
+        Object.assign(new Event("wheel"), { deltaX: 3, deltaY: -2, deltaMode: 0 })
+      );
+      app.scheduler.tick(0.016);
+
+      expect(app.input.snapshot().wheel).toEqual({ deltaX: 8, deltaY: 3 });
+
+      await app.stop();
+    });
+
+    it("resets wheel to { 0, 0 } on the following tick when no wheel event fired", async () => {
+      const app = createTestApp();
+      await app.start();
+
+      target.dispatchEvent(
+        Object.assign(new Event("wheel"), { deltaX: 10, deltaY: 10, deltaMode: 0 })
+      );
+      app.scheduler.tick(0.016); // frame with wheel motion
+      expect(app.input.snapshot().wheel).toEqual({ deltaX: 10, deltaY: 10 });
+
+      app.scheduler.tick(0.016); // next frame — no new wheel event
+      expect(app.input.snapshot().wheel).toEqual({ deltaX: 0, deltaY: 0 });
+
+      await app.stop();
+    });
+
+    it("normalizes deltaMode line units (x16) to pixels before exposing in the snapshot", async () => {
+      const app = createTestApp();
+      await app.start();
+
+      target.dispatchEvent(
+        Object.assign(new Event("wheel"), { deltaX: 0, deltaY: 2, deltaMode: 1 })
+      );
+      app.scheduler.tick(0.016);
+
+      expect(app.input.snapshot().wheel).toEqual({ deltaX: 0, deltaY: 32 });
+
+      await app.stop();
+    });
+
+    it("attaches no wheel listener and never accumulates when wheel:false", async () => {
+      const app = createTestApp({ input: { wheel: false } });
+      const addSpy = vi.spyOn(target, "addEventListener");
+      await app.start();
+
+      expect(addSpy.mock.calls.some(([type]) => type === "wheel")).toBe(false);
+
+      target.dispatchEvent(
+        Object.assign(new Event("wheel"), { deltaX: 10, deltaY: 10, deltaMode: 0 })
+      );
+      app.scheduler.tick(0.016);
+
+      expect(app.input.snapshot().wheel).toEqual({ deltaX: 0, deltaY: 0 });
+
+      await app.stop();
+      addSpy.mockRestore();
     });
   });
 

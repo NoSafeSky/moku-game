@@ -9,6 +9,7 @@ const defaultConfig: Config = {
   target: "window",
   pointer: true,
   keyboard: true,
+  wheel: true,
   preventDefault: false
 };
 
@@ -62,5 +63,17 @@ describe("createState", () => {
     const state = createState(makeCtx());
 
     expect(state.snapshot.pointer).toEqual({ x: 0, y: 0, buttons: 0 });
+  });
+
+  it("initialises the wheel accumulator at { deltaX: 0, deltaY: 0 }", () => {
+    const state = createState(makeCtx());
+
+    expect(state.wheel).toEqual({ deltaX: 0, deltaY: 0 });
+  });
+
+  it("snapshot.wheel is { deltaX: 0, deltaY: 0 } by default", () => {
+    const state = createState(makeCtx());
+
+    expect(state.snapshot.wheel).toEqual({ deltaX: 0, deltaY: 0 });
   });
 });

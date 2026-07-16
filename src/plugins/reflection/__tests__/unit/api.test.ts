@@ -168,6 +168,28 @@ describe("createApi — register", () => {
       { kind: "number", key: "hitPoints", label: "hitPoints" }
     ]);
   });
+
+  it("Phase-1 F1 — register surfaces an entity-ref descriptor with key+label", () => {
+    const ctx = createMockCtx();
+    const api = createApi(ctx);
+
+    api.register("Enemy", { target: field.entityRef() });
+
+    expect(api.describe("Enemy")).toStrictEqual([
+      { kind: "entity-ref", key: "target", label: "Target" }
+    ]);
+  });
+
+  it("Phase-1 F1 — register surfaces an asset-ref descriptor with key+label", () => {
+    const ctx = createMockCtx();
+    const api = createApi(ctx);
+
+    api.register("Enemy", { icon: field.assetRef() });
+
+    expect(api.describe("Enemy")).toStrictEqual([
+      { kind: "asset-ref", key: "icon", label: "Icon" }
+    ]);
+  });
 });
 
 // ─── validate: delegates to describe + validateAgainst ─────────
@@ -197,6 +219,44 @@ describe("createApi — validate", () => {
     const api = createApi(ctx);
 
     expect(api.validate("Ghost", { anything: 1 })).toStrictEqual({ ok: true });
+  });
+
+  it("Phase-1 F1 — validate accepts a number for a registered entity-ref field", () => {
+    const ctx = createMockCtx();
+    const api = createApi(ctx);
+    api.register("Enemy", { target: field.entityRef() });
+
+    expect(api.validate("Enemy", { target: 42 })).toStrictEqual({ ok: true });
+  });
+
+  it("Phase-1 F1 — validate rejects a string for a registered entity-ref field", () => {
+    const ctx = createMockCtx();
+    const api = createApi(ctx);
+    api.register("Enemy", { target: field.entityRef() });
+
+    expect(api.validate("Enemy", { target: "x" })).toStrictEqual({
+      ok: false,
+      errors: [{ key: "target", message: "expected an entity id" }]
+    });
+  });
+
+  it("Phase-1 F1 — validate accepts a string for a registered asset-ref field", () => {
+    const ctx = createMockCtx();
+    const api = createApi(ctx);
+    api.register("Enemy", { icon: field.assetRef() });
+
+    expect(api.validate("Enemy", { icon: "hero" })).toStrictEqual({ ok: true });
+  });
+
+  it("Phase-1 F1 — validate rejects a number for a registered asset-ref field", () => {
+    const ctx = createMockCtx();
+    const api = createApi(ctx);
+    api.register("Enemy", { icon: field.assetRef() });
+
+    expect(api.validate("Enemy", { icon: 3 })).toStrictEqual({
+      ok: false,
+      errors: [{ key: "icon", message: "expected an asset alias string" }]
+    });
   });
 });
 

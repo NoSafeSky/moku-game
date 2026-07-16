@@ -40,6 +40,20 @@ export type SelectFieldSpec = { kind: "select"; options: readonly string[]; read
 /** A 2-component vector control intent (value is `{ x: number; y: number }`). */
 export type Vector2FieldSpec = { kind: "vector2"; readonly?: boolean };
 
+/**
+ * Phase-1 F1 — a reference to another entity; the value is an `EditorId` (branded `number`) or
+ * `undefined` (unset). Schema-only — NOT produced by inference (a bare `number` is ambiguous
+ * between a plain number and an entity id).
+ */
+export type EntityRefFieldSpec = { kind: "entity-ref"; readonly?: boolean };
+
+/**
+ * Phase-1 F1 — a reference to a loaded asset; the value is an asset alias `string` or `undefined`
+ * (unset). Schema-only — NOT produced by inference (a bare `string` is ambiguous between free
+ * text and an asset alias).
+ */
+export type AssetRefFieldSpec = { kind: "asset-ref"; readonly?: boolean };
+
 /** The union a `field.*` builder produces; the value type of a registered `Schema`. */
 export type FieldSpec =
   | NumberFieldSpec
@@ -47,7 +61,9 @@ export type FieldSpec =
   | StringFieldSpec
   | ColorFieldSpec
   | SelectFieldSpec
-  | Vector2FieldSpec;
+  | Vector2FieldSpec
+  | EntityRefFieldSpec
+  | AssetRefFieldSpec;
 
 /** A registered schema: field key → its display/validation intent (Leva/Tweakpane control-object shape). */
 export type Schema = Record<string, FieldSpec>;
@@ -70,14 +86,22 @@ export type SelectField = SelectFieldSpec & { key: string; label: string };
 /** A materialized vector2 descriptor = its `FieldSpec` plus identity (`key`, `label`). */
 export type Vector2Field = Vector2FieldSpec & { key: string; label: string };
 
-/** The public field-descriptor union `describe` returns — narrow on `.kind`. */
+/** A materialized entity-ref descriptor = its `FieldSpec` plus identity (`key`, `label`). */
+export type EntityRefField = EntityRefFieldSpec & { key: string; label: string };
+
+/** A materialized asset-ref descriptor = its `FieldSpec` plus identity (`key`, `label`). */
+export type AssetRefField = AssetRefFieldSpec & { key: string; label: string };
+
+/** The public field-descriptor union `describe` returns — narrow on `.kind` (8 kinds). */
 export type FieldDescriptor =
   | NumberField
   | BooleanField
   | StringField
   | ColorField
   | SelectField
-  | Vector2Field;
+  | Vector2Field
+  | EntityRefField
+  | AssetRefField;
 
 /** A single validation failure — the field `key` and a human-readable reason. */
 export type FieldError = { key: string; message: string };
@@ -99,6 +123,16 @@ export type FieldBuilders = {
   select(options: readonly string[]): SelectFieldSpec;
   /** A 2-component vector control (value is `{ x: number; y: number }`). */
   vector2(): Vector2FieldSpec;
+  /**
+   * Phase-1 F1 — an entity-reference control (value is an `EditorId`/`number`, or `undefined`).
+   * Schema-only: NOT produced by inference.
+   */
+  entityRef(): EntityRefFieldSpec;
+  /**
+   * Phase-1 F1 — an asset-reference control (value is an asset alias `string`, or `undefined`).
+   * Schema-only: NOT produced by inference.
+   */
+  assetRef(): AssetRefFieldSpec;
   /** Wrap any spec to mark it non-editable — `validate` rejects a write to a readonly field. */
   readonly(inner: FieldSpec): FieldSpec;
 };

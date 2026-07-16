@@ -54,4 +54,26 @@ describe("reflection — field builders", () => {
       readonly: true
     });
   });
+
+  it("entityRef() returns a bare EntityRefFieldSpec", () => {
+    expect(field.entityRef()).toStrictEqual({ kind: "entity-ref" });
+  });
+
+  it("assetRef() returns a bare AssetRefFieldSpec", () => {
+    expect(field.assetRef()).toStrictEqual({ kind: "asset-ref" });
+  });
+
+  it("readonly(inner) preserves the entity-ref kind", () => {
+    expect(field.readonly(field.entityRef())).toStrictEqual({
+      kind: "entity-ref",
+      readonly: true
+    });
+  });
+
+  it("readonly(inner) preserves the asset-ref kind", () => {
+    expect(field.readonly(field.assetRef())).toStrictEqual({
+      kind: "asset-ref",
+      readonly: true
+    });
+  });
 });

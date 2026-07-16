@@ -28,6 +28,7 @@ export const createState = (_ctx: {
   const pressed = new Set<string>();
   const released = new Set<string>();
   const pointer = { x: 0, y: 0, buttons: 0 };
+  const wheel = { deltaX: 0, deltaY: 0 };
 
   const initialSnapshot: InputSnapshot = {
     /**
@@ -66,7 +67,8 @@ export const createState = (_ctx: {
      */
     justReleased: (key: string) => released.has(key),
 
-    pointer
+    pointer,
+    wheel
   };
 
   return {
@@ -74,6 +76,7 @@ export const createState = (_ctx: {
     pressed,
     released,
     pointer,
+    wheel,
     snapshot: initialSnapshot,
     listeners: []
   };

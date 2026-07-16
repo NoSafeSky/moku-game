@@ -93,6 +93,32 @@ export const field: FieldBuilders = {
   vector2: () => ({ kind: "vector2" }),
 
   /**
+   * Builds an entity-reference field spec (Phase-1 F1). The value is an `EditorId`/`number`, or
+   * `undefined` (unset). Schema-only — inference can never originate this kind because a bare
+   * `number` is ambiguous between a plain number and an entity id.
+   *
+   * @returns An `EntityRefFieldSpec`.
+   * @example
+   * ```ts
+   * field.entityRef(); // e.g. a `target` field pointing at another entity
+   * ```
+   */
+  entityRef: () => ({ kind: "entity-ref" }),
+
+  /**
+   * Builds an asset-reference field spec (Phase-1 F1). The value is an asset alias `string`, or
+   * `undefined` (unset). Schema-only — inference can never originate this kind because a bare
+   * `string` is ambiguous between free text and an asset alias.
+   *
+   * @returns An `AssetRefFieldSpec`.
+   * @example
+   * ```ts
+   * field.assetRef(); // e.g. SpriteRenderer.sprite
+   * ```
+   */
+  assetRef: () => ({ kind: "asset-ref" }),
+
+  /**
    * Wraps any field spec to mark it non-editable; `validate` rejects a write to a readonly
    * field. Preserves the inner spec's discriminant (`kind`) and its other fields.
    *

@@ -18,6 +18,7 @@ const defaultConfig: Config = {
   target: "window",
   pointer: true,
   keyboard: true,
+  wheel: true,
   preventDefault: false
 };
 
@@ -68,7 +69,8 @@ describe("createApi", () => {
         isDown: key => ctx.state.down.has(key),
         justPressed: key => ctx.state.pressed.has(key),
         justReleased: key => ctx.state.released.has(key),
-        pointer: { ...ctx.state.pointer }
+        pointer: { ...ctx.state.pointer },
+        wheel: { ...ctx.state.wheel }
       };
       ctx.state.snapshot = newSnap;
 
@@ -173,6 +175,15 @@ describe("createApi", () => {
       expectTypeOf(snap.pointer.x).toEqualTypeOf<number>();
       expectTypeOf(snap.pointer.y).toEqualTypeOf<number>();
       expectTypeOf(snap.pointer.buttons).toEqualTypeOf<number>();
+    });
+
+    it("wheel fields are readonly", () => {
+      const ctx = makeCtx();
+      const api = createApi(ctx);
+      const snap = api.snapshot();
+
+      expectTypeOf(snap.wheel.deltaX).toEqualTypeOf<number>();
+      expectTypeOf(snap.wheel.deltaY).toEqualTypeOf<number>();
     });
   });
 });

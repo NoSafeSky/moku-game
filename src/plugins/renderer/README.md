@@ -8,6 +8,8 @@ Pixi types never cross the plugin boundary except for the two structural handles
 
 The plugin also **defines** a `Transform` component (`{ x, y, rotation, scaleX, scaleY }`) on the ECS world during `onStart` and exposes the token as `app.renderer.Transform`, so consumers and the `scene` plugin can spawn and mutate transformed entities against the exact same token the sync system reads.
 
+**Phase-1 (Wave F1)** adds a starter render surface for the editor — `attachSprite` (texture-alias sprites with a load-time placeholder), two injected **resolver seams** (`setTextureResolver`, `setWorldTransformResolver`) that let `graphics-2d`/`hierarchy` push texturing + world-space positioning in without the renderer importing them, a `Node.enabled` view bridge (`setEntityVisible`), and an editor grid overlay (`setGridVisible`). See [Phase-1 additions](#phase-1-additions-wave-f1) below. `TextureHandle` joins `HTMLCanvasElement`/`Container` as the only opaque handles crossing the plugin boundary — Pixi's `Texture`/`Sprite`/`Graphics` types never do.
+
 ## API
 
 Accessed as `app.renderer.*` after `createApp()`. The full surface is defined in `types.ts` (`Api`) and built in `api.ts`.
@@ -145,6 +147,109 @@ sits relative to their own geometry (Cycle 6, issue #4):
 interchangeable without an offset correction (prior to Cycle 6, `rect` was drawn
 top-left-anchored, which diverged from `circle`).
 
+## Phase-1 additions (Wave F1)
+
+Five additive API methods plus two injected **resolver seams**, backing the `hierarchy`
+(world-space positioning) and `graphics-2d` (sprite texturing) plugins **without the
+renderer importing either** — the same DI inversion as `commands.setValidator`. The
+renderer stays the sole Pixi owner; `depends: [ecs, scheduler]` is unchanged. Every
+addition is a safe no-op headless / before start, and a flat app that never calls these
+methods sees byte-identical behavior to before Phase-1.
+
+### `attachSprite(entity, spec): boolean`
+
+Builds a Pixi `Sprite` from the injected texture resolver (`setTextureResolver`):
+resolves `spec.alias` to an opaque `TextureHandle`, casts it internally back to a Pixi
+`Texture`, and constructs the sprite. When the alias is **unresolved** (no resolver
+installed, or the resolver returns `undefined`) it builds a **placeholder `Graphics`**
+box instead (sized from `spec.width`/`spec.height`, or a default 32×32 box), so the
+entity stays visible while its texture loads. Like `attachPrimitive`, it self-parents
+to the stage (`stage.addChild`) and registers the view (`views` + `dirty`). Returns
+`false` when headless / before start (no `app`) — nothing is added.
+
+The built view is a **wrapper `Container`** whose single child holds the sprite or
+placeholder. `tint`, `flipX` (mirrored via the child's `scale.x = -1`), and explicit
+`width`/`height` are applied to the **child**, never the wrapper — because the
+Transform/world sync only ever writes the wrapper's `position`/`rotation`/`scale`, these
+view-local visuals survive every sync tick untouched.
+
+```ts
+app.renderer.setTextureResolver(alias => assets.resolveTexture(alias));
+const ok = app.renderer.attachSprite(entity, { alias: "player", tint: 0xff0000, flipX: true });
+```
+
+#### `SpriteSpec`
+
+```ts
+type SpriteSpec = {
+  alias: string;           // resolved through the injected TextureResolver
+  tint?: number | string;  // hex int or "#rrggbb"; default: no tint (0xffffff)
+  flipX?: boolean;         // mirror horizontally; default: false
+  width?: number;          // explicit display width in px
+  height?: number;         // explicit display height in px
+};
+```
+
+### `setTextureResolver(resolve): void`
+
+Installs (or clears with `undefined`) the alias→texture seam on `state.textureResolver`.
+`TextureResolver = (alias: string) => TextureHandle | undefined`. `TextureHandle` is an
+**opaque internal brand** (`{ readonly __textureHandle: unique symbol }`) — a caller
+(e.g. `graphics-2d` over `assets`) hands back a resolved texture as this opaque handle,
+and the renderer casts it internally. Pixi's `Texture` type never crosses the public
+boundary. `graphics-2d` installs this at its `onStart`.
+
+### `setWorldTransformResolver(resolve): void`
+
+Installs (or clears with `undefined`) the entity→world-transform seam on
+`state.worldResolver`. `WorldTransformResolver = (entity: Entity) => TransformValue |
+undefined`. The `hierarchy` plugin injects `e => worldOf(e)` at its `onStart` so the sync
+system positions parented entities in **world space** instead of their local `Transform`.
+With no resolver installed (every non-editor / flat app) the sync's fallback —
+`worldResolver?.(entity) ?? world.get(entity, Transform)` — is **byte-identical** to the
+pre-Phase-1 behavior.
+
+```ts
+app.renderer.setWorldTransformResolver(e => hierarchy.worldOf(e));
+app.renderer.setWorldTransformResolver(undefined); // back to local-Transform positioning
+```
+
+### `setEntityVisible(entity, visible): void`
+
+Toggles the entity's attached view's `visible` flag — the render-side bridge for
+`Node.enabled` (a disabled node hides its view). **No-op** (never throws) when the
+entity has no view — headless, not attached, or already despawned.
+
+### `setGridVisible(visible, spec?): void`
+
+Shows/updates or hides an **editor grid overlay** — a renderer-owned `Graphics` drawing
+hairlines every `size` px across the canvas extent, inserted at **stage index 0** so it
+renders beneath every entity view. Lazily builds/reuses `state.grid`; `spec` restyles it
+on each show. **Headless-tolerant**: a no-op when there is no `app`. The overlay is a
+stage child, so it is disposed automatically by `app.destroy(true, { children: true })`
+on `onStop` — no separate teardown entry is needed.
+
+```ts
+app.renderer.setGridVisible(true, { size: 16, color: 0x334155 });
+app.renderer.setGridVisible(false); // hide (grid instance is kept, not destroyed)
+```
+
+#### `GridSpec`
+
+```ts
+type GridSpec = {
+  size?: number;  // grid cell size in world px; default: 32
+  color?: number; // line color as a hex int; default: a slate hairline
+};
+```
+
+### Sync change (backward-compatible)
+
+`repositionFromTransform` (in `sync.ts`) now reads its position source as
+`state.worldResolver?.(entity) ?? world.get(entity, transformToken)` — WORLD space when
+a resolver is injected, the local `Transform` otherwise. This is the **only** change to
+the sync system in Phase-1; despawn reconciliation is unchanged.
+
 ## Lifecycle
 
 The renderer is one of the few plugins that owns a real GPU resource, so both lifecycle hooks are load-bearing.
@@ -213,6 +318,8 @@ await app.stop(); // destroys the Application, frees VRAM
 - **WeakMap teardown.** Because `onStop` only receives `{ global }`, the `{ app, views }` opened at start are retrieved at stop via a module-level `WeakMap<object, TeardownEntry>` keyed on the per-instance `ctx.global` — the same pattern used by the `loop` and `mcp` plugins.
 - **Structural contexts.** `createApi` (`RendererContext`) and `createSyncSystem` (`SyncContext`) declare only the context fields they touch, so unit tests can supply minimal mocks — including a mocked Pixi `Application` — without wiring the full kernel or a real GPU.
 - **First-class headless mode.** `config.headless` (auto-detected via `detectHeadless()` — `true` when `typeof document === "undefined"`, overridable) makes `onStart` skip Pixi entirely: no `Application` is constructed or initialised and `state.app` stays `undefined`, yet `Transform` is still defined and the `sync` system still registered, so ECS/scene code runs unchanged. `onStop` skips `app.destroy(...)` when no app was created, and the API methods (`render`/`getView`/`getStage`) are undefined-app-safe. This lets the framework run in Bun/Node (or any DOM-less host) without a GPU and without Pixi crashing. The remaining DOM surface (`document`, `devicePixelRatio`) is still probed through an optional structural `globalThis` view for the non-headless mount/resolution paths.
+- **DI seams, not imports (Phase-1).** `setTextureResolver`/`setWorldTransformResolver` are the same inversion as `commands.setValidator` (spec/11 §2.8): `graphics-2d` and `hierarchy` sit ABOVE the renderer in the dependency order, so instead of the renderer importing them, they push behavior in by calling the setters at their own `onStart`. `depends` stays `[ecs, scheduler]` — no new edges. `sprites.ts` (wrapper+child construction for `attachSprite`) and `grid.ts` (hairline drawing for `setGridVisible`) are new domain files that keep this construction logic out of `api.ts`, mirroring `primitives.ts`.
+- **Wrapper/child split for view-local visuals.** `attachSprite`'s wrapper `Container` is the ONLY node the sync writes to; `tint`/`flipX`/`width`/`height` live on its one child (a `Sprite` or a placeholder `Graphics`). This is the same visual-isolation trick `getEntityView` documents for `vfx`'s `flash` — except here it is structural (a dedicated wrapper) rather than by convention.
 
 ## Dependencies
 
@@ -220,5 +327,7 @@ Declared via `depends: [ecsPlugin, schedulerPlugin]` and resolved with `ctx.requ
 
 - **`ecs`** — `ctx.require(ecsPlugin)` returns the `World`. The renderer defines/reads the `Transform` component, reads it during sync, and checks `world.isAlive(...)` for despawn reconciliation.
 - **`scheduler`** — `ctx.require(schedulerPlugin)` to `addSystem("sync", …)`, registering the transform→Pixi sync system that runs before the `loop` plugin's render stage.
+
+No new dependency edges in Phase-1 — `hierarchy`/`graphics-2d`/`assets` are never imported; they inject behavior through `setWorldTransformResolver`/`setTextureResolver` instead (see [Phase-1 additions](#phase-1-additions-wave-f1)).
 
 Runtime package: `pixi.js@^8`. Optionally composes with `@moku-labs/web` for DOM mounting when `config.mount` is a selector.

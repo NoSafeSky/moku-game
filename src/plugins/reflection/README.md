@@ -1,6 +1,6 @@
 # reflection
 
-> Standard plugin — a field-schema registry for named ECS components: infer a `FieldDescriptor[]` from a live value, or register a typed schema built from the `field.*` builders; `validate` a partial value against its descriptors.
+> Standard plugin — a field-schema registry for named ECS components: infer a `FieldDescriptor[]` from a live value, or register a typed schema built from the `field.*` builders; `validate` a partial value against its descriptors. **Phase-1 F1** added two schema-only reference kinds — `entity-ref` and `asset-ref` — so the inspector can render entity/asset picker controls.
 
 `reflection` answers one read — `describe(componentName): FieldDescriptor[]` — via two paths: **inference** (the default, zero-author-burden path that reads a representative live component value and classifies each key by `typeof`) and an **opt-in typed schema** authored with `field.*` and installed with `register`. A registered schema always wins over inference for that name. `validate(componentName, partial)` checks a partial component value against its descriptors — this is the function `commands.setValidator` receives, wired by a higher plugin (`editor-bridge`/`serialization`), so `reflection` and `commands` stay siblings that both depend on `ecs` only.
 
@@ -58,6 +58,8 @@ The `field.*` builder set, also re-exported standalone (`import { field } from "
 | `field.color()` | `ColorFieldSpec` | `field.color()` (value is a `#rrggbb`/`#rrggbbaa` string) |
 | `field.select(options)` | `SelectFieldSpec` | `field.select(["idle", "run", "jump"])` |
 | `field.vector2()` | `Vector2FieldSpec` | `field.vector2()` |
+| `field.entityRef()` | `EntityRefFieldSpec` | `field.entityRef()` (value is an `EditorId`/`number`, or `undefined`) — **schema-only**, never inferred |
+| `field.assetRef()` | `AssetRefFieldSpec` | `field.assetRef()` (value is an asset alias `string`, or `undefined`) — **schema-only**, never inferred |
 | `field.readonly(inner)` | same kind as `inner`, `readonly: true` | `field.readonly(field.number())` |
 
 ## Configuration
@@ -96,6 +98,13 @@ app.reflection.register("Enemy", {
 app.reflection.describe("Enemy"); // now returns the registered set
 
 app.reflection.validate("Enemy", { hp: 150 }); // { ok: false, errors: [...] }
+
+// Phase-1 F1 — reference kinds are schema-only; inference can never originate them.
+app.reflection.register("Enemy", { target: field.entityRef(), icon: field.assetRef() });
+app.reflection.validate("Enemy", { target: 42 }); // { ok: true } (an EditorId, or undefined)
+app.reflection.validate("Enemy", { target: "x" }); // { ok: false } — not a number
+app.reflection.validate("Enemy", { icon: "hero" }); // { ok: true } (an asset alias, or undefined)
+app.reflection.validate("Enemy", { icon: 3 }); // { ok: false } — not a string
 ```
 
 ## Design Notes
@@ -103,6 +112,7 @@ app.reflection.validate("Enemy", { hp: 150 }); // { ok: false, errors: [...] }
 - **Two type paths, no generics, no single mapped type.** `describe`/`register`/`validate` take/return plain, closed types. Inference produces `FieldDescriptor[]` at runtime tagged by `kind`; a typed schema is a hand-written `Record<string, FieldSpec>`. This sidesteps the strict-flag trap (`exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`) of a `type FieldsOf<T> = { [K in keyof T]: Field<T[K]> }` mapped type.
 - **Registered always wins.** `describe` checks `state.schemas` first, then the `state.inferred` memo, then falls back to inference. `register` clears the matching `inferred` entry so a subsequent `describe` doesn't resurrect a stale inferred set.
 - **Conservative inference.** `inferField` (in `infer.ts`) classifies only `number`/`boolean`/`string`/a two-key `{x:number,y:number}` object; anything else (arrays, functions, nested non-vector objects) is skipped rather than guessed.
+- **Reference kinds are schema-only (Phase-1 F1).** `entity-ref`/`asset-ref` can only be introduced via `register` — `inferField` never emits them because a bare `number`/`string` is ambiguous between a plain value and a reference (an `EditorId`/asset alias). `validate` accepts `number | undefined` for `entity-ref` and `string | undefined` for `asset-ref` (`undefined` means "unset").
 - **`validate` is a pure seam function.** `validateAgainst(descriptors, partial)` (in `validate.ts`) has no world dependency — it is the function a higher plugin wires into `commands.setValidator`. `reflection` never imports `commands`; the dependency graph stays a clean tree.
 - **No lifecycle hooks.** `reflection` owns no runtime resource and resolves `ecs` lazily inside `describe`/`validate` via `ctx.require(ecsPlugin)` — the same reason `scheduler` (also `depends: [ecs]`, also a forwarding facade) declares no `onStart`.
 - **Structural context pattern.** `createApi` accepts a minimal structural `ReflectionApiContext` (`config`, `state`, `log`, `require`) rather than the full kernel context, so unit tests can supply a lightweight mock without wiring the whole framework.

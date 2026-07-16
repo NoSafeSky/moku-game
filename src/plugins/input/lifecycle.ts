@@ -17,7 +17,8 @@ import type {
   InputSnapshot,
   KeyboardEventLike,
   PointerEventLike,
-  State
+  State,
+  WheelEventLike
 } from "./types";
 
 /**
@@ -120,14 +121,80 @@ export const createPointerHandler =
   };
 
 /**
+ * Pixel-equivalent height of one "line" of wheel scroll, used to normalize
+ * `WheelEvent.deltaMode === 1` (`DOM_DELTA_LINE`) deltas to pixels.
+ */
+const LINE_HEIGHT_PX = 16;
+
+/**
+ * Pixel-equivalent height of one "page" of wheel scroll, used to normalize
+ * `WheelEvent.deltaMode === 2` (`DOM_DELTA_PAGE`) deltas to pixels.
+ */
+const PAGE_HEIGHT_PX = 800;
+
+/**
+ * Normalises a single `WheelEvent` axis delta to pixels so trackpad (pixel)
+ * and mouse-wheel (line/page) input are comparable cross-browser.
+ *
+ * `deltaMode` follows the DOM `WheelEvent` convention: `0` = pixels (already
+ * normalized, passed through unchanged), `1` = lines (multiplied by
+ * {@link LINE_HEIGHT_PX}), `2` = pages (multiplied by {@link PAGE_HEIGHT_PX}).
+ *
+ * Exported for unit-testing only — it is NOT part of the public {@link Api}.
+ *
+ * @param delta - The raw axis delta from the wheel event.
+ * @param deltaMode - The event's `deltaMode` (0 = pixel, 1 = line, 2 = page).
+ * @returns The delta converted to pixels.
+ * @example
+ * ```ts
+ * normalizeWheelDelta(3, 1);  // 48  (3 lines * 16px)
+ * normalizeWheelDelta(120, 0); // 120 (already pixels)
+ * ```
+ */
+export const normalizeWheelDelta = (delta: number, deltaMode: number): number => {
+  if (deltaMode === 1) return delta * LINE_HEIGHT_PX;
+  if (deltaMode === 2) return delta * PAGE_HEIGHT_PX;
+  return delta;
+};
+
+/**
+ * Creates a wheel event handler that accumulates `deltaX`/`deltaY` into
+ * `state.wheel`, `deltaMode`-normalized to pixels via {@link normalizeWheelDelta}.
+ *
+ * Accumulates (rather than overwrites) so multiple wheel events within the
+ * same frame sum correctly before the input-stage system rolls them into the
+ * snapshot and zeroes the accumulator. Calls `event.preventDefault()` when
+ * `doPreventDefault` is true (stopping the browser from scroll-hijacking the
+ * viewport).
+ *
+ * @param state - The mutable input state to update.
+ * @param doPreventDefault - Whether to call preventDefault on every wheel event.
+ * @returns A wheel event handler function.
+ * @example
+ * ```ts
+ * const handler = createWheelHandler(state, config.preventDefault);
+ * target.addEventListener("wheel", handler, { passive: !config.preventDefault });
+ * ```
+ */
+export const createWheelHandler =
+  (state: State, doPreventDefault: boolean) =>
+  (event: WheelEventLike): void => {
+    if (doPreventDefault) event.preventDefault();
+    state.wheel.deltaX += normalizeWheelDelta(event.deltaX, event.deltaMode);
+    state.wheel.deltaY += normalizeWheelDelta(event.deltaY, event.deltaMode);
+  };
+
+/**
  * Creates the input-stage ECS system.
  *
  * At the start of each tick this system:
  *  1. Produces a new immutable InputSnapshot from the current `down`,
- *     `pressed`, `released`, and `pointer` values.
+ *     `pressed`, `released`, `pointer`, and `wheel` values.
  *  2. Stores it on `state.snapshot` (replacing the previous frame's object).
  *  3. Clears the per-frame `pressed` and `released` edge sets so that
  *     `justPressed`/`justReleased` are true for exactly one frame.
+ *  4. Zeroes the `wheel` accumulator (`{ deltaX: 0, deltaY: 0 }`) so the next
+ *     frame's wheel delta starts fresh — same per-tick lifecycle as the edge sets.
  *
  * The world and dt parameters are unused — input polling is ECS-independent.
  *
@@ -146,6 +213,7 @@ export const createInputSystem =
     const pressedSnapshot = new Set(state.pressed);
     const releasedSnapshot = new Set(state.released);
     const pointerSnapshot = { ...state.pointer };
+    const wheelSnapshot = { ...state.wheel };
 
     const snap: InputSnapshot = {
       /**
@@ -183,12 +251,15 @@ export const createInputSystem =
        * ```
        */
       justReleased: (key: string) => releasedSnapshot.has(key),
-      pointer: pointerSnapshot
+      pointer: pointerSnapshot,
+      wheel: wheelSnapshot
     };
 
     state.snapshot = snap;
     state.pressed.clear();
     state.released.clear();
+    state.wheel.deltaX = 0;
+    state.wheel.deltaY = 0;
   };
 
 // ─── target resolution ────────────────────────────────────────
@@ -226,11 +297,14 @@ const resolveTarget = (config: Readonly<Config>): EventTarget => {
  * Starts the input plugin — attaches DOM listeners and registers the input system.
  *
  * Resolves the EventTarget from `config.target`, attaches keydown/keyup
- * (when `keyboard` is true) and pointermove/pointerdown/pointerup
- * (when `pointer` is true) listeners, pushes each `{ type, fn, target }` entry
- * into `state.listeners`, registers the listener list in a module WeakMap keyed
- * on the frozen `ctx.global` for teardown, then registers the input-stage system
- * via `ctx.require(schedulerPlugin).addSystem("input", system)`.
+ * (when `keyboard` is true), pointermove/pointerdown/pointerup
+ * (when `pointer` is true), and a `"wheel"` listener (when `wheel` is true —
+ * registered `{ passive: false }` when `config.preventDefault` so it may
+ * `preventDefault()`, else `{ passive: true }`) listeners, pushes each
+ * `{ type, fn, target }` entry into `state.listeners`, registers the listener
+ * list in a module WeakMap keyed on the frozen `ctx.global` for teardown, then
+ * registers the input-stage system via
+ * `ctx.require(schedulerPlugin).addSystem("input", system)`.
  *
  * @param ctx - Plugin context providing `config`, `state`, and `require`.
  * @param ctx.global - Frozen global registry used as WeakMap key for teardown.
@@ -253,13 +327,19 @@ export const start = async (ctx: InputContext): Promise<void> => {
    *
    * @param type - The DOM event type string.
    * @param fn - The listener function to attach.
+   * @param options - Optional `addEventListener` options (e.g. `{ passive }`).
    * @example
    * ```ts
    * addListener("keydown", handler);
+   * addListener("wheel", wheelHandler, { passive: true });
    * ```
    */
-  const addListener = (type: string, fn: EventListener): void => {
-    eventTarget.addEventListener(type, fn);
+  const addListener = (
+    type: string,
+    fn: EventListener,
+    options?: AddEventListenerOptions
+  ): void => {
+    eventTarget.addEventListener(type, fn, options);
     state.listeners.push({ type, fn, target: eventTarget });
   };
 
@@ -279,6 +359,14 @@ export const start = async (ctx: InputContext): Promise<void> => {
     addListener("pointermove", pointerFunction);
     addListener("pointerdown", pointerFunction);
     addListener("pointerup", pointerFunction);
+  }
+
+  if (config.wheel) {
+    addListener(
+      "wheel",
+      createWheelHandler(state, config.preventDefault) as unknown as EventListener,
+      { passive: !config.preventDefault }
+    );
   }
 
   // Register the listener list in the module WeakMap keyed on the frozen global

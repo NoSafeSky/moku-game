@@ -17,6 +17,8 @@ const readonlyField: FieldDescriptor = {
   label: "Speed",
   readonly: true
 };
+const entityRefField: FieldDescriptor = { kind: "entity-ref", key: "target", label: "Target" };
+const assetRefField: FieldDescriptor = { kind: "asset-ref", key: "icon", label: "Icon" };
 
 describe("reflection — validateAgainst", () => {
   it("returns ok:true for an empty descriptor set (permissive)", () => {
@@ -133,5 +135,59 @@ describe("reflection — validateAgainst", () => {
 
   it("returns ok:true for an empty partial (nothing to check)", () => {
     expect(validateAgainst([numberField, selectField], {})).toStrictEqual({ ok: true });
+  });
+
+  it("Phase-1 F1 — entity-ref accepts a number", () => {
+    expect(validateAgainst([entityRefField], { target: 42 })).toStrictEqual({ ok: true });
+  });
+
+  it("Phase-1 F1 — entity-ref accepts undefined (unset)", () => {
+    expect(validateAgainst([entityRefField], { target: undefined })).toStrictEqual({ ok: true });
+  });
+
+  it("Phase-1 F1 — entity-ref rejects a string", () => {
+    expect(validateAgainst([entityRefField], { target: "not-an-id" })).toStrictEqual({
+      ok: false,
+      errors: [{ key: "target", message: "expected an entity id" }]
+    });
+  });
+
+  it("Phase-1 F1 — entity-ref rejects an object", () => {
+    const result = validateAgainst([entityRefField], { target: { id: 1 } });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0]?.key).toBe("target");
+    }
+  });
+
+  it("Phase-1 F1 — asset-ref accepts a string", () => {
+    expect(validateAgainst([assetRefField], { icon: "hero" })).toStrictEqual({ ok: true });
+  });
+
+  it("Phase-1 F1 — asset-ref accepts undefined (unset)", () => {
+    expect(validateAgainst([assetRefField], { icon: undefined })).toStrictEqual({ ok: true });
+  });
+
+  it("Phase-1 F1 — asset-ref rejects a number", () => {
+    expect(validateAgainst([assetRefField], { icon: 3 })).toStrictEqual({
+      ok: false,
+      errors: [{ key: "icon", message: "expected an asset alias string" }]
+    });
+  });
+
+  it("Phase-1 F1 — entity-ref respects readonly", () => {
+    const readonlyRef: FieldDescriptor = {
+      kind: "entity-ref",
+      key: "target",
+      label: "Target",
+      readonly: true
+    };
+
+    expect(validateAgainst([readonlyRef], { target: 1 })).toStrictEqual({
+      ok: false,
+      errors: [{ key: "target", message: "field is read-only" }]
+    });
   });
 });

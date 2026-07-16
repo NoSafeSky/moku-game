@@ -4,7 +4,9 @@ import { createApi } from "../../api";
 import { field } from "../../field";
 import type {
   Api,
+  AssetRefField,
   BooleanField,
+  EntityRefField,
   FieldDescriptor,
   NumberField,
   SelectField,
@@ -52,6 +54,26 @@ describe("reflection — FieldDescriptor discriminated union", () => {
     expectTypeOf(descriptor).not.toHaveProperty("options");
     expect(descriptor.kind).toBe("boolean");
   });
+
+  it("Phase-1 F1 — narrows to the entity-ref member (8-kind union)", () => {
+    const descriptor: FieldDescriptor = { kind: "entity-ref", key: "target", label: "Target" };
+
+    if (descriptor.kind === "entity-ref") {
+      expectTypeOf(descriptor).toEqualTypeOf<EntityRefField>();
+    }
+
+    expect(descriptor.kind).toBe("entity-ref");
+  });
+
+  it("Phase-1 F1 — narrows to the asset-ref member (8-kind union)", () => {
+    const descriptor: FieldDescriptor = { kind: "asset-ref", key: "icon", label: "Icon" };
+
+    if (descriptor.kind === "asset-ref") {
+      expectTypeOf(descriptor).toEqualTypeOf<AssetRefField>();
+    }
+
+    expect(descriptor.kind).toBe("asset-ref");
+  });
 });
 
 describe("reflection — field.* builder return types", () => {
@@ -63,6 +85,13 @@ describe("reflection — field.* builder return types", () => {
   it("field.select returns SelectFieldSpec (has options property)", () => {
     expectTypeOf(field.select(["a", "b"])).toHaveProperty("options");
     expect(field.select(["a", "b"]).kind).toBe("select");
+  });
+
+  it("Phase-1 F1 — field.entityRef/assetRef return their specific specs (no options)", () => {
+    expectTypeOf(field.entityRef()).not.toHaveProperty("options");
+    expectTypeOf(field.assetRef()).not.toHaveProperty("options");
+    expect(field.entityRef().kind).toBe("entity-ref");
+    expect(field.assetRef().kind).toBe("asset-ref");
   });
 });
 

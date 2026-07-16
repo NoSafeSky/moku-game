@@ -64,6 +64,20 @@ describe("reflection — inferDescriptors", () => {
     expect(descriptors[0]).toStrictEqual({ kind: "number", key: "hp", label: "Hp" });
     expect(descriptors[1]).toStrictEqual({ kind: "boolean", key: "alive", label: "Alive" });
   });
+
+  it("Phase-1 F1 — never classifies a number key as entity-ref (stays plain number)", () => {
+    const descriptors = inferDescriptors({ target: 42 }, true);
+
+    expect(descriptors).toContainEqual({ kind: "number", key: "target", label: "Target" });
+    expect(descriptors.some(descriptor => descriptor.kind === "entity-ref")).toBe(false);
+  });
+
+  it("Phase-1 F1 — never classifies a string key as asset-ref (stays plain string)", () => {
+    const descriptors = inferDescriptors({ icon: "hero" }, true);
+
+    expect(descriptors).toContainEqual({ kind: "string", key: "icon", label: "Icon" });
+    expect(descriptors.some(descriptor => descriptor.kind === "asset-ref")).toBe(false);
+  });
 });
 
 describe("reflection — labelFor", () => {

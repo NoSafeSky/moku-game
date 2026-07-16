@@ -103,6 +103,59 @@ export type TransformValue = {
   scaleY: number;
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase-1 (Wave F1) — resolver seams + sprite/grid specs. No Pixi types leak.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Opaque handle to a resolved texture. The renderer treats it as a black box: a
+ * caller (e.g. graphics-2d over the assets plugin) resolves an alias to one of these
+ * and hands it back through a {@link TextureResolver}; the renderer casts it internally
+ * to a Pixi Texture. Pixi's Texture type never crosses the plugin boundary.
+ */
+export type TextureHandle = { readonly __textureHandle: unique symbol };
+
+/**
+ * Resolve a sprite alias to an opaque {@link TextureHandle}, or undefined when the
+ * alias is not (yet) loaded. Injected via {@link Api.setTextureResolver} — the DI seam
+ * graphics-2d uses so the renderer never imports the assets plugin.
+ */
+export type TextureResolver = (alias: string) => TextureHandle | undefined;
+
+/**
+ * Resolve an entity to its WORLD-space transform, or undefined to fall back to the
+ * entity's local Transform component. Injected via {@link Api.setWorldTransformResolver}
+ * by the hierarchy plugin so the sync positions parented entities in world space.
+ */
+export type WorldTransformResolver = (entity: Entity) => TransformValue | undefined;
+
+/**
+ * Plain-data build spec for {@link Api.attachSprite} — no Pixi types leak. `tint`/`flipX`/
+ * `width`/`height` are view-local (applied to the inner sprite, untouched by the Transform sync).
+ */
+export type SpriteSpec = {
+  /** Texture alias resolved through the injected {@link TextureResolver}. */
+  alias: string;
+  /** Tint as a hex int (0xrrggbb) or "#rrggbb" string. Default: no tint (0xffffff). */
+  tint?: number | string;
+  /** Mirror horizontally (applied to the inner sprite). Default: false. */
+  flipX?: boolean;
+  /** Explicit display width in px (overrides the texture's natural width). */
+  width?: number;
+  /** Explicit display height in px. */
+  height?: number;
+};
+
+/**
+ * Editor grid-overlay style for {@link Api.setGridVisible}. Plain data (hex color int).
+ */
+export type GridSpec = {
+  /** Grid cell size in world px. Default: 32. */
+  size?: number;
+  /** Line color as a hex int. Default: a slate hairline. */
+  color?: number;
+};
+
 /** renderer plugin configuration. */
 export type Config = {
   /** Canvas width in CSS pixels. Default: 800. */
@@ -141,6 +194,21 @@ export type State = {
   readonly views: Map<Entity, Container>;
   /** Entities whose Transform changed since the last sync tick. */
   readonly dirty: Set<Entity>;
+  /**
+   * Phase-1 — injected alias→texture seam (setTextureResolver). undefined = attachSprite
+   * always uses the placeholder. graphics-2d installs it at onStart.
+   */
+  textureResolver: TextureResolver | undefined;
+  /**
+   * Phase-1 — injected entity→WORLD-transform seam (setWorldTransformResolver). undefined =
+   * sync uses the local Transform (unchanged flat-app behavior). hierarchy installs it at onStart.
+   */
+  worldResolver: WorldTransformResolver | undefined;
+  /**
+   * Phase-1 — the editor grid-overlay Container (a below-world Graphics layer). undefined until
+   * the first setGridVisible(true) / when headless. Torn down with the stage on app.destroy.
+   */
+  grid: Container | undefined;
 };
 
 /** renderer plugin public API (exposed as app.renderer). */
@@ -240,6 +308,72 @@ export type Api = {
    * ```
    */
   attachPrimitive(entity: Entity, spec: PrimitiveSpec): boolean;
+
+  // ── Phase-1 additions (Wave F1) ──────────────────────────────────────────
+
+  /**
+   * Build a Pixi Sprite from the injected texture resolver and self-parent it to the
+   * stage (views + dirty). When the alias is unresolved (no resolver / resolver → undefined)
+   * a placeholder Graphics is built so the entity is still visible. Returns false when
+   * headless / before start (no app). The inner sprite carries tint/flipX/size so the
+   * Transform sync (which drives the wrapper) never clobbers them.
+   *
+   * @param entity - The entity to associate the sprite view with.
+   * @param spec - Plain JSON-describable sprite spec (alias + view-local visuals).
+   * @returns true when a view was staged; false when headless / before start.
+   * @example
+   * ```ts
+   * const ok = api.attachSprite(entity, { alias: "player", tint: 0xff0000 });
+   * ```
+   */
+  attachSprite(entity: Entity, spec: SpriteSpec): boolean;
+  /**
+   * Install (or clear with undefined) the alias→texture resolver seam. graphics-2d injects
+   * this at onStart so the renderer resolves sprite textures without importing the assets plugin.
+   *
+   * @param resolve - The resolver, or undefined to clear it (placeholder-only mode).
+   * @example
+   * ```ts
+   * api.setTextureResolver(alias => assets.resolveTexture(alias));
+   * ```
+   */
+  setTextureResolver(resolve: TextureResolver | undefined): void;
+  /**
+   * Install (or clear with undefined) the entity→WORLD-transform resolver seam. hierarchy injects
+   * `e => worldOf(e)` at onStart so the sync positions parented entities in world space. Default
+   * undefined = unchanged local-Transform behavior for flat apps.
+   *
+   * @param resolve - The resolver, or undefined to fall back to the local Transform.
+   * @example
+   * ```ts
+   * api.setWorldTransformResolver(e => hierarchy.worldOf(e));
+   * ```
+   */
+  setWorldTransformResolver(resolve: WorldTransformResolver | undefined): void;
+  /**
+   * Toggle an entity view's visibility — the render-side bridge for Node.enabled. No-op when
+   * the entity has no view (headless / not attached); never throws.
+   *
+   * @param entity - The entity whose view visibility to set.
+   * @param visible - Whether the view should render.
+   * @example
+   * ```ts
+   * api.setEntityVisible(entity, false);
+   * ```
+   */
+  setEntityVisible(entity: Entity, visible: boolean): void;
+  /**
+   * Show/update or hide the editor grid overlay on a dedicated below-world layer. Headless-tolerant
+   * (no-op when there is no app). `spec` restyles the grid on show.
+   *
+   * @param visible - Whether the grid overlay is shown.
+   * @param spec - Optional grid cell size + line color.
+   * @example
+   * ```ts
+   * api.setGridVisible(true, { size: 16, color: 0x334155 });
+   * ```
+   */
+  setGridVisible(visible: boolean, spec?: GridSpec): void;
 };
 
 /**

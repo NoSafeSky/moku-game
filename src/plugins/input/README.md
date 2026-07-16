@@ -23,7 +23,7 @@ Before the first tick runs, `snapshot()` returns an initial snapshot backed by t
 
 ### `InputSnapshot`
 
-The snapshot is the actual query surface. It exposes three keyboard predicates plus a frozen pointer.
+The snapshot is the actual query surface. It exposes three keyboard predicates plus a frozen pointer and wheel delta.
 
 | Member | Signature | Description |
 |---|---|---|
@@ -31,6 +31,7 @@ The snapshot is the actual query surface. It exposes three keyboard predicates p
 | `justPressed` | `(key: string) => boolean` | True only on the frame the key first transitioned to down. Key-repeat is ignored. |
 | `justReleased` | `(key: string) => boolean` | True only on the frame the key transitioned to up. |
 | `pointer` | `{ readonly x: number; readonly y: number; readonly buttons: number }` | Pointer position (from `clientX`/`clientY`) and the pressed-button bitmask, as of the moment the snapshot was taken. |
+| `wheel` | `{ readonly deltaX: number; readonly deltaY: number }` | Accumulated wheel/trackpad delta for this frame (`deltaMode`-normalized to pixels); `{ 0, 0 }` on a frame with no wheel motion. |
 
 ```ts
 const snap = app.input.snapshot();
@@ -38,6 +39,7 @@ const snap = app.input.snapshot();
 if (snap.justPressed("Space")) player.jump();        // one frame only
 if (snap.isDown("ShiftLeft")) player.sprint(dt);     // every held frame
 const { x, y, buttons } = snap.pointer;              // buttons bitmask: 1 = left, 2 = right, 4 = middle
+const { deltaX, deltaY } = snap.wheel;                // {0,0} unless the wheel/trackpad moved this frame
 ```
 
 ### Injection — `keyDown` / `keyUp` / `keyPress`
@@ -75,12 +77,37 @@ So `app.input.keyDown("Space")` is equivalent to `keyDown(" ")`, and `keyPress("
 
 > The normalization helper (`normalizeKey`) is exported for unit testing only and is **not** part of the public `Api`.
 
+### Wheel / trackpad capture
+
+The `"wheel"` DOM listener (attached when `config.wheel` is `true`, the default) accumulates `deltaX`/`deltaY` into a live per-frame accumulator, exposed as `snapshot().wheel`. This exists so the editor viewport can drive cursor-anchored camera zoom (the `camera` plugin's editor-control system reads `input.snapshot().wheel` and calls `camera.zoomAt(pointer, factor)`).
+
+Each raw `WheelEvent` axis delta is first normalized to pixels via the internal `normalizeWheelDelta` helper, so trackpad (pixel) and mouse-wheel (line/page) input are comparable cross-browser:
+
+| `deltaMode` | Meaning | Conversion |
+|---|---|---|
+| `0` | Pixel (`DOM_DELTA_PIXEL`) | Passthrough — already pixels. |
+| `1` | Line (`DOM_DELTA_LINE`) | `× 16` (one line ≈ 16px). |
+| `2` | Page (`DOM_DELTA_PAGE`) | `× 800` (one page ≈ 800px). |
+
+Multiple wheel events within the same frame **accumulate** (sum), and the `"input"`-stage system rolls the accumulator into `snapshot.wheel` then resets it to `{ deltaX: 0, deltaY: 0 }` — identical per-tick lifecycle to the `pressed`/`released` edge sets. A frame with no wheel motion reports `{ 0, 0 }`.
+
+The wheel listener is registered `{ passive: false }` when `config.preventDefault` is `true` (so it may call `event.preventDefault()` to stop the browser from scroll-hijacking the viewport), else `{ passive: true }`. It rides the same `state.listeners` array as every other listener, so `onStop` tears it down symmetrically — no separate teardown path.
+
+```ts
+app.scheduler.addSystem("update", () => {
+  const { deltaY } = app.input.snapshot().wheel;
+  if (deltaY !== 0) camera.zoomAt(pointer, deltaY > 0 ? 0.9 : 1.1);
+});
+```
+
+> The normalization helper (`normalizeWheelDelta`) is exported for unit testing only and is **not** part of the public `Api`. Setting `wheel: false` attaches no `"wheel"` listener at all.
+
 ## Lifecycle
 
 The plugin owns real DOM listener resources, so both lifecycle hooks are used (both marked `@no-resource-check` — the managed resource is the listener set, not a handle returned from a factory).
 
-- **`onStart`** — resolves `config.target` to a live `EventTarget`, attaches `keydown`/`keyup` (when `keyboard`) and `pointermove`/`pointerdown`/`pointerup` (when `pointer`), records each `{ type, fn, target }` in `state.listeners`, stashes that list in a module `WeakMap` keyed on the frozen `ctx.global`, then registers the snapshot-rolling system via `ctx.require(schedulerPlugin).addSystem("input", system)`.
-- **`onStop`** — looks the listener list up by `ctx.global`, calls `removeEventListener` for every entry, empties the array, and deletes the `WeakMap` entry. This guards against leaked global listeners across app restarts and makes `stop()` idempotent.
+- **`onStart`** — resolves `config.target` to a live `EventTarget`, attaches `keydown`/`keyup` (when `keyboard`), `pointermove`/`pointerdown`/`pointerup` (when `pointer`), and `wheel` (when `wheel`), records each `{ type, fn, target }` in `state.listeners`, stashes that list in a module `WeakMap` keyed on the frozen `ctx.global`, then registers the snapshot-rolling system via `ctx.require(schedulerPlugin).addSystem("input", system)`.
+- **`onStop`** — looks the listener list up by `ctx.global`, calls `removeEventListener` for every entry (including `wheel`), empties the array, and deletes the `WeakMap` entry. This guards against leaked global listeners across app restarts and makes `stop()` idempotent.
 
 Target resolution is node-safe: `"window"` resolves to `globalThis.window` (falling back to `globalThis`), and any other string is treated as a selector resolved via `document.querySelector`. When no DOM is present, it falls back to `globalThis`, so the plugin loads without crashing in a headless runtime.
 
@@ -91,7 +118,8 @@ Target resolution is node-safe: `"window"` resolves to `globalThis.window` (fall
 | `target` | `string` | `"window"` | DOM target to attach listeners to. `"window"` uses the global window; any other string is a CSS selector resolved via `document.querySelector` at start. |
 | `pointer` | `boolean` | `true` | When `true`, attach `pointermove`/`pointerdown`/`pointerup` listeners and track pointer position + buttons. |
 | `keyboard` | `boolean` | `true` | When `true`, attach `keydown`/`keyup` listeners and track key state. |
-| `preventDefault` | `boolean` | `false` | When `true`, call `event.preventDefault()` on every tracked key event (e.g. to stop arrow/space scrolling). |
+| `wheel` | `boolean` | `true` | When `true`, attach a `wheel` listener and accumulate `deltaX`/`deltaY` (`deltaMode`-normalized to pixels) into `snapshot().wheel`. |
+| `preventDefault` | `boolean` | `false` | When `true`, call `event.preventDefault()` on every tracked key/wheel event (e.g. to stop arrow/space scrolling, or the viewport wheel-zoom hijack). |
 
 ## Events
 
@@ -108,7 +136,8 @@ const app = createApp({
       target: "window",
       keyboard: true,
       pointer: true,
-      preventDefault: true // stop arrows/space from scrolling the page
+      wheel: true,
+      preventDefault: true // stop arrows/space/wheel from scrolling the page
     }
   }
 });
@@ -127,6 +156,9 @@ app.scheduler.addSystem("update", (world, dt) => {
 
   const { x, y, buttons } = input.pointer;
   if (buttons & 1) player.aimAt(x, y); // left button held
+
+  const { deltaY } = input.wheel;
+  if (deltaY !== 0) camera.zoomAt(input.pointer, deltaY > 0 ? 0.9 : 1.1);
 });
 
 // ... later
