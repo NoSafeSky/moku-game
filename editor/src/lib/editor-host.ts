@@ -1,12 +1,12 @@
 /**
  * @file editor-host — the single integration seam between the web shell and the game runtime.
- * Boots the game app (@nosafesky/moku-game), mounts its Pixi canvas, runs the one poll loop,
+ * Boots the game app (@nosafesky/ludemic), mounts its Pixi canvas, runs the one poll loop,
  * and exposes the bridge + viewport/asset handles to islands (which have no plugin ctx). The shell
  * POLLS — Moku `App` has no subscribe member; the rAF loop re-reads bridge.snapshot()'s cheap scalars
  * (selection/mode/canUndo/canRedo) every frame, so changes surface next frame with no event.
  */
-import type { Assets, EditorBridge, EditorGizmos, EditorSelection } from "@nosafesky/moku-game";
-import { createApp } from "@nosafesky/moku-game";
+import type { Assets, EditorBridge, EditorGizmos, EditorSelection } from "@nosafesky/ludemic";
+import { createApp } from "@nosafesky/ludemic";
 
 /**
  * The runtime handles every island consumes.

@@ -1,5 +1,5 @@
 /** @file Map a reflection FieldDescriptor to an editable DOM control, and read its value back. */
-import type { Reflection } from "@nosafesky/moku-game";
+import type { Reflection } from "@nosafesky/ludemic";
 
 // ─── Value coercion (snapshots hand us `unknown`; stay defensive) ───
 

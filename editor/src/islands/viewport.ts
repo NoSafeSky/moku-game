@@ -1,6 +1,6 @@
 /** @file Viewport island — reflects the current selection; click-to-pick is owned by editor-selection. */
 import { createIsland } from "@moku-labs/web/browser";
-import type { EditorBridge } from "@nosafesky/moku-game";
+import type { EditorBridge } from "@nosafesky/ludemic";
 import { onSnapshot } from "../lib/editor-host";
 
 // Reflect whether anything is selected as data-has-selection — the DOM hook for a viewport focus ring.

@@ -1,6 +1,6 @@
 /** @file Asset-browser island — assets.entries()/metadata → a browsable asset list. */
 import { createIsland } from "@moku-labs/web/browser";
-import type { Assets } from "@nosafesky/moku-game";
+import type { Assets } from "@nosafesky/ludemic";
 import { getEditor, onSnapshot } from "../lib/editor-host";
 
 // A cheap signature of the asset projection — the gate that avoids rebuilding the list every poll

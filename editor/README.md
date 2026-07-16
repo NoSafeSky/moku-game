@@ -3,7 +3,7 @@
 **An in-browser, Unity-style visual editor for games built on the Moku ECS framework.**
 
 A Layer-3 `@moku-labs/web` shell that renders editor chrome — viewport, inspector, scene tree, asset
-browser, toolbar — around a live `@nosafesky/moku-game` runtime. It is a developer tool, not a game and
+browser, toolbar — around a live `@nosafesky/ludemic` runtime. It is a developer tool, not a game and
 not a content site: two `createApp` instances share **one** object, the exported `editor-bridge`, and
 the shell drives the game entirely through it.
 
@@ -42,13 +42,13 @@ stand-in — enough to select, edit, and undo. A real integration replaces that 
 ## Quick start
 
 > [!IMPORTANT]
-> This app consumes the framework `@nosafesky/moku-game` through a `file:..` link, so the framework's
+> This app consumes the framework `@nosafesky/ludemic` through a `file:..` link, so the framework's
 > `dist/` must exist first. From the **repository root**, build the framework once:
 > ```sh
 > bun install && bun run build
 > ```
 > On Windows the link is a directory junction; any `bun add`/`bun install` inside `editor/` re-breaks it
-> and it must be restored (`New-Item -ItemType Junction -Path editor/node_modules/@nosafesky/moku-game -Target <repo-root>`).
+> and it must be restored (`New-Item -ItemType Junction -Path editor/node_modules/@nosafesky/ludemic -Target <repo-root>`).
 
 Then, from `editor/`:
 
@@ -67,7 +67,7 @@ runtime object — `gameApp["editor-bridge"]` — and nothing else.
 
 ```mermaid
 flowchart LR
-  Shell["Web shell<br/>@moku-labs/web (SSG + islands)"] -->|"editor-bridge (only seam)"| Game["Game runtime<br/>@nosafesky/moku-game"]
+  Shell["Web shell<br/>@moku-labs/web (SSG + islands)"] -->|"editor-bridge (only seam)"| Game["Game runtime<br/>@nosafesky/ludemic"]
   Game --> Canvas["Pixi canvas + ECS<br/>+ editor plugins"]
   classDef u fill:#0b7285,stroke:#08525f,color:#fff;
   classDef m fill:#1864ab,stroke:#0d3d6e,color:#fff;
@@ -154,7 +154,7 @@ workflow; the build command is `bun run build` and the output directory is `edit
 
 ## Requirements
 
-Node ≥ 24 · Bun ≥ 1.3 · TypeScript strict · [`@nosafesky/moku-game`](../) built (`bun run build` at the repo root).
+Node ≥ 24 · Bun ≥ 1.3 · TypeScript strict · [`@nosafesky/ludemic`](../) built (`bun run build` at the repo root).
 
 ## License
 

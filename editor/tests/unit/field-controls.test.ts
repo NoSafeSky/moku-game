@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import type { Reflection } from "@nosafesky/moku-game";
+import type { Reflection } from "@nosafesky/ludemic";
 import { describe, expect, it } from "vitest";
 import { readControl, renderControl } from "../../src/lib/field-controls";
 

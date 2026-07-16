@@ -1,6 +1,6 @@
 /** @file Toolbar island — data-action buttons → bridge.*; reflects mode/canUndo/canRedo. */
 import { createIsland } from "@moku-labs/web/browser";
-import type { EditorBridge } from "@nosafesky/moku-game";
+import type { EditorBridge } from "@nosafesky/ludemic";
 import { getEditor, onSnapshot } from "../lib/editor-host";
 
 // The single named scene slot the MVP save/load buttons round-trip through.

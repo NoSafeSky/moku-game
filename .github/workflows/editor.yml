@@ -1,7 +1,7 @@
 name: Editor
 
 # PR validation + GitHub Pages deploy for the Layer-3 editor app (editor/). The app consumes the
-# framework via `@nosafesky/moku-game: file:..`, so every job builds the framework's dist/ FIRST, then
+# framework via `@nosafesky/ludemic: file:..`, so every job builds the framework's dist/ FIRST, then
 # resolves the editor against it.
 on:
   push:

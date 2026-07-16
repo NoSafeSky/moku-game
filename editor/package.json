@@ -17,7 +17,7 @@
   },
   "dependencies": {
     "@moku-labs/web": "2.0.1",
-    "@nosafesky/moku-game": "file:..",
+    "@nosafesky/ludemic": "file:..",
     "pixi.js": "8.6.6",
     "preact": "10.25.4",
     "preact-render-to-string": "6.5.13"

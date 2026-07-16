@@ -1,6 +1,6 @@
 /** @file Scene-tree island — snapshot.entities → selectable rows → bridge.select. */
 import { createIsland } from "@moku-labs/web/browser";
-import type { Commands, EditorBridge } from "@nosafesky/moku-game";
+import type { Commands, EditorBridge } from "@nosafesky/ludemic";
 import { getEditor, onSnapshot } from "../lib/editor-host";
 
 // Build one entity row: "#<id> · <component names>", tagged with data-id for click routing + CSS.

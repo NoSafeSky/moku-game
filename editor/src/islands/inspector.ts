@@ -1,6 +1,6 @@
 /** @file Inspector island — snapshot selection → field controls per component → bridge.setField. */
 import { createIsland } from "@moku-labs/web/browser";
-import type { Commands, EditorBridge, Reflection } from "@nosafesky/moku-game";
+import type { Commands, EditorBridge, Reflection } from "@nosafesky/ludemic";
 import { getEditor, onSnapshot } from "../lib/editor-host";
 import { readControl, renderControl } from "../lib/field-controls";
 

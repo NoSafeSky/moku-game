@@ -10,7 +10,7 @@
  * game ONLY through `gameApp["editor-bridge"]`; this fixture stands in for the absent host game. In a
  * real deployment the host game owns its own components + scene — pass a real game and drop this seed.
  */
-import { field } from "@nosafesky/moku-game";
+import { field } from "@nosafesky/ludemic";
 import type { EditorHandles } from "./editor-host";
 
 /** The game runtime app the editor hosts (typed off the editor handles — no extra imports needed). */

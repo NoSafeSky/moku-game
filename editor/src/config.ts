@@ -2,5 +2,5 @@
 export const SITE = {
   name: "Moku Editor",
   url: "https://editor.local",
-  description: "In-browser ECS editor for @nosafesky/moku-game"
+  description: "In-browser ECS editor for @nosafesky/ludemic"
 } as const;

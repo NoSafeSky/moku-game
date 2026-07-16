@@ -6,7 +6,7 @@
       "name": "@nosafesky/moku-editor",
       "dependencies": {
         "@moku-labs/web": "2.0.1",
-        "@nosafesky/moku-game": "file:..",
+        "@nosafesky/ludemic": "file:..",
         "pixi.js": "8.6.6",
         "preact": "10.25.4",
         "preact-render-to-string": "6.5.13",
@@ -207,7 +207,7 @@
 
     "@napi-rs/wasm-runtime": ["@napi-rs/wasm-runtime@1.1.6", "", { "dependencies": { "@tybys/wasm-util": "^0.10.3" }, "peerDependencies": { "@emnapi/core": "^1.7.1", "@emnapi/runtime": "^1.7.1" } }, "sha512-ZLv/JdUfkvOy9eCnnBaGfiO+XimbjebAeO+MRQqD/B+FR1tnRN0tpKSJHRbE8sFfS6aqsXZ67TQjfwfsxULVbg=="],
 
-    "@nosafesky/moku-game": ["@nosafesky/moku-game@file:..", { "dependencies": { "@modelcontextprotocol/sdk": "^1.29.0", "@moku-labs/common": "0.3.0", "@moku-labs/core": "1.5.0", "hono": "4.12.27", "pixi.js": "^8", "zod": "^4.4.3" }, "devDependencies": { "@arethetypeswrong/cli": "0.18.3", "@arethetypeswrong/core": "0.18.3", "@biomejs/biome": "2.4.16", "@types/bun": "1.3.14", "@vitest/coverage-istanbul": "4.0.18", "eslint": "9.39.3", "eslint-config-biome": "2.1.3", "eslint-plugin-jsdoc": "62.6.0", "eslint-plugin-sonarjs": "4.0.0", "eslint-plugin-unicorn": "63.0.0", "globals": "17.4.0", "jiti": "2.6.1", "lefthook": "2.1.1", "publint": "0.3.21", "tsdown": "0.22.1", "typescript": "6.0.3", "typescript-eslint": "8.58.0", "vitest": "4.0.18" } }],
+    "@nosafesky/ludemic": ["@nosafesky/ludemic@file:..", { "dependencies": { "@modelcontextprotocol/sdk": "^1.29.0", "@moku-labs/common": "0.3.0", "@moku-labs/core": "1.5.0", "hono": "4.12.27", "pixi.js": "^8", "zod": "^4.4.3" }, "devDependencies": { "@arethetypeswrong/cli": "0.18.3", "@arethetypeswrong/core": "0.18.3", "@biomejs/biome": "2.4.16", "@types/bun": "1.3.14", "@vitest/coverage-istanbul": "4.0.18", "eslint": "9.39.3", "eslint-config-biome": "2.1.3", "eslint-plugin-jsdoc": "62.6.0", "eslint-plugin-sonarjs": "4.0.0", "eslint-plugin-unicorn": "63.0.0", "globals": "17.4.0", "jiti": "2.6.1", "lefthook": "2.1.1", "publint": "0.3.21", "tsdown": "0.22.1", "typescript": "6.0.3", "typescript-eslint": "8.58.0", "vitest": "4.0.18" } }],
 
     "@oxc-project/types": ["@oxc-project/types@0.139.0", "", {}, "sha512-r9gHphtCs+1M7J0pw6Sn/hh/Wpa/iQrOOkrNAlVLF/gHq+/CJmHIWKKUUhdWjcD6CIa8idarspCsASiXCXvFUw=="],
 
@@ -1347,9 +1347,9 @@
 
     "@modelcontextprotocol/sdk/ajv": ["ajv@8.20.0", "", { "dependencies": { "fast-deep-equal": "^3.1.3", "fast-uri": "^3.0.1", "json-schema-traverse": "^1.0.0", "require-from-string": "^2.0.2" } }, "sha512-Thbli+OlOj+iMPYFBVBfJ3OmCAnaSyNn4M1vz9T6Gka5Jt9ba/HIR56joy65tY6kx/FCF5VXNB819Y7/GUrBGA=="],
 
-    "@nosafesky/moku-game/@moku-labs/common": ["@moku-labs/common@0.3.0", "", { "dependencies": { "@moku-labs/core": "1.5.0" } }, "sha512-HmubQmY1YSP4A2Xa0po4T1sNXYEjlwLv4uTkKqpKiQGaZw3OqZVkQtl9yobMBHITP3B5PHHxj9FQMt8I0t+99A=="],
+    "@nosafesky/ludemic/@moku-labs/common": ["@moku-labs/common@0.3.0", "", { "dependencies": { "@moku-labs/core": "1.5.0" } }, "sha512-HmubQmY1YSP4A2Xa0po4T1sNXYEjlwLv4uTkKqpKiQGaZw3OqZVkQtl9yobMBHITP3B5PHHxj9FQMt8I0t+99A=="],
 
-    "@nosafesky/moku-game/globals": ["globals@17.4.0", "", {}, "sha512-hjrNztw/VajQwOLsMNT1cbJiH2muO3OROCHnbehc8eY5JyD2gqz4AcMHPqgaOR59DjgUjYAYLeH699g/eWi2jw=="],
+    "@nosafesky/ludemic/globals": ["globals@17.4.0", "", {}, "sha512-hjrNztw/VajQwOLsMNT1cbJiH2muO3OROCHnbehc8eY5JyD2gqz4AcMHPqgaOR59DjgUjYAYLeH699g/eWi2jw=="],
 
     "@shuding/opentype.js/fflate": ["fflate@0.7.4", "", {}, "sha512-5u2V/CDW15QM1XbbgS+0DfPxVB+jUKhWEKuuFuHncbk3tEEqzmoXL+2KyOFuKGqOnmdIy0/davWF1CkuwtibCw=="],
 

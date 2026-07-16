@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { mountIsland } from "@moku-labs/web/testing";
-import type { Assets } from "@nosafesky/moku-game";
+import type { Assets } from "@nosafesky/ludemic";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { query } from "../helpers/dom";
 

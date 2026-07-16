@@ -1,7 +1,7 @@
 import type { Mock } from "vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// A controllable mock of the game runtime (@nosafesky/moku-game). vi.hoisted so it is defined
+// A controllable mock of the game runtime (@nosafesky/ludemic). vi.hoisted so it is defined
 // before the vi.mock factory (which is hoisted above the editor-host import) references it.
 const mocks = vi.hoisted(() => {
   const snapshot = {
@@ -31,7 +31,7 @@ const mocks = vi.hoisted(() => {
   return { snapshot, canvas, entity, app, createApp: vi.fn(() => app) };
 });
 
-vi.mock("@nosafesky/moku-game", () => ({ createApp: mocks.createApp }));
+vi.mock("@nosafesky/ludemic", () => ({ createApp: mocks.createApp }));
 
 const { getEditor, onSnapshot, startEditor, stopEditor } = await import(
   "../../src/lib/editor-host"

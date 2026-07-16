@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock the framework so importing demo-scene pulls only a lightweight `field` builder (never the
 // real graph with pixi). demo-scene uses `field.number(...)` and nothing else from the framework.
-vi.mock("@nosafesky/moku-game", () => ({
+vi.mock("@nosafesky/ludemic", () => ({
   field: { number: (opts?: object) => ({ kind: "number", ...opts }) }
 }));
 

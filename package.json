@@ -1,5 +1,5 @@
 {
-  "name": "@nosafesky/moku-game",
+  "name": "@nosafesky/ludemic",
   "version": "0.3.0",
   "description": "An ECS game framework for Moku (Spark-style public API & memory layout) with PixiJS rendering, built on @moku-labs/core and composable with @moku-labs/web",
   "license": "MIT",
