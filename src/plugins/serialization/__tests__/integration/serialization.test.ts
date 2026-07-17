@@ -14,7 +14,10 @@ import { coreConfig } from "../../../../config";
 import { commandsPlugin } from "../../../commands";
 import type { EditorId } from "../../../commands/types";
 import { ecsPlugin } from "../../../ecs";
+import { hierarchyPlugin } from "../../../hierarchy";
 import { reflectionPlugin } from "../../../reflection";
+import { rendererPlugin } from "../../../renderer";
+import { schedulerPlugin } from "../../../scheduler";
 import { storagePlugin } from "../../../storage";
 import type { Migration } from "../../../storage/types";
 import { serializationPlugin } from "../../index";
@@ -157,6 +160,107 @@ describe("serialization plugin — integration", () => {
     const [entity] = app.ecs.liveEntities();
     if (entity === undefined) throw new Error("no live entity after migrated load");
     expect(app.ecs.get(entity, Position)).toEqual({ x: 999, y: 999 });
+
+    await app.stop();
+  });
+});
+
+/**
+ * Boot a fuller headless ecs + scheduler + renderer + storage + commands + reflection +
+ * hierarchy + serialization stack (the hierarchy integration pattern — renderer auto-detects no
+ * DOM in Node), with "Position" registered. Used by the Phase-1 Node round-trip + pre-hierarchy
+ * fixture tests below, which need `hierarchy`'s Node token/schema and `app.hierarchy` to be live.
+ */
+const bootFullApp = async () => {
+  const { createApp } = coreConfig.createCore(coreConfig, {
+    plugins: [
+      ecsPlugin,
+      schedulerPlugin,
+      rendererPlugin,
+      storagePlugin,
+      commandsPlugin,
+      reflectionPlugin,
+      hierarchyPlugin,
+      serializationPlugin
+    ]
+  });
+  const app = createApp();
+  await app.start();
+  const Position = app.ecs.defineComponent<PositionValue>(() => ({ x: 0, y: 0 }), {
+    name: "Position"
+  });
+  return { app, Position };
+};
+
+describe("serialization plugin — Phase-1 Node/hierarchy round-trip (Wave F4)", () => {
+  it("defaults to scene-schema version 2 with no serialization config override", async () => {
+    const { app } = await bootFullApp();
+
+    app.commands.apply({ kind: "spawn", components: { Position: { x: 1, y: 1 } } });
+
+    expect(app.serialization.serialize().version).toBe(2);
+
+    await app.stop();
+  });
+
+  it("a parented Node round-trip survives save→load with the same parent/child EditorIds intact", async () => {
+    const { app } = await bootFullApp();
+
+    const parent = app.commands.applyRaw({
+      kind: "spawn",
+      components: {
+        Transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+        Node: { parent: undefined, order: 0, name: "parent", enabled: true }
+      }
+    });
+    if (!parent.ok) throw new Error("setup spawn failed");
+
+    const child = app.commands.applyRaw({
+      kind: "spawn",
+      components: {
+        Transform: { x: 1, y: 1, rotation: 0, scaleX: 1, scaleY: 1 },
+        Node: { parent: parent.id, order: 0, name: "child", enabled: true }
+      }
+    });
+    if (!child.ok) throw new Error("setup spawn failed");
+
+    expect(app.serialization.save("parented")).toBe(true);
+
+    app.commands.applyRaw({ kind: "despawn", id: child.id });
+    app.commands.applyRaw({ kind: "despawn", id: parent.id });
+
+    expect(app.serialization.load("parented")).toBe(true);
+
+    const parentEntity = app.commands.resolve(parent.id);
+    const childEntity = app.commands.resolve(child.id);
+    if (parentEntity === undefined || childEntity === undefined) throw new Error("resolve failed");
+
+    expect(app.hierarchy.parentOf(childEntity)).toBe(parent.id);
+    expect(app.hierarchy.childrenOf(parent.id)).toEqual([child.id]);
+
+    await app.stop();
+  });
+
+  it("a pre-hierarchy v1 fixture (no Node) loads under the default v2 config and re-serializes losslessly", async () => {
+    const { app, Position } = await bootFullApp();
+
+    const staleDoc: SceneDocument = {
+      version: 1,
+      name: "old",
+      entities: [{ id: 1 as EditorId, components: { Position: { x: 3, y: 3 } } }]
+    };
+    app.storage.set("scene:old", staleDoc);
+
+    const loaded = app.serialization.load("old");
+    expect(loaded).toBe(true);
+
+    const [entity] = app.ecs.liveEntities();
+    if (entity === undefined) throw new Error("no live entity after v1-fixture load");
+    expect(app.ecs.get(entity, Position)).toEqual({ x: 3, y: 3 });
+
+    const reserialized = app.serialization.serialize();
+    expect(reserialized.version).toBe(2);
+    expect(reserialized.entities).toEqual(staleDoc.entities);
 
     await app.stop();
   });

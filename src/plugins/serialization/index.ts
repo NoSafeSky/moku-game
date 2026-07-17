@@ -1,5 +1,7 @@
 /**
  * Complex tier — versioned SceneDocument (de)serializer; save/load via storage; export/import.
+ * Phase-1: version 2 + identity migration (the hierarchy Node rides as an ordinary named
+ * component, so a v1 document needs no data transform to become valid at v2).
  *
  * @see README.md
  */
@@ -9,10 +11,15 @@ import { ecsPlugin } from "../ecs";
 import { reflectionPlugin } from "../reflection";
 import { storagePlugin } from "../storage";
 import { createApi } from "./api";
+import { identityMigration } from "./migrate";
 import { createState } from "./state";
 import type { Config, Events } from "./types";
 
-const defaultConfig: Config = { storageKeyPrefix: "scene:", version: 1, migrations: {} };
+const defaultConfig: Config = {
+  storageKeyPrefix: "scene:",
+  version: 2,
+  migrations: { 2: identityMigration }
+};
 
 export const serializationPlugin = createPlugin("serialization", {
   depends: [ecsPlugin, storagePlugin, commandsPlugin, reflectionPlugin],

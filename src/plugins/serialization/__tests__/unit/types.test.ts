@@ -24,6 +24,15 @@ describe("serialization types — Api method shapes", () => {
   });
 });
 
+describe("serialization types — SceneDocument stays FLAT (no structural parent field)", () => {
+  it("a parent field on a SceneDocument literal is a type error — hierarchy rides via the Node component", () => {
+    // @ts-expect-error -- SceneDocument has no parent field; hierarchy is expressed via the Node component
+    const doc: SceneDocument = { version: 2, name: "level1", entities: [], parent: undefined };
+
+    expect(doc.entities).toEqual([]);
+  });
+});
+
 describe("serialization types — EditorId brand on SceneEntity.id", () => {
   it("a SceneEntity.id is not assignable from a plain number", () => {
     // @ts-expect-error -- a plain number literal is not an EditorId without the brand

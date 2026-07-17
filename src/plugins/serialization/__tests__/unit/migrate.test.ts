@@ -2,9 +2,9 @@
  * @file serialization plugin — upgradeDocument() unit tests + its integration through deserialize.
  */
 import { describe, expect, it, vi } from "vitest";
-import type { Migration } from "../../../storage/types";
+import type { Migration, Snapshot } from "../../../storage/types";
 import { createApi } from "../../api";
-import { upgradeDocument } from "../../migrate";
+import { identityMigration, upgradeDocument } from "../../migrate";
 import type { SceneDocument } from "../../types";
 import { asEditorId, makeCtx, makeLog } from "../mocks";
 
@@ -82,5 +82,33 @@ describe("serialization — migration reaches restore via deserialize", () => {
       "reload"
     );
     expect(ctx.state.currentVersion).toBe(2);
+  });
+});
+
+describe("serialization — identityMigration (v1 → v2 version-stamp passthrough)", () => {
+  it("returns the same snapshot unchanged — no data transform", () => {
+    const snapshot: Snapshot = {
+      version: 1,
+      name: "level1",
+      entities: [{ id: asEditorId(1), components: { Position: { x: 1, y: 2 } } }]
+    };
+
+    const result = identityMigration(snapshot);
+
+    expect(result).toBe(snapshot);
+    expect(result).toEqual(snapshot);
+  });
+
+  it("a v1 doc walked through { 2: identityMigration } to target 2 is stamped v2 with identical entities", () => {
+    const doc: SceneDocument = {
+      version: 1,
+      name: "level1",
+      entities: [{ id: asEditorId(1), components: { Position: { x: 1, y: 2 } } }]
+    };
+
+    const upgraded = upgradeDocument(doc, 2, { 2: identityMigration }, makeLog());
+
+    expect(upgraded.version).toBe(2);
+    expect(upgraded.entities).toEqual(doc.entities);
   });
 });

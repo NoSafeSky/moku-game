@@ -46,6 +46,24 @@ const toSceneDocument = (snapshot: Snapshot, version: number): SceneDocument => 
 });
 
 /**
+ * `v1 → v2` version-stamp passthrough. The hierarchy `Node` component rides as a plain named
+ * component inside each entity's `components` bag (spec/03 §hierarchy), so a `v1` document —
+ * which simply has no `Node` components — is already structurally valid at `v2`; no data
+ * transform is needed. {@link upgradeDocument}'s chain-walk performs the actual `version`
+ * re-stamp; this migration exists so the `v1 → v2` step is an explicit, tested chain member
+ * (`migrations[2]`) rather than an implicit skip when no entry is present for that version.
+ *
+ * @param snapshot - The snapshot to pass through unchanged.
+ * @returns The same snapshot, untouched.
+ * @example
+ * ```ts
+ * identityMigration({ version: 1, name: "level1", entities: [] });
+ * // → { version: 1, name: "level1", entities: [] } (same reference — no transform)
+ * ```
+ */
+export const identityMigration: Migration = snapshot => snapshot;
+
+/**
  * Upgrades a `SceneDocument` forward through the migration chain to `targetVersion` (reusing
  * `storage`'s `Migration`/`Snapshot` contract). A document already at `targetVersion` passes
  * through untouched (no migration function runs); a document **ahead** of `targetVersion` (a

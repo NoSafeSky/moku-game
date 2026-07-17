@@ -43,8 +43,8 @@ Emitted after a document is deserialized and the scene named `name` is live. Coa
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `storageKeyPrefix` | `string` | `"scene:"` | Sub-prefix within the `storage` namespace under which each scene is saved (`${prefix}${name}`). |
-| `version` | `number` | `1` | Current scene-schema version. `serialize`/`save` stamp at this version; a lower document is upgraded on `load`/`import`. |
-| `migrations` | `Readonly<Record<number, Migration>>` | `{}` | Migration chain: `migrations[n]` upgrades a `v(n-1)` document to `vn`. Reuses `storage`'s `Migration = (Snapshot) => Snapshot` contract. |
+| `version` | `number` | `2` | Current scene-schema version. `serialize`/`save` stamp at this version; a lower document is upgraded on `load`/`import`. |
+| `migrations` | `Readonly<Record<number, Migration>>` | `{ 2: identityMigration }` | Migration chain: `migrations[n]` upgrades a `v(n-1)` document to `vn`. Reuses `storage`'s `Migration = (Snapshot) => Snapshot` contract. The `v2` entry is a version-stamp passthrough — the hierarchy `Node` rides as a plain named component, so a v1 document needs no data transform. |
 
 ## Dependencies
 
