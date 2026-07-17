@@ -19,6 +19,13 @@ describe("editor-gizmos — state — createState", () => {
     expect(state.gestureSink).toBeUndefined();
   });
 
+  it("defaults space to 'global' and pivot to 'pivot' (matching pre-update behaviour)", () => {
+    const state = createState({ global: {}, config });
+
+    expect(state.space).toBe("global");
+    expect(state.pivot).toBe("pivot");
+  });
+
   it("has no captured chrome or dependency handles until onStart runs", () => {
     const state = createState({ global: {}, config });
 

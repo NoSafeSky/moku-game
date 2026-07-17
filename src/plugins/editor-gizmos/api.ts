@@ -3,8 +3,9 @@
  *
  * `createApi` assembles the public control surface: `enable`/`disable` toggle the overlay
  * (guarded no-ops before start or when headless — no renderer stage means no overlay was
- * built), `setMode`/`setSnap`/`mode`/`setGestureSink` are pure state writers that work
- * before start and headless (they never touch Pixi). The drag pipeline itself
+ * built), while `setMode`/`setSnap`/`mode`/`setSpace`/`setPivot`/`space`/`pivot`/
+ * `setGestureSink` are pure state writers/readers that work before start and headless (they
+ * never touch Pixi). The drag pipeline itself
  * (`onHandleDown`/`onGlobalMove`/`onGlobalUp`) lives in `interaction.ts`, which this file
  * delegates to for `enable`'s handle sync and `disable`'s drag-abort — mirroring how
  * `editor-selection`'s `api.ts` delegates to `pick.ts`. No dependency is `require`d at call
@@ -12,7 +13,16 @@
  * once into `state` by `onStart` (the `camera` captured-deps pattern).
  */
 import { abortDrag, syncHandle } from "./interaction";
-import type { Api, Config, GestureSink, GizmoMode, Log, State } from "./types";
+import type {
+  Api,
+  Config,
+  GestureSink,
+  GizmoMode,
+  GizmoPivot,
+  GizmoSpace,
+  Log,
+  State
+} from "./types";
 
 /**
  * Structural context required by {@link createApi} (and shared with `interaction.ts`), so
@@ -106,20 +116,20 @@ export const createApi = (ctx: GizmosApiContext): Api => {
     },
 
     /**
-     * Set the active manipulation mode. MVP: only `"translate"` is functional —
-     * `"rotate"`/`"scale"` warn via `ctx.log` and no-op while `config.translateOnly` is
-     * `true` (`mode()` stays `"translate"`).
+     * Set the active manipulation mode. `"rotate"`/`"scale"`/`"rect"` are accepted only when
+     * `config.translateOnly` is `false` (the editor app opts in); while it is `true` — the
+     * framework default — they warn via `ctx.log` and no-op (`mode()` stays `"translate"`).
      *
      * @param mode - The manipulation mode to switch to.
      * @example
      * ```ts
-     * app["editor-gizmos"].setMode("translate");
+     * app["editor-gizmos"].setMode("rotate"); // needs `editor-gizmos: { translateOnly: false }`
      * ```
      */
     setMode(mode: GizmoMode): void {
       if (mode !== "translate" && ctx.config.translateOnly) {
         ctx.log.warn(
-          `[editor-gizmos] '${mode}' mode is not implemented in the MVP (translate only) — staying in translate.`
+          `[editor-gizmos] '${mode}' mode is gated off by config.translateOnly — staying in translate.`
         );
         return;
       }
@@ -127,13 +137,15 @@ export const createApi = (ctx: GizmosApiContext): Api => {
     },
 
     /**
-     * Set the translate snap increment in world units, clamped to `>= 0` (`0` disables
-     * snapping). Works before start and headless.
+     * Set the snap increment, clamped to `>= 0` (`0` disables snapping). **Mode-interpreted**:
+     * translate → world units, scale → scale-factor increment, rotate → radians. Works before
+     * start and headless.
      *
-     * @param n - The desired snap increment in world units.
+     * @param n - The desired snap increment, in the active mode's units.
      * @example
      * ```ts
-     * app["editor-gizmos"].setSnap(32);
+     * app["editor-gizmos"].setSnap(32);            // translate: 32 world units
+     * app["editor-gizmos"].setSnap(Math.PI / 12);  // rotate: 15° steps
      * ```
      */
     setSnap(n: number): void {
@@ -151,6 +163,67 @@ export const createApi = (ctx: GizmosApiContext): Api => {
      */
     mode(): GizmoMode {
       return ctx.state.mode;
+    },
+
+    /**
+     * Set the scale axis frame. Pure interaction state (toolbar-driven, like `setMode`) —
+     * works before start and headless, and is NOT gated by `translateOnly`.
+     *
+     * **P1:** 2D rotation is a single scalar, so the space is a no-op for rotate; for scale,
+     * `"global"` (world axes) is exact while `"local"` scale-under-rotation is approximated as
+     * world-axis scale (Follow-up F5).
+     *
+     * @param space - `"global"` (world axes) or `"local"` (the object's own frame).
+     * @example
+     * ```ts
+     * app["editor-gizmos"].setSpace("local");
+     * ```
+     */
+    setSpace(space: GizmoSpace): void {
+      ctx.state.space = space;
+    },
+
+    /**
+     * Set the drag anchor. Pure interaction state (toolbar-driven, like `setMode`) — works
+     * before start and headless, and is NOT gated by `translateOnly`.
+     *
+     * **P1:** for a single target `"pivot"` and `"center"` coincide whenever the view's local
+     * bounds are centred on its origin; they diverge only when the bounds are offset from it.
+     *
+     * @param pivot - `"pivot"` (the entity's Transform position) or `"center"` (its world-space bounds centre).
+     * @example
+     * ```ts
+     * app["editor-gizmos"].setPivot("center");
+     * ```
+     */
+    setPivot(pivot: GizmoPivot): void {
+      ctx.state.pivot = pivot;
+    },
+
+    /**
+     * The current scale axis frame.
+     *
+     * @returns The current {@link GizmoSpace}.
+     * @example
+     * ```ts
+     * app["editor-gizmos"].space(); // "global"
+     * ```
+     */
+    space(): GizmoSpace {
+      return ctx.state.space;
+    },
+
+    /**
+     * The current drag anchor.
+     *
+     * @returns The current {@link GizmoPivot}.
+     * @example
+     * ```ts
+     * app["editor-gizmos"].pivot(); // "pivot"
+     * ```
+     */
+    pivot(): GizmoPivot {
+      return ctx.state.pivot;
     },
 
     /**

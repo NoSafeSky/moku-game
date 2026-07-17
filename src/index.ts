@@ -16,6 +16,7 @@ import {
   editorHistoryPlugin,
   editorRuntimePlugin,
   editorSelectionPlugin,
+  graphics2dPlugin,
   hierarchyPlugin,
   inputPlugin,
   loopPlugin,
@@ -66,6 +67,13 @@ const framework = createCore(coreConfig, {
     // ahead of graphics-2d (F3), which registers its addable components into it at onStart.
     componentRegistryPlugin,
     hierarchyPlugin,
+    // sync-stage order: register after hierarchyPlugin — see .planning/specs/27-graphics-2d.md
+    // "Ordering note". graphics-2d has NO depends edge on hierarchy (that would be a dead edge), so
+    // this ordering is a tidiness convention, not a correctness requirement: both plugins' sync
+    // systems only mark entities dirty, and the renderer pulls the CURRENT local transforms through
+    // hierarchy's injected world-transform resolver at position-time. Keep the order anyway so a
+    // future reorder is a conscious choice rather than a silent regression.
+    graphics2dPlugin,
     serializationPlugin,
     editorSelectionPlugin,
     editorHistoryPlugin,

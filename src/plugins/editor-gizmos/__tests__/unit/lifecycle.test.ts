@@ -71,9 +71,30 @@ describe("editor-gizmos — lifecycle (stage present)", () => {
     expect(state.overlay?.visible).toBe(false); // hidden until enable()
     expect(state.overlay?.label).toBe("editor-gizmos");
     expect(stage.children).toContain(state.overlay); // stage.addChild(overlay)
-    expect(state.handle?.children.length).toBe(3); // centre square + X arrow + Y arrow
 
     expect(state.started).toBe(true);
+  });
+
+  it("builds one sub-composite per mode, each holding that mode's axis children", () => {
+    const stage = new Container();
+    const { ctx, state } = makeCtx(stage);
+
+    start(ctx);
+
+    // translate (square + X arrow + Y arrow) / rotate (ring) / scale (X + Y + uniform) / rect (frame)
+    const groups = state.handle?.children ?? [];
+    expect(groups.length).toBe(4);
+    expect(groups.map(group => group.children.length)).toEqual([3, 1, 3, 1]);
+  });
+
+  it("shows only the translate sub-composite by default (the seeded mode)", () => {
+    const stage = new Container();
+    const { ctx, state } = makeCtx(stage);
+
+    start(ctx);
+
+    const visible = (state.handle?.children ?? []).map(group => group.visible);
+    expect(visible).toEqual([true, false, false, false]);
   });
 
   it("headless (no stage): warns and leaves overlay/handle undefined but still starts", () => {

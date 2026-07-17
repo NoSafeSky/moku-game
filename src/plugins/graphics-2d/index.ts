@@ -9,6 +9,7 @@ import { ecsPlugin } from "../ecs";
 import { reflectionPlugin } from "../reflection";
 import { rendererPlugin } from "../renderer";
 import { createApi } from "./api";
+import { start } from "./lifecycle";
 import { createState } from "./state";
 import type { Config } from "./types";
 
@@ -29,8 +30,11 @@ export const graphics2dPlugin = createPlugin("graphics-2d", {
   depends: [ecsPlugin, rendererPlugin, reflectionPlugin, componentRegistryPlugin, assetsPlugin],
   config: defaultConfig,
   createState,
-  api: createApi
-  // onStart intentionally OMITTED in the skeleton — F3 wires `onStart: start` (from ./lifecycle) when it
-  // defines the components, registers schemas + catalog entries, registers the render-sync system, and
-  // injects the texture resolver. No onStop (views are renderer-owned scene data — contract §2; spec/06 §4).
+  api: createApi,
+  onStart: start // @no-resource-check — deps-ready wiring only (define components, register schemas +
+  //                catalog entries, register the sync system via world.addSystem, inject the texture
+  //                resolver). No onStop: views are renderer-owned scene data, and every other artifact
+  //                lives on a dependency-owned structure discarded with the app.
 });
+
+export type { ShapeValue, SpriteRendererValue } from "./types";

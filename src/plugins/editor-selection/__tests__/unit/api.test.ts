@@ -7,11 +7,15 @@
  * `multiSelect: true` ADDS), `toggle` (flips membership), `clear` (empties) — the
  * "emit only on real change" gate, `selected()`/`isSelected()` reading + pruning
  * despawned entities, and the before-start guard (mutators + `pickAt` + `selected()`
- * no-op; `isSelected` is a pure reader that works before start). `enable`/`disable`/
- * `pickAt`'s Pixi-facing behaviour is covered in `pick.test.ts`.
+ * no-op; `isSelected` is a pure reader that works before start). Also covers
+ * `selectInRect`'s world-space AABB hit-test over `liveEntities()` (additive union vs
+ * replace, despawn pruning, one emit per real change). `enable`/`disable`/`pickAt`'s
+ * Pixi-facing behaviour is covered in `pick.test.ts`.
  */
+import type { Container } from "pixi.js";
 import { describe, expect, it, vi } from "vitest";
 import type { Entity, World } from "../../../ecs/types";
+import type { Api as RendererApi } from "../../../renderer/types";
 import { createApi, type EditorSelectionApiContext } from "../../api";
 import { createState } from "../../state";
 import type { Config } from "../../types";
@@ -21,6 +25,7 @@ const asEntity = (n: number): Entity => n as Entity;
 const makeConfig = (over: Partial<Config> = {}): Config => ({
   pickLayer: "world",
   multiSelect: false,
+  marquee: true,
   ...over
 });
 
@@ -223,5 +228,187 @@ describe("editor-selection — api", () => {
       expect(api.isSelected(e1)).toBe(true);
       expect(api.isSelected(e2)).toBe(false);
     });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// selectInRect — world-space AABB hit-test over liveEntities()
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A view stub carrying only what the world-space AABB test reads: position + local bounds. */
+type FakeView = {
+  position: { x: number; y: number };
+  getLocalBounds: () => { x: number; y: number; width: number; height: number };
+};
+
+/** A 10×10 view whose top-left local corner sits on its position. */
+const makeView = (x: number, y: number, size = 10): FakeView => ({
+  position: { x, y },
+  getLocalBounds: () => ({ x: 0, y: 0, width: size, height: size })
+});
+
+/**
+ * A STARTED ctx with a world whose `liveEntities()` reports every scripted view's entity
+ * (so the `isAlive` prune is exercised independently of the live list) and a renderer stub
+ * resolving each entity to its scripted view.
+ */
+const startedRectCtx = (
+  over: Partial<Config> = {},
+  viewsByEntity: ReadonlyMap<Entity, FakeView> = new Map()
+) => {
+  const config = makeConfig(over);
+  const state = createState({ global: {}, config });
+  const alive = new Set(viewsByEntity.keys());
+
+  const world = {
+    isAlive: (e: Entity) => alive.has(e),
+    liveEntities: () => [...viewsByEntity.keys()]
+  } as unknown as World;
+
+  const renderer = {
+    getEntityView: (e: Entity) => viewsByEntity.get(e) as unknown as Container | undefined,
+    getView: () => undefined,
+    getStage: () => undefined
+  } as unknown as RendererApi;
+
+  state.world = world;
+  state.renderer = renderer;
+  state.started = true;
+
+  const log = makeLog();
+  const emit = vi.fn();
+  const ctx: EditorSelectionApiContext = { config, state, log, emit };
+  return { api: createApi(ctx), ctx, state, log, emit, alive };
+};
+
+describe("editor-selection — api — selectInRect", () => {
+  it("selects exactly the entities whose world bounds intersect the rect", () => {
+    const inside = asEntity(1);
+    const outside = asEntity(2);
+    const { api } = startedRectCtx(
+      {},
+      new Map([
+        [inside, makeView(5, 5)],
+        [outside, makeView(500, 500)]
+      ])
+    );
+
+    api.selectInRect({ x: 0, y: 0, width: 20, height: 20 });
+    expect(api.selected()).toEqual([inside]);
+  });
+
+  it("counts an edge-touching view as intersecting", () => {
+    const touching = asEntity(1);
+    const { api } = startedRectCtx({}, new Map([[touching, makeView(20, 0)]]));
+
+    api.selectInRect({ x: 0, y: 0, width: 20, height: 20 }); // rect right edge == view left edge
+    expect(api.selected()).toEqual([touching]);
+  });
+
+  it("prunes a despawned entity that is still in liveEntities()", () => {
+    const live = asEntity(1);
+    const dead = asEntity(2);
+    const { api, alive } = startedRectCtx(
+      {},
+      new Map([
+        [live, makeView(0, 0)],
+        [dead, makeView(1, 1)]
+      ])
+    );
+    alive.delete(dead);
+
+    api.selectInRect({ x: 0, y: 0, width: 50, height: 50 });
+    expect(api.selected()).toEqual([live]);
+  });
+
+  it("REPLACES the selection when multiSelect is off", () => {
+    const previous = asEntity(1);
+    const hit = asEntity(2);
+    const { api } = startedRectCtx(
+      {},
+      new Map([
+        [previous, makeView(500, 500)],
+        [hit, makeView(0, 0)]
+      ])
+    );
+    api.select(previous);
+
+    api.selectInRect({ x: 0, y: 0, width: 20, height: 20 });
+    expect(api.selected()).toEqual([hit]); // the out-of-rect prior member is dropped
+  });
+
+  it("UNIONS into the current selection when multiSelect is on", () => {
+    const previous = asEntity(1);
+    const hit = asEntity(2);
+    const { api } = startedRectCtx(
+      { multiSelect: true },
+      new Map([
+        [previous, makeView(500, 500)],
+        [hit, makeView(0, 0)]
+      ])
+    );
+    api.select(previous);
+
+    api.selectInRect({ x: 0, y: 0, width: 20, height: 20 });
+    expect(new Set(api.selected())).toEqual(new Set([previous, hit]));
+  });
+
+  it("emits editor-selection:changed exactly once for a real change", () => {
+    const hit = asEntity(1);
+    const { api, emit } = startedRectCtx({}, new Map([[hit, makeView(0, 0)]]));
+
+    api.selectInRect({ x: 0, y: 0, width: 20, height: 20 });
+    expect(emit).toHaveBeenCalledTimes(1);
+    expect(emit).toHaveBeenCalledWith("editor-selection:changed", { selected: [hit] });
+  });
+
+  it("emits nothing when the rect selects the already-selected set", () => {
+    const hit = asEntity(1);
+    const { api, emit } = startedRectCtx({}, new Map([[hit, makeView(0, 0)]]));
+    api.selectInRect({ x: 0, y: 0, width: 20, height: 20 });
+    emit.mockClear();
+
+    api.selectInRect({ x: 0, y: 0, width: 20, height: 20 }); // same result → no set change
+    expect(emit).not.toHaveBeenCalled();
+  });
+
+  it("emits nothing when an empty rect meets an empty selection", () => {
+    const { api, emit } = startedRectCtx({}, new Map([[asEntity(1), makeView(500, 500)]]));
+
+    api.selectInRect({ x: 0, y: 0, width: 20, height: 20 });
+    expect(api.selected()).toEqual([]);
+    expect(emit).not.toHaveBeenCalled();
+  });
+
+  it("an empty replace-rect over a prior selection is a real change and emits once", () => {
+    const previous = asEntity(1);
+    const { api, emit } = startedRectCtx({}, new Map([[previous, makeView(500, 500)]]));
+    api.select(previous);
+    emit.mockClear();
+
+    api.selectInRect({ x: 0, y: 0, width: 20, height: 20 });
+    expect(api.selected()).toEqual([]);
+    expect(emit).toHaveBeenCalledTimes(1);
+    expect(emit).toHaveBeenCalledWith("editor-selection:changed", { selected: [] });
+  });
+
+  it("is a guarded no-op (warns, no emit) before start", () => {
+    const { api, log, emit } = unstartedCtx();
+
+    api.selectInRect({ x: 0, y: 0, width: 20, height: 20 });
+    expect(emit).not.toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalled();
+  });
+
+  it("is inert headless (no captured renderer/world handles)", () => {
+    const config = makeConfig();
+    const state = createState({ global: {}, config });
+    state.started = true;
+    const log = makeLog();
+    const emit = vi.fn();
+    const api = createApi({ config, state, log, emit });
+
+    expect(() => api.selectInRect({ x: 0, y: 0, width: 20, height: 20 })).not.toThrow();
+    expect(emit).not.toHaveBeenCalled();
   });
 });

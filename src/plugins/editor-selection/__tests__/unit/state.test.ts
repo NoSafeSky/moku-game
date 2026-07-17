@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { createState } from "../../state";
 import type { Config } from "../../types";
 
-const defaultConfig: Config = { pickLayer: "world", multiSelect: false };
+const defaultConfig: Config = { pickLayer: "world", multiSelect: false, marquee: true };
 
 describe("editor-selection — state", () => {
   it("starts not-started, disabled, with an empty selection and zeroed pointer edge", () => {
@@ -28,6 +28,16 @@ describe("editor-selection — state", () => {
     expect(state.pickLayer).toBeUndefined();
     expect(state.canvas).toBeUndefined();
     expect(state.detach).toBeUndefined();
+  });
+
+  it("leaves the marquee overlay chrome + drag session undefined until onStart / a drag", () => {
+    const state = createState({ global: {}, config: defaultConfig });
+
+    expect(state.stage).toBeUndefined();
+    expect(state.marqueeOverlay).toBeUndefined();
+    expect(state.marqueeGraphics).toBeUndefined();
+    expect(state.marquee).toBeUndefined();
+    expect(state.marqueeDetach).toBeUndefined();
   });
 
   it("returns a fresh Set instance per call (no shared mutable state across plugin instances)", () => {

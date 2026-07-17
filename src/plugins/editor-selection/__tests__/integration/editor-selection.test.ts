@@ -46,7 +46,8 @@ const SURFACE = [
   "clear",
   "selected",
   "isSelected",
-  "pickAt"
+  "pickAt",
+  "selectInRect"
 ] as const;
 
 describe("editor-selection integration", () => {
@@ -110,6 +111,64 @@ describe("editor-selection integration", () => {
     expect(() => app["editor-selection"].enable()).not.toThrow();
     expect(app["editor-selection"].pickAt({ x: 0, y: 0 })).toBeUndefined();
     expect(() => app["editor-selection"].disable()).not.toThrow();
+
+    await app.stop();
+  });
+
+  it("selectInRect is inert headless (no stage → no views → nothing to intersect)", async () => {
+    const app = bootApp();
+    await app.start();
+
+    app.ecs.spawn();
+    expect(() =>
+      app["editor-selection"].selectInRect({ x: 0, y: 0, width: 200, height: 120 })
+    ).not.toThrow();
+    expect(app["editor-selection"].selected()).toEqual([]);
+
+    await app.stop();
+  });
+
+  it("marquee defaults on and multiSelect defaults OFF — a non-editor game keeps single-select", async () => {
+    const app = bootApp();
+    await app.start();
+
+    const e1 = app.ecs.spawn();
+    const e2 = app.ecs.spawn();
+    app["editor-selection"].select(e1);
+    app["editor-selection"].select(e2);
+
+    expect(app["editor-selection"].selected()).toEqual([e2]); // replaced — the framework default
+
+    await app.stop();
+  });
+
+  it("multiSelect:true accumulates across selects and emits once per real change", async () => {
+    const received: Array<{ selected: readonly Entity[] }> = [];
+    const { createApp, createPlugin } = coreConfig.createCore(coreConfig, { plugins: PLUGINS });
+    const listenerPlugin = createPlugin("selection-listener", {
+      depends: [editorSelectionPlugin],
+      hooks: _ctx => ({
+        "editor-selection:changed": payload => {
+          received.push(payload);
+        }
+      })
+    });
+
+    const app = createApp({
+      plugins: [listenerPlugin],
+      pluginConfigs: { "editor-selection": { multiSelect: true } }
+    });
+    await app.start();
+
+    const e1 = app.ecs.spawn();
+    const e2 = app.ecs.spawn();
+
+    app["editor-selection"].select(e1);
+    app["editor-selection"].select(e2);
+    expect(new Set(app["editor-selection"].selected())).toEqual(new Set([e1, e2]));
+
+    app["editor-selection"].select(e2); // redundant — already a member, no set change
+    expect(received).toHaveLength(2);
 
     await app.stop();
   });

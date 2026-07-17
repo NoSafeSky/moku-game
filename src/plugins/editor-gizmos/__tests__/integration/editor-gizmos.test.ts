@@ -7,6 +7,12 @@
  * the full surface; `setMode`/`setSnap`/`mode` work on numeric state headless; the translate-only
  * MVP gate keeps rotate/scale no-op; `enable()`/`disable()` flip without throwing with no stage;
  * and `setGestureSink` accepts a sink and `undefined`.
+ *
+ * **Phase-1 F3** additionally proves the gate flip end-to-end: with the FRAMEWORK DEFAULT
+ * (`translateOnly: true`) `setMode("rotate"|"scale"|"rect")` still no-ops, while an app that
+ * opts in with `editor-gizmos: { translateOnly: false }` (as the editor shell does) can select
+ * every widened mode; and that `setSpace`/`setPivot`/`space`/`pivot` are headless-safe pure
+ * state, unaffected by the gate.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { coreConfig } from "../../../../config";
@@ -33,13 +39,27 @@ const PLUGINS = [
   editorGizmosPlugin
 ];
 
-/** Boot the headless editor-gizmos stack. */
-const bootApp = () => {
+/** Per-plugin config overrides accepted by {@link bootApp}. */
+type TestPluginConfigs = { "editor-gizmos"?: { translateOnly?: boolean } };
+
+/** Boot the headless editor-gizmos stack (default config unless overrides are passed). */
+const bootApp = (pluginConfigs: TestPluginConfigs = {}) => {
   const { createApp } = coreConfig.createCore(coreConfig, { plugins: PLUGINS });
-  return createApp();
+  return createApp({ pluginConfigs });
 };
 
-const SURFACE = ["enable", "disable", "setMode", "setSnap", "mode", "setGestureSink"] as const;
+const SURFACE = [
+  "enable",
+  "disable",
+  "setMode",
+  "setSnap",
+  "mode",
+  "setSpace",
+  "setPivot",
+  "space",
+  "pivot",
+  "setGestureSink"
+] as const;
 
 describe("editor-gizmos integration", () => {
   // editor-selection's input dep resolves "window" → an EventTarget in onStart; provide one.
@@ -72,8 +92,45 @@ describe("editor-gizmos integration", () => {
     app["editor-gizmos"].setMode("scale");
     expect(app["editor-gizmos"].mode()).toBe("translate");
 
+    app["editor-gizmos"].setMode("rect");
+    expect(app["editor-gizmos"].mode()).toBe("translate");
+
     app["editor-gizmos"].setMode("translate"); // the one functional mode
     expect(app["editor-gizmos"].mode()).toBe("translate");
+
+    await app.stop();
+  });
+
+  it("opting out of the gate (translateOnly:false) enables every widened mode", async () => {
+    const app = bootApp({ "editor-gizmos": { translateOnly: false } });
+    await app.start();
+
+    expect(app["editor-gizmos"].mode()).toBe("translate"); // the default is unchanged
+
+    app["editor-gizmos"].setMode("rotate");
+    expect(app["editor-gizmos"].mode()).toBe("rotate");
+
+    app["editor-gizmos"].setMode("scale");
+    expect(app["editor-gizmos"].mode()).toBe("scale");
+
+    app["editor-gizmos"].setMode("rect");
+    expect(app["editor-gizmos"].mode()).toBe("rect");
+
+    await app.stop();
+  });
+
+  it("setSpace/setPivot round-trip headless and are ungated by translateOnly", async () => {
+    const app = bootApp(); // the FRAMEWORK DEFAULT — translateOnly stays true
+    await app.start();
+
+    expect(app["editor-gizmos"].space()).toBe("global");
+    expect(app["editor-gizmos"].pivot()).toBe("pivot");
+
+    app["editor-gizmos"].setSpace("local");
+    app["editor-gizmos"].setPivot("center");
+
+    expect(app["editor-gizmos"].space()).toBe("local");
+    expect(app["editor-gizmos"].pivot()).toBe("center");
 
     await app.stop();
   });

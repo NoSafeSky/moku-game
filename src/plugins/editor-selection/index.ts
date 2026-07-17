@@ -1,5 +1,6 @@
 /**
- * Standard tier — viewport picking (Pixi eventMode pick-layer) + selection model.
+ * Standard tier — viewport picking (Pixi eventMode pick-layer) + modifier-aware selection
+ * model + drag marquee.
  *
  * @see README.md
  */
@@ -13,7 +14,7 @@ import { start } from "./lifecycle";
 import { createState } from "./state";
 import type { Config, Events } from "./types";
 
-const defaultConfig: Config = { pickLayer: "world", multiSelect: false };
+const defaultConfig: Config = { pickLayer: "world", multiSelect: false, marquee: true };
 
 /**
  * editor-selection plugin — Standard tier.
@@ -21,9 +22,11 @@ const defaultConfig: Config = { pickLayer: "world", multiSelect: false };
  * Viewport picking + selection model for the editor. `enable()`/`disable()` flip Pixi
  * interactivity on ONE camera pick layer (zero cost outside edit mode); `pickAt(screen)`
  * resolves the topmost entity via a non-enumerable `entity` handle stamped on each view
- * (the ecs `__id` pattern); `select`/`toggle`/`clear` drive a `Set<Entity>` and emit the
- * coarse `editor-selection:changed`. Headless-safe. Depends on ecs, renderer, camera,
- * input. No new package dependencies (Pixi via renderer). MVP: single-select click.
+ * (the ecs `__id` pattern); `select`/`toggle` are modifier-aware (Ctrl/Cmd = toggle, plain
+ * = replace); a drag marquee (`selectInRect`) selects every entity whose world bounds
+ * intersect a dashed screen-space rect; changes emit the coarse `editor-selection:changed`.
+ * `multiSelect` default stays `false` (the editor app opts in). Headless-safe. Depends on
+ * ecs, renderer, camera, input. No new package dependencies (Pixi via renderer).
  *
  * @see README.md
  */

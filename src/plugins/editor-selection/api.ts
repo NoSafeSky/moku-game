@@ -11,8 +11,17 @@
  */
 import type { Point } from "../camera/types";
 import type { Entity } from "../ecs/types";
-import { applyClear, applySelect, attachPickListener, pickTopmost, stampAll } from "./pick";
-import type { Api, Config, Events, Log, State } from "./types";
+import {
+  applyClear,
+  applySelect,
+  attachMarqueeListener,
+  attachPickListener,
+  cancelMarquee,
+  pickTopmost,
+  selectManyInRect,
+  stampAll
+} from "./pick";
+import type { Api, Config, Events, Log, Rect, State } from "./types";
 
 /**
  * Structural context required by {@link createApi}, so unit tests can pass a minimal mock
@@ -20,9 +29,12 @@ import type { Api, Config, Events, Log, State } from "./types";
  * NOT on the context — they are captured into `state` by `onStart` (the `camera` precedent).
  */
 export type EditorSelectionApiContext = {
-  /** Resolved editor-selection configuration (`pickLayer`, `multiSelect`). */
+  /** Resolved editor-selection configuration (`pickLayer`, `multiSelect`, `marquee`). */
   readonly config: Readonly<Config>;
-  /** Plugin state — the selection set, enabled flag, captured deps, and pointer-edge bookkeeping. */
+  /**
+   * Plugin state — the selection set, enabled flag, captured deps, pointer-edge bookkeeping,
+   * and the marquee overlay chrome + drag session.
+   */
   readonly state: State;
   /** Logger from the common logPlugin (before-start + missing-layer warnings). */
   readonly log: Log;
@@ -69,9 +81,10 @@ export const createApi = (ctx: EditorSelectionApiContext): Api => {
   return {
     /**
      * Enter edit mode: make the configured camera pick layer interactive, capture the canvas,
-     * re-stamp every live view, and attach the pointerdown listener. No-op (warns) before start
-     * or when the pick layer is unavailable (headless / unknown layer). Idempotent — a re-enable
-     * detaches the prior listener so it never double-attaches.
+     * re-stamp every live view, attach the pointerdown listener, and — when `config.marquee` and
+     * the overlay was built in `onStart` — reveal the marquee overlay and wire its drag. No-op
+     * (warns) before start or when the pick layer is unavailable (headless / unknown layer).
+     * Idempotent — a re-enable detaches the prior listeners so they never double-attach.
      *
      * @example
      * ```ts
@@ -92,13 +105,24 @@ export const createApi = (ctx: EditorSelectionApiContext): Api => {
       ctx.state.pickLayer = layer;
       ctx.state.canvas = ctx.state.renderer?.getView();
       stampAll(ctx.state);
+
       ctx.state.detach?.(); // detach any prior listener so a re-enable does not double-attach
       ctx.state.detach = attachPickListener(ctx);
+
+      ctx.state.marqueeDetach?.();
+      ctx.state.marqueeDetach = undefined;
+      const overlay = ctx.state.marqueeOverlay;
+      if (ctx.config.marquee && overlay) {
+        overlay.visible = true;
+        ctx.state.marqueeDetach = attachMarqueeListener(ctx);
+      }
+
       ctx.state.enabled = true;
     },
 
     /**
-     * Leave edit mode: detach the listener and revert the pick layer's interactivity. Idempotent
+     * Leave edit mode: detach the pick + marquee listeners, abort any in-flight marquee WITHOUT
+     * selecting, hide the marquee overlay, and revert the pick layer's interactivity. Idempotent
      * (safe to call twice and before any `enable()`). Does NOT clear the current selection.
      *
      * @example
@@ -110,6 +134,13 @@ export const createApi = (ctx: EditorSelectionApiContext): Api => {
       if (!requireStarted("disable")) return;
       ctx.state.detach?.();
       ctx.state.detach = undefined;
+
+      ctx.state.marqueeDetach?.();
+      ctx.state.marqueeDetach = undefined;
+      cancelMarquee(ctx); // an in-flight drag is dropped, never committed
+      const overlay = ctx.state.marqueeOverlay;
+      if (overlay) overlay.visible = false;
+
       const layer = ctx.state.pickLayer;
       if (layer) {
         layer.eventMode = "none";
@@ -209,6 +240,25 @@ export const createApi = (ctx: EditorSelectionApiContext): Api => {
       stampAll(ctx.state); // lazy refresh so a freshly-spawned view resolves
       const worldPoint = camera.screenToWorld(screen);
       return pickTopmost(pickLayer, worldPoint, entity => world.isAlive(entity));
+    },
+
+    /**
+     * Select every stamped, still-alive entity whose world-space bounds intersect `rect`. Additive
+     * (unions into the current selection) under `config.multiSelect`, else it replaces. Emits
+     * `editor-selection:changed` only on a real set change. No-op before start (warns) or headless
+     * (no captured world / renderer). The marquee calls the same helper with its own additive flag
+     * when the toggle modifier was held for the gesture.
+     *
+     * @param rect - A world-space axis-aligned rectangle.
+     * @example
+     * ```ts
+     * app["editor-selection"].selectInRect({ x: 0, y: 0, width: 200, height: 120 });
+     * ```
+     */
+    selectInRect(rect: Rect): void {
+      if (!requireStarted("selectInRect")) return;
+      if (!ctx.state.world || !ctx.state.renderer) return; // headless — nothing to intersect
+      selectManyInRect(ctx, rect, ctx.config.multiSelect);
     }
   };
 };

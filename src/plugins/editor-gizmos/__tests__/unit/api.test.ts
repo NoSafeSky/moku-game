@@ -227,9 +227,14 @@ describe("editor-gizmos — api — disable()", () => {
     const drag: ActiveDrag = {
       entity,
       editorId: asEditorId(7),
+      mode: "translate",
       axis: "xy",
       startX: 0,
       startY: 0,
+      startRotation: 0,
+      startScaleX: 1,
+      startScaleY: 1,
+      pivotWorld: { x: 0, y: 0 },
       originWorld: { x: 0, y: 0 }
     };
     state.drag = drag;
@@ -269,6 +274,18 @@ describe("editor-gizmos — api — setMode()/mode() MVP guard", () => {
     expect(api.mode()).toBe("translate");
   });
 
+  it("warns and stays translate for 'rect' too while translateOnly is true", () => {
+    const config = makeConfig({ translateOnly: true });
+    const state = createState({ global: {}, config });
+    const log = makeLog();
+    const api = createApi({ config, state, log });
+
+    api.setMode("rect");
+
+    expect(api.mode()).toBe("translate");
+    expect(log.warn).toHaveBeenCalled();
+  });
+
   it("allows switching mode once translateOnly is false", () => {
     const config = makeConfig({ translateOnly: false });
     const state = createState({ global: {}, config });
@@ -276,6 +293,24 @@ describe("editor-gizmos — api — setMode()/mode() MVP guard", () => {
 
     api.setMode("rotate");
     expect(api.mode()).toBe("rotate");
+  });
+
+  it("accepts every widened mode (rotate/scale/rect) under translateOnly:false, without warning", () => {
+    const config = makeConfig({ translateOnly: false });
+    const state = createState({ global: {}, config });
+    const log = makeLog();
+    const api = createApi({ config, state, log });
+
+    api.setMode("rotate");
+    expect(api.mode()).toBe("rotate");
+    api.setMode("scale");
+    expect(api.mode()).toBe("scale");
+    api.setMode("rect");
+    expect(api.mode()).toBe("rect");
+    api.setMode("translate");
+    expect(api.mode()).toBe("translate");
+
+    expect(log.warn).not.toHaveBeenCalled();
   });
 
   it("works before start and headless (never touches Pixi)", () => {
@@ -304,6 +339,83 @@ describe("editor-gizmos — api — setSnap()", () => {
 
     api.setSnap(32);
     expect(state.snap).toBe(32);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// setSpace / space / setPivot / pivot — pure interaction state (toolbar-driven)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("editor-gizmos — api — setSpace()/space()", () => {
+  it("defaults to 'global'", () => {
+    const config = makeConfig();
+    const state = createState({ global: {}, config });
+    const api = createApi({ config, state, log: makeLog() });
+
+    expect(api.space()).toBe("global");
+  });
+
+  it("sets the axis frame and round-trips through space(), before start and headless", () => {
+    const config = makeConfig();
+    const state = createState({ global: {}, config });
+    const log = makeLog();
+    const api = createApi({ config, state, log }); // never started, no overlay
+
+    api.setSpace("local");
+
+    expect(api.space()).toBe("local");
+    expect(state.space).toBe("local");
+    expect(log.warn).not.toHaveBeenCalled(); // pure state — no before-start guard
+
+    api.setSpace("global");
+    expect(api.space()).toBe("global");
+  });
+
+  it("is NOT gated by translateOnly (it is view state, not a mode)", () => {
+    const config = makeConfig({ translateOnly: true });
+    const state = createState({ global: {}, config });
+    const api = createApi({ config, state, log: makeLog() });
+
+    api.setSpace("local");
+    expect(api.space()).toBe("local");
+  });
+});
+
+describe("editor-gizmos — api — setPivot()/pivot()", () => {
+  it("defaults to 'pivot'", () => {
+    const config = makeConfig();
+    const state = createState({ global: {}, config });
+    const api = createApi({ config, state, log: makeLog() });
+
+    expect(api.pivot()).toBe("pivot");
+  });
+
+  it("sets the drag anchor and round-trips through pivot(), before start and headless", () => {
+    const config = makeConfig();
+    const state = createState({ global: {}, config });
+    const log = makeLog();
+    const api = createApi({ config, state, log }); // never started, no overlay
+
+    api.setPivot("center");
+
+    expect(api.pivot()).toBe("center");
+    expect(state.pivot).toBe("center");
+    expect(log.warn).not.toHaveBeenCalled(); // pure state — no before-start guard
+
+    api.setPivot("pivot");
+    expect(api.pivot()).toBe("pivot");
+  });
+
+  it("is independent of space() — the two knobs do not interfere", () => {
+    const config = makeConfig();
+    const state = createState({ global: {}, config });
+    const api = createApi({ config, state, log: makeLog() });
+
+    api.setPivot("center");
+    api.setSpace("local");
+
+    expect(api.pivot()).toBe("center");
+    expect(api.space()).toBe("local");
   });
 });
 

@@ -9,7 +9,7 @@
  */
 import { describe, expectTypeOf, it } from "vitest";
 import type { Entity } from "../../../ecs/types";
-import type { Api, Config, Events } from "../../types";
+import type { Api, Config, Events, Rect } from "../../types";
 
 describe("editor-selection Api — return-type contracts", () => {
   it("pickAt returns Entity | undefined", () => {
@@ -34,6 +34,17 @@ describe("editor-selection Api — return-type contracts", () => {
     expectTypeOf<Api["clear"]>().parameters.toEqualTypeOf<[]>();
     expectTypeOf<Api["enable"]>().returns.toBeVoid();
   });
+
+  it("selectInRect takes a world-space Rect and returns void", () => {
+    expectTypeOf<Api["selectInRect"]>().parameter(0).toEqualTypeOf<Rect>();
+    expectTypeOf<Api["selectInRect"]>().returns.toBeVoid();
+  });
+});
+
+describe("editor-selection — Rect contract", () => {
+  it("is the { x; y; width; height } contract shape", () => {
+    expectTypeOf<Rect>().toEqualTypeOf<{ x: number; y: number; width: number; height: number }>();
+  });
 });
 
 describe("editor-selection — Events contract", () => {
@@ -48,5 +59,9 @@ describe("editor-selection — Config contract", () => {
   it("pickLayer is a string and multiSelect is a boolean", () => {
     expectTypeOf<Config["pickLayer"]>().toBeString();
     expectTypeOf<Config["multiSelect"]>().toBeBoolean();
+  });
+
+  it("marquee is a boolean", () => {
+    expectTypeOf<Config["marquee"]>().toBeBoolean();
   });
 });
