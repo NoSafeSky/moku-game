@@ -3,19 +3,50 @@ import { mountIsland } from "@moku-labs/web/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { query } from "../helpers/dom";
 
-// A controllable editor-host mock: controls come from the snapshot delivered via onSnapshot(); a field
-// change routes through getEditor().bridge.setField. vi.hoisted so it precedes the vi.mock factory.
+// A controllable editor-host mock: controls come from the snapshot delivered via onSnapshot(); writes
+// route through getEditor().bridge; the reference picker sources candidates from the snapshot / assets.
+// vi.hoisted so it precedes the vi.mock factory.
 const mocks = vi.hoisted(() => {
   const subscribers = new Set<(snapshot: unknown) => void>();
+  const catalog = [
+    {
+      name: "Transform",
+      category: "Transform",
+      defaults: { x: 0, visible: true },
+      addable: false,
+      fields: []
+    },
+    {
+      name: "SpriteRenderer",
+      category: "Rendering",
+      defaults: { tint: "#ffffff" },
+      addable: true,
+      fields: []
+    },
+    {
+      name: "Shape",
+      category: "Rendering",
+      defaults: { fill: "#cccccc" },
+      addable: true,
+      fields: []
+    }
+  ];
   const bridge = {
     setField: vi.fn<(...args: unknown[]) => { ok: true } | { ok: false; error: string }>(() => ({
       ok: true
-    }))
+    })),
+    setEnabled: vi.fn(),
+    rename: vi.fn(),
+    addComponent: vi.fn(),
+    removeComponent: vi.fn(),
+    listComponents: vi.fn(() => catalog)
   };
+  const assets = { entries: vi.fn(() => [] as { alias: string; loaded: boolean }[]) };
   return {
     subscribers,
     bridge,
-    getEditor: vi.fn(() => ({ bridge })),
+    assets,
+    getEditor: vi.fn(() => ({ bridge, assets })),
     onSnapshot: vi.fn((fn: (snapshot: unknown) => void) => {
       subscribers.add(fn);
       return () => subscribers.delete(fn);
@@ -30,8 +61,17 @@ vi.mock("../../src/lib/editor-host", () => ({
 
 const { inspector } = await import("../../src/islands/inspector");
 
-// A Transform component with an x number field + a visible boolean field.
-const transform = (x: number, visible: boolean) => ({
+// EntitySnapshot fixtures (hierarchical shape: name/enabled/parent/children/components).
+const entity = (over: Record<string, unknown> = {}) => ({
+  id: 1,
+  name: "Drone",
+  enabled: true,
+  parent: undefined,
+  children: [],
+  components: [],
+  ...over
+});
+const transformOf = (x: number, visible: boolean) => ({
   name: "Transform",
   value: { x, visible },
   fields: [
@@ -39,14 +79,21 @@ const transform = (x: number, visible: boolean) => ({
     { kind: "boolean", key: "visible", label: "Visible" }
   ]
 });
-const sprite = () => ({
-  name: "Sprite",
-  value: { tint: "#ff0000" },
-  fields: [{ kind: "color", key: "tint", label: "Tint" }]
+const scriptOf = (target: number | undefined) => ({
+  name: "Script",
+  value: { target },
+  fields: [{ kind: "entity-ref", key: "target", label: "Target" }]
 });
+const shapeOf = () => ({
+  name: "Shape",
+  value: { fill: "#cccccc" },
+  fields: [{ kind: "color", key: "fill", label: "Fill" }]
+});
+
 const snap = (over: Record<string, unknown> = {}) => ({
   epoch: 0,
   entities: [],
+  roots: [],
   selection: [],
   mode: "edit",
   canUndo: false,
@@ -56,39 +103,52 @@ const snap = (over: Record<string, unknown> = {}) => ({
 const push = (snapshot: unknown) => {
   for (const fn of mocks.subscribers) fn(snapshot);
 };
+const mount = () => mountIsland(inspector, { html: "<div data-body></div>" });
 
 afterEach(() => {
   mocks.subscribers.clear();
   vi.clearAllMocks();
+  for (const node of document.querySelectorAll("[data-ref-picker]")) node.remove();
 });
 
 describe("inspector island", () => {
-  it("leaves the field container empty when nothing is selected", () => {
-    const handle = mountIsland(inspector, { html: "<div data-fields></div>" });
+  it("shows the no-selection empty state when nothing is selected", () => {
+    const handle = mount();
 
-    push(
-      snap({ epoch: 1, entities: [{ id: 1, components: [transform(10, true)] }], selection: [] })
-    );
+    push(snap({ epoch: 1, entities: [entity()], selection: [] }));
 
-    expect(query(handle.el, "[data-fields]").children).toHaveLength(0);
+    expect(query(handle.el, "[data-empty-state]").textContent).toContain("No object selected");
   });
 
-  it("renders a labelled control per field for the selected entity, seeded from its value", () => {
-    const handle = mountIsland(inspector, { html: "<div data-fields></div>" });
+  it("renders an object header + a section per component seeded from its value", () => {
+    const handle = mount();
 
     push(
-      snap({ epoch: 1, entities: [{ id: 1, components: [transform(10, true)] }], selection: [1] })
+      snap({
+        epoch: 1,
+        entities: [entity({ components: [transformOf(10, true)] })],
+        selection: [1]
+      })
     );
 
-    expect(query(handle.el, "[data-component]").textContent).toBe("Transform");
+    expect(query<HTMLInputElement>(handle.el, "[data-object-header] [data-name]").value).toBe(
+      "Drone"
+    );
+    expect(
+      query(handle.el, "[data-section][data-component='Transform'] [data-section-name]").textContent
+    ).toBe("Transform");
     expect(query<HTMLInputElement>(handle.el, "[data-field-key='x']").value).toBe("10");
     expect(query<HTMLInputElement>(handle.el, "[data-field-key='visible']").checked).toBe(true);
   });
 
-  it("routes a control change through bridge.setField(id, component, key, value)", () => {
-    const handle = mountIsland(inspector, { html: "<div data-fields></div>" });
+  it("routes a field control change through bridge.setField(id, component, key, value)", () => {
+    const handle = mount();
     push(
-      snap({ epoch: 1, entities: [{ id: 1, components: [transform(10, true)] }], selection: [1] })
+      snap({
+        epoch: 1,
+        entities: [entity({ components: [transformOf(10, true)] })],
+        selection: [1]
+      })
     );
 
     const x = query<HTMLInputElement>(handle.el, "[data-field-key='x']");
@@ -100,9 +160,13 @@ describe("inspector island", () => {
 
   it("flags the control data-invalid with the reason when the write is rejected", () => {
     mocks.bridge.setField.mockReturnValueOnce({ ok: false, error: "out of range" });
-    const handle = mountIsland(inspector, { html: "<div data-fields></div>" });
+    const handle = mount();
     push(
-      snap({ epoch: 1, entities: [{ id: 1, components: [transform(10, true)] }], selection: [1] })
+      snap({
+        epoch: 1,
+        entities: [entity({ components: [transformOf(10, true)] })],
+        selection: [1]
+      })
     );
 
     const x = query<HTMLInputElement>(handle.el, "[data-field-key='x']");
@@ -113,22 +177,163 @@ describe("inspector island", () => {
     expect(x.title).toBe("out of range");
   });
 
+  it("routes the object header enable checkbox → setEnabled and name field → rename", () => {
+    const handle = mount();
+    push(
+      snap({
+        epoch: 1,
+        entities: [entity({ components: [transformOf(10, true)] })],
+        selection: [1]
+      })
+    );
+
+    const enable = query<HTMLInputElement>(handle.el, "[data-object-header] [data-enable]");
+    enable.checked = false;
+    enable.dispatchEvent(new Event("change", { bubbles: true }));
+    const name = query<HTMLInputElement>(handle.el, "[data-object-header] [data-name]");
+    name.value = "Drone_02";
+    name.dispatchEvent(new Event("change", { bubbles: true }));
+
+    expect(mocks.bridge.setEnabled).toHaveBeenCalledWith(1, false);
+    expect(mocks.bridge.rename).toHaveBeenCalledWith(1, "Drone_02");
+  });
+
+  it("toggles a component section collapsed when its header is clicked", () => {
+    const handle = mount();
+    push(
+      snap({
+        epoch: 1,
+        entities: [entity({ components: [transformOf(10, true)] })],
+        selection: [1]
+      })
+    );
+
+    const section = query(handle.el, "[data-section][data-component='Transform']");
+    query(section, "[data-section-header]").dispatchEvent(
+      new MouseEvent("click", { bubbles: true })
+    );
+
+    expect(section.dataset.collapsed).toBe("");
+  });
+
+  it("opens the kebab menu and removes a removable component; disables Remove for Transform", () => {
+    const handle = mount();
+    push(
+      snap({
+        epoch: 1,
+        entities: [entity({ components: [transformOf(10, true), shapeOf()] })],
+        selection: [1]
+      })
+    );
+
+    // Transform (catalog addable:false) → Remove disabled.
+    query(handle.el, "[data-section][data-component='Transform'] [data-kebab]").dispatchEvent(
+      new MouseEvent("click", { bubbles: true })
+    );
+    const transformRemove = [
+      ...handle.el.querySelectorAll<HTMLButtonElement>("[data-kebab-menu] button")
+    ].find(button => button.textContent === "Remove Component");
+    expect(transformRemove?.disabled).toBe(true);
+
+    // Shape (addable) → Remove enabled → routes removeComponent.
+    query(handle.el, "[data-section][data-component='Shape'] [data-kebab]").dispatchEvent(
+      new MouseEvent("click", { bubbles: true })
+    );
+    const shapeRemove = [
+      ...handle.el.querySelectorAll<HTMLButtonElement>("[data-kebab-menu] button")
+    ].find(button => button.textContent === "Remove Component");
+    shapeRemove?.click();
+
+    expect(mocks.bridge.removeComponent).toHaveBeenCalledWith(1, "Shape");
+  });
+
+  it("opens the Add-Component picker (addable + not-present) and adds the picked component", () => {
+    const handle = mount();
+    push(
+      snap({
+        epoch: 1,
+        entities: [entity({ components: [transformOf(10, true)] })],
+        selection: [1]
+      })
+    );
+
+    query(handle.el, "[data-add-component]").dispatchEvent(
+      new MouseEvent("click", { bubbles: true })
+    );
+
+    const options = [
+      ...handle.el.querySelectorAll<HTMLButtonElement>("[data-add-picker] [data-add-option]")
+    ];
+    // SpriteRenderer + Shape are addable and not present; Transform (non-addable) is excluded.
+    expect(options.map(option => option.dataset.component)).toEqual(["SpriteRenderer", "Shape"]);
+    options[0]?.click();
+
+    expect(mocks.bridge.addComponent).toHaveBeenCalledWith(1, "SpriteRenderer");
+  });
+
+  it("opens the reference picker for an entity-ref and sets the field via setField", () => {
+    const handle = mount();
+    push(
+      snap({
+        epoch: 1,
+        entities: [
+          entity({ components: [scriptOf(undefined)] }),
+          entity({ id: 2, name: "Player" })
+        ],
+        selection: [1]
+      })
+    );
+
+    query(handle.el, "[data-field-key='target'] [data-ref-pick]").dispatchEvent(
+      new MouseEvent("click", { bubbles: true })
+    );
+    // Candidates exclude self (id 1); "Player" (id 2) picks its id.
+    const player = [
+      ...handle.el.querySelectorAll<HTMLButtonElement>("[data-ref-picker] [data-ref-option]")
+    ].find(option => option.textContent === "Player");
+    player?.click();
+
+    expect(mocks.bridge.setField).toHaveBeenCalledWith(1, "Script", "target", 2);
+  });
+
+  it("shows the multi-object header + shared components, with divergent fields as '—'", () => {
+    const handle = mount();
+    push(
+      snap({
+        epoch: 1,
+        entities: [
+          entity({ id: 1, components: [transformOf(10, true)] }),
+          entity({ id: 2, components: [transformOf(20, true)] })
+        ],
+        selection: [1, 2]
+      })
+    );
+
+    expect(query(handle.el, "[data-multi-header]").textContent).toBe("2 Objects Selected");
+    // x diverges (10 vs 20) → non-editable "—"; visible agrees (true) → an editable control.
+    const rows = handle.el.querySelectorAll("[data-section-body] > *");
+    expect(query(handle.el, "[data-section-body] [data-mixed]").textContent).toBe("—");
+    expect(handle.el.querySelector("[data-field-key='visible']")).not.toBeNull();
+    expect(rows.length).toBeGreaterThan(0);
+  });
+
   it("rebuilds when the selection changes without an epoch bump", () => {
-    const handle = mountIsland(inspector, { html: "<div data-fields></div>" });
+    const handle = mount();
     const entities = [
-      { id: 1, components: [transform(10, true)] },
-      { id: 2, components: [sprite()] }
+      entity({ id: 1, components: [transformOf(10, true)] }),
+      entity({ id: 2, name: "Coin", components: [shapeOf()] })
     ];
     push(snap({ epoch: 1, entities, selection: [1] }));
-    expect(query(handle.el, "[data-component]").textContent).toBe("Transform");
+    expect(query(handle.el, "[data-section][data-component='Transform']")).not.toBeNull();
 
     push(snap({ epoch: 1, entities, selection: [2] })); // same epoch, new selection
 
-    expect(query(handle.el, "[data-component]").textContent).toBe("Sprite");
+    expect(handle.el.querySelector("[data-section][data-component='Transform']")).toBeNull();
+    expect(query(handle.el, "[data-section][data-component='Shape']")).not.toBeNull();
   });
 
   it("unsubscribes on unmount", () => {
-    const handle = mountIsland(inspector, { html: "<div data-fields></div>" });
+    const handle = mount();
     expect(mocks.subscribers.size).toBe(1);
 
     handle.unmount();

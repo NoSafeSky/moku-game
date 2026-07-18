@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import type { Reflection } from "@nosafesky/ludemic";
-import { describe, expect, it } from "vitest";
-import { readControl, renderControl } from "../../src/lib/field-controls";
+import { describe, expect, it, vi } from "vitest";
+import { openReferencePicker, readControl, renderControl } from "../../src/lib/field-controls";
 
 /** Grab one axis input from a vector2 control (guards instead of a non-null assertion). */
 function axis(el: HTMLElement, name: "x" | "y"): HTMLInputElement {
@@ -206,6 +206,123 @@ describe("field-controls", () => {
       expect(() =>
         readControl(div, { kind: "select", key: "s", label: "S", options: ["a"] })
       ).toThrow(/<select>/);
+    });
+  });
+
+  describe("reference (entity-ref / asset-ref)", () => {
+    it("renders an entity-ref chip: an icon + mono name + a ⋯ picker, value on data-ref-value", () => {
+      const el = renderControl({ kind: "entity-ref", key: "target", label: "Target" }, 7);
+
+      expect(el.dataset.fieldKind).toBe("entity-ref");
+      expect(el.dataset.refValue).toBe("7");
+      expect(el.querySelector("[data-ref-icon]")?.textContent).toBe("▶");
+      expect(el.querySelector("[data-ref-name]")?.textContent).toBe("7");
+      expect(el.querySelector("[data-ref-pick]")).not.toBeNull();
+    });
+
+    it("shows 'None' and an empty value when unset", () => {
+      const el = renderControl({ kind: "asset-ref", key: "sprite", label: "Sprite" }, undefined);
+
+      expect(el.dataset.refValue).toBe("");
+      expect(el.querySelector("[data-ref-name]")?.textContent).toBe("None");
+    });
+
+    it("reads an entity-ref back as an EditorId number, unset as undefined", () => {
+      const descriptor: Reflection.EntityRefField = { kind: "entity-ref", key: "t", label: "T" };
+      expect(readControl(renderControl(descriptor, 7), descriptor)).toBe(7);
+      expect(readControl(renderControl(descriptor, undefined), descriptor)).toBeUndefined();
+    });
+
+    it("reads an asset-ref back as its alias string", () => {
+      const descriptor: Reflection.AssetRefField = { kind: "asset-ref", key: "s", label: "S" };
+      expect(readControl(renderControl(descriptor, "coin.png"), descriptor)).toBe("coin.png");
+    });
+
+    it("disables the ⋯ picker button on a readonly reference", () => {
+      const el = renderControl({ kind: "entity-ref", key: "t", label: "T", readonly: true }, 1);
+      expect(el.querySelector<HTMLButtonElement>("[data-ref-pick]")?.disabled).toBe(true);
+    });
+  });
+
+  describe("openReferencePicker (D9)", () => {
+    it("renders a None row + one row per candidate; picking calls onPick and closes", () => {
+      const anchor = document.createElement("button");
+      document.body.append(anchor);
+      const onPick = vi.fn();
+
+      const close = openReferencePicker({
+        anchor,
+        candidates: [{ value: "3", label: "Player" }],
+        onPick
+      });
+
+      const options = [
+        ...(document.querySelectorAll<HTMLButtonElement>("[data-ref-picker] [data-ref-option]") ??
+          [])
+      ];
+      expect(options).toHaveLength(2); // None + Player
+      options[1]?.click();
+
+      expect(onPick).toHaveBeenCalledWith("3");
+      expect(document.querySelector("[data-ref-picker]")).toBeNull();
+      close(); // idempotent — already closed
+      anchor.remove();
+    });
+
+    it("the None row picks undefined (clear)", () => {
+      const anchor = document.createElement("button");
+      document.body.append(anchor);
+      const onPick = vi.fn();
+
+      openReferencePicker({ anchor, candidates: [], onPick });
+      document.querySelector<HTMLButtonElement>("[data-ref-picker] [data-ref-option]")?.click();
+
+      expect(onPick).toHaveBeenCalledWith(undefined);
+      anchor.remove();
+    });
+  });
+
+  describe("numeric drag-scrub (F3)", () => {
+    it("updates the value on a horizontal drag and fires change on release", () => {
+      const el = renderControl(
+        { kind: "number", key: "x", label: "X", step: 1 },
+        10
+      ) as HTMLInputElement;
+      const changed = vi.fn();
+      el.addEventListener("change", changed);
+
+      el.dispatchEvent(new MouseEvent("pointerdown", { clientX: 0, button: 0 }));
+      globalThis.dispatchEvent(new MouseEvent("pointermove", { clientX: 20 }));
+      globalThis.dispatchEvent(new MouseEvent("pointerup", {}));
+
+      expect(el.value).toBe("30"); // 10 + 20px * step(1)
+      expect(changed).toHaveBeenCalledTimes(1);
+    });
+
+    it("leaves the value untouched and fires no change on a zero-move press (text-edit fallthrough)", () => {
+      const el = renderControl({ kind: "number", key: "x", label: "X" }, 10) as HTMLInputElement;
+      const changed = vi.fn();
+      el.addEventListener("change", changed);
+
+      el.dispatchEvent(new MouseEvent("pointerdown", { clientX: 5, button: 0 }));
+      globalThis.dispatchEvent(new MouseEvent("pointermove", { clientX: 6 })); // within threshold
+      globalThis.dispatchEvent(new MouseEvent("pointerup", {}));
+
+      expect(el.value).toBe("10");
+      expect(changed).not.toHaveBeenCalled();
+    });
+
+    it("does not scrub a readonly number", () => {
+      const el = renderControl(
+        { kind: "number", key: "x", label: "X", readonly: true },
+        10
+      ) as HTMLInputElement;
+
+      el.dispatchEvent(new MouseEvent("pointerdown", { clientX: 0, button: 0 }));
+      globalThis.dispatchEvent(new MouseEvent("pointermove", { clientX: 30 }));
+      globalThis.dispatchEvent(new MouseEvent("pointerup", {}));
+
+      expect(el.value).toBe("10");
     });
   });
 });

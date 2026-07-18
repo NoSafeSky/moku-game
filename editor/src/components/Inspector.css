@@ -5,36 +5,144 @@
     min-block-size: 0;
     overflow: hidden;
     background: var(--surface-panel);
-    border-inline-start: 1px solid var(--border-default);
+    border-inline-start: 1px solid var(--border-seam);
   }
 
   [data-panel-header] {
-    padding: 0.5rem 0.75rem;
-    border-block-end: 1px solid var(--border-default);
+    padding: 0.4rem 0.6rem;
+    background: var(--surface-raised);
+    border-block-end: 1px solid var(--divider);
   }
 
   h2 {
-    font-size: 0.75rem;
+    font-size: var(--fs-label);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
     color: var(--text-muted);
   }
 
-  [data-fields] {
+  [data-body] {
     flex: 1;
-    display: grid;
-    grid-template-columns: max-content 1fr;
-    gap: 0.4rem 0.6rem;
-    align-content: start;
-    align-items: center;
-    padding: 0.75rem;
+    display: flex;
+    flex-direction: column;
+    min-block-size: 0;
     overflow-y: auto;
   }
 
-  [data-fields]:empty::before {
-    content: "Select an entity";
-    grid-column: 1 / -1;
+  /* ── No-selection empty state (F7) ── */
+  [data-empty-state] {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 1.5rem;
+    color: var(--text-muted);
+    text-align: center;
+  }
+
+  [data-empty-icon] {
+    font-size: 1.6rem;
+    opacity: 0.6;
+  }
+
+  /* ── Object header (single selection) + multi-object header (F14) ── */
+  [data-object-header],
+  [data-multi-header] {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.5rem 0.6rem;
+    border-block-end: 1px solid var(--divider);
+  }
+
+  [data-object-header] [data-name] {
+    flex: 1;
+    min-inline-size: 0;
+    font-size: var(--fs-ui);
+    color: var(--text-bright);
+  }
+
+  [data-object-header] [data-tag] {
+    padding: 0.05rem 0.3rem;
+    font-size: var(--fs-xs);
+    color: var(--text-muted);
+    border: 1px solid var(--divider);
+  }
+
+  [data-multi-header] {
+    font-size: var(--fs-ui);
+    font-weight: 600;
+    color: var(--text-bright);
+  }
+
+  /* ── Component section ── */
+  [data-section] {
+    border-block-end: 1px solid var(--divider);
+  }
+
+  [data-section-header] {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.35rem 0.6rem;
+    background: var(--surface-raised);
+    cursor: default;
+  }
+
+  [data-twisty] {
+    inline-size: 0.9rem;
+    color: var(--text-muted);
+    cursor: pointer;
+    user-select: none;
+  }
+
+  [data-twisty]::before {
+    content: "▾";
+  }
+
+  [data-section][data-collapsed] [data-twisty]::before {
+    content: "▸";
+  }
+
+  [data-section-name] {
+    flex: 1;
+    font-size: var(--fs-label);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-primary);
+  }
+
+  [data-kebab] {
+    padding: 0 0.25rem;
+    color: var(--text-muted);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+
+    &:hover {
+      color: var(--text-bright);
+    }
+  }
+
+  [data-section][data-collapsed] [data-section-body] {
+    display: none;
+  }
+
+  [data-section-body] {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.35rem 0.6rem;
+    align-items: center;
+    padding: 0.5rem 0.6rem;
+  }
+
+  /* The label cell paired with each control (grid column 1). */
+  [data-field-label] {
+    font-size: var(--fs-sm);
     color: var(--text-muted);
   }
 
@@ -42,40 +150,158 @@
   input,
   select {
     inline-size: 100%;
-    padding: 0.25rem 0.4rem;
+    padding: 0.2rem 0.35rem;
+    font-size: var(--fs-sm);
     background: var(--surface-control);
     color: var(--text-primary);
-    border: 1px solid var(--border-default);
+    border: 1px solid var(--border-seam);
     border-radius: var(--radius);
+  }
+
+  /* Numeric fields are mono + right-aligned (the instrument-panel signature) and drag-scrubbable. */
+  input[type="number"] {
+    font-family: var(--font-mono);
+    text-align: end;
+    cursor: ew-resize;
+  }
+
+  input[data-scrubbing] {
+    cursor: ew-resize;
+    border-color: var(--accent);
+  }
+
+  input[type="checkbox"] {
+    inline-size: auto;
+    accent-color: var(--accent);
+    cursor: pointer;
   }
 
   [data-field-kind="vector2"] {
     display: flex;
-    gap: 0.4rem;
+    gap: 0.35rem;
   }
 
   [data-invalid] {
-    border-color: var(--error);
+    border-color: var(--error) !important;
   }
 
-  /* Component group heading the inspector island injects — spans both label/control columns. */
-  [data-component] {
-    grid-column: 1 / -1;
-    margin-block-start: 0.35rem;
-    font-size: 0.7rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+  /* Divergent field on a multi-selection (F13) — a non-editable em-dash. */
+  [data-mixed] {
+    font-family: var(--font-mono);
     color: var(--text-muted);
   }
 
-  [data-component]:first-child {
-    margin-block-start: 0;
+  /* ── Reference chip (entity-ref / asset-ref) ── */
+  [data-field-kind="entity-ref"],
+  [data-field-kind="asset-ref"] {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.15rem 0.3rem;
+    background: var(--surface-control);
+    border: 1px solid var(--border-seam);
   }
 
-  /* The label cell paired with each control (grid column 1). */
-  [data-field-label] {
-    font-size: 0.8rem;
+  [data-ref-icon] {
+    color: var(--accent-bright);
+    font-size: var(--fs-sm);
+  }
+
+  [data-ref-name] {
+    flex: 1;
+    min-inline-size: 0;
+    overflow: hidden;
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    color: var(--text-primary);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  [data-ref-pick] {
+    padding: 0 0.25rem;
+    color: var(--text-muted);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+
+    &:hover {
+      color: var(--text-bright);
+    }
+  }
+
+  /* ── Add-Component button ── */
+  [data-add-component] {
+    margin: 0.6rem;
+    padding: 0.4rem;
+    font-size: var(--fs-ui);
+    color: var(--accent-bright);
+    background: var(--surface-control);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius);
+    cursor: pointer;
+
+    &:hover {
+      background: var(--sel-fill);
+    }
+  }
+
+  /* ── Anchored popups (kebab menu D7, add-component picker D8, reference picker D9) ── */
+  [data-kebab-menu],
+  [data-add-picker],
+  [data-ref-picker] {
+    position: fixed;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    min-inline-size: 160px;
+    max-block-size: 320px;
+    overflow-y: auto;
+    background: var(--surface-raised);
+    border: 1px solid var(--divider);
+  }
+
+  [data-kebab-menu] button,
+  [data-add-picker] [data-add-option],
+  [data-ref-picker] [data-ref-option] {
+    padding: 0.3rem 0.6rem;
+    font-size: var(--fs-ui);
+    color: var(--text-primary);
+    text-align: start;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+
+    &:hover:not(:disabled) {
+      background: var(--sel-fill);
+      color: var(--text-bright);
+    }
+
+    &:disabled {
+      color: var(--text-muted);
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+  }
+
+  [data-kebab-menu] [data-separator] {
+    block-size: 1px;
+    margin: 0.15rem 0;
+    background: var(--divider);
+  }
+
+  /* Add-component picker: search field + category headings. */
+  [data-add-picker] [data-add-search] {
+    margin: 0.3rem;
+    inline-size: auto;
+  }
+
+  [data-add-picker] [data-category] {
+    padding: 0.25rem 0.6rem 0.1rem;
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
     color: var(--text-muted);
   }
 }

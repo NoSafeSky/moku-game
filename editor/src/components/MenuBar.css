@@ -35,12 +35,68 @@
       color: var(--text-bright);
     }
 
-    /* The A4 island stamps [data-open] on the active menu. */
+    /* The island stamps [data-open] on the active menu. */
     &[data-open] {
       background: var(--sel-fill);
       color: var(--accent-bright);
       border-color: var(--accent);
     }
+
+    /* Disabled menu (Assets — import is a later phase): the shared "not applicable" language. */
+    &:disabled {
+      color: var(--text-muted);
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+  }
+
+  /* ── Dropdown the island appends on open (design-context D1/D2/D4) ── */
+  [data-dropdown] {
+    position: fixed;
+    z-index: 30;
+    display: flex;
+    flex-direction: column;
+    min-inline-size: 180px;
+    padding-block: 0.2rem;
+    background: var(--surface-raised);
+    border: 1px solid var(--divider);
+  }
+
+  [data-dropdown] hr {
+    block-size: 1px;
+    margin: 0.2rem 0;
+    border: none;
+    background: var(--divider);
+  }
+
+  [data-item] {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.25rem 0.7rem;
+    font-size: var(--fs-ui);
+    color: var(--text-primary);
+    text-align: start;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+
+    &:hover:not(:disabled) {
+      background: var(--sel-fill);
+      color: var(--text-bright);
+    }
+
+    &:disabled {
+      color: var(--text-muted);
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+  }
+
+  [data-item] [data-check] {
+    inline-size: 0.8rem;
+    color: var(--accent-bright);
+    font-size: var(--fs-sm);
   }
 
   [data-scene] {

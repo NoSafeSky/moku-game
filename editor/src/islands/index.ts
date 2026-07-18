@@ -2,6 +2,7 @@
 import { assetBrowser } from "./asset-browser";
 import { hierarchy } from "./hierarchy";
 import { inspector } from "./inspector";
+import { menuBar } from "./menu-bar";
 import { shortcuts } from "./shortcuts";
 import { statusBar } from "./status-bar";
 import { toolbar } from "./toolbar";
@@ -26,6 +27,7 @@ export const islands = [
   inspector,
   hierarchy,
   assetBrowser,
+  menuBar,
   toolbar,
   workspace,
   statusBar,
