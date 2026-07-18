@@ -5,7 +5,14 @@
  * POLLS — Moku `App` has no subscribe member; the rAF loop re-reads bridge.snapshot()'s cheap scalars
  * (selection/mode/canUndo/canRedo) every frame, so changes surface next frame with no event.
  */
-import type { Assets, EditorBridge, EditorGizmos, EditorSelection } from "@nosafesky/ludemic";
+import type {
+  Assets,
+  Camera,
+  EditorBridge,
+  EditorGizmos,
+  EditorSelection,
+  Renderer
+} from "@nosafesky/ludemic";
 import { createApp } from "@nosafesky/ludemic";
 
 /**
@@ -16,6 +23,10 @@ export type EditorHandles = {
   readonly bridge: EditorBridge.Api;
   readonly selection: EditorSelection.Api;
   readonly gizmos: EditorGizmos.Api;
+  /** Editor camera — pan/zoom/focus for the viewport (direct handle, off the poll+bridge path). */
+  readonly camera: Camera.Api;
+  /** Renderer — grid toggle + manual mount/re-sync (direct handle, off the poll+bridge path). */
+  readonly renderer: Renderer.Api;
   readonly assets: Assets.Api;
   readonly canvas: HTMLCanvasElement;
 };
@@ -69,11 +80,18 @@ export async function startEditor(mountElement: HTMLElement): Promise<EditorHand
   if (handles) return handles;
 
   // Boot the game runtime node-free: manual canvas mount + in-page mcp transport only (no stdio/http).
+  // The four editor plugin configs flip framework gates the app opts into — the framework keeps
+  // conservative defaults (multiSelect:false, translateOnly:true, editorControls:false) so a non-editor
+  // game pays nothing, while the editor enables the full authoring behaviour at this one place.
   const gameApp = createApp({
     pluginConfigs: {
       loop: { autoStart: true },
       renderer: { mount: undefined },
-      mcp: { transports: ["inMemory"], inMemoryGlobalKey: "" }
+      mcp: { transports: ["inMemory"], inMemoryGlobalKey: "" },
+      "editor-selection": { multiSelect: true, marquee: true },
+      "editor-gizmos": { translateOnly: false },
+      camera: { editorControls: true },
+      input: { wheel: true, preventDefault: true }
     }
   });
   await gameApp.start();
@@ -100,6 +118,8 @@ export async function startEditor(mountElement: HTMLElement): Promise<EditorHand
     bridge: gameApp["editor-bridge"],
     selection: gameApp["editor-selection"],
     gizmos: gameApp["editor-gizmos"],
+    camera: gameApp.camera,
+    renderer: gameApp.renderer,
     assets: gameApp.assets,
     canvas
   };

@@ -16,8 +16,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@headless-tree/core": "1.7.0",
     "@moku-labs/web": "2.0.1",
     "@nosafesky/ludemic": "file:..",
+    "@tanstack/virtual-core": "3.17.4",
     "pixi.js": "8.6.6",
     "preact": "10.25.4",
     "preact-render-to-string": "6.5.13"

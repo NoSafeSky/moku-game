@@ -19,10 +19,12 @@ const mocks = vi.hoisted(() => {
     stop: vi.fn(async () => {}),
     renderer: {
       getView: vi.fn<() => typeof canvas | undefined>(() => canvas),
-      markDirty: vi.fn()
+      markDirty: vi.fn(),
+      setGridVisible: vi.fn()
     },
     commands: { resolve: vi.fn<() => unknown>(() => entity) },
     assets: { entries: vi.fn(() => []) },
+    camera: { focus: vi.fn(), zoomAt: vi.fn(), panBy: vi.fn() },
     "editor-runtime": { enterEdit: vi.fn() },
     "editor-selection": { enable: vi.fn() },
     "editor-gizmos": { enable: vi.fn() },
@@ -78,7 +80,11 @@ describe("editor-host", () => {
       pluginConfigs: {
         loop: { autoStart: true },
         renderer: { mount: undefined },
-        mcp: { transports: ["inMemory"], inMemoryGlobalKey: "" }
+        mcp: { transports: ["inMemory"], inMemoryGlobalKey: "" },
+        "editor-selection": { multiSelect: true, marquee: true },
+        "editor-gizmos": { translateOnly: false },
+        camera: { editorControls: true },
+        input: { wheel: true, preventDefault: true }
       }
     });
     expect(mocks.app.start).toHaveBeenCalledTimes(1);
@@ -87,6 +93,8 @@ describe("editor-host", () => {
     expect(mocks.app["editor-selection"].enable).toHaveBeenCalledTimes(1);
     expect(mocks.app["editor-gizmos"].enable).toHaveBeenCalledTimes(1);
     expect(handles.bridge).toBe(mocks.app["editor-bridge"]);
+    expect(handles.camera).toBe(mocks.app.camera);
+    expect(handles.renderer).toBe(mocks.app.renderer);
     expect(handles.canvas).toBe(mocks.canvas);
     expect(getEditor()).toBe(handles);
   });

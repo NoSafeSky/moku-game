@@ -21,6 +21,11 @@ import { expect, test } from "@playwright/test";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const ASSETS = path.join(ROOT, "dist", "assets");
 const SRC = path.join(ROOT, "src");
+const NODE_MODULES = path.join(ROOT, "node_modules");
+
+// The client deps this shell adds on top of the framework/preact/pixi baseline — allow-listed here as
+// intentionally bundled AND asserted browser-safe (below). Phase-1 A2 adds the two hierarchy tree deps.
+const ALLOWED_CLIENT_DEPS = ["@headless-tree/core", "@tanstack/virtual-core"];
 
 /** All built client JS files (the webServer builds `dist/` before the suite runs). */
 function clientBundles(): { name: string; code: string }[] {
@@ -68,6 +73,21 @@ test.describe("client bundle — node-free invariant", () => {
     for (const { name, code } of clientBundles()) {
       expect(code.includes("@moku-labs/core"), `${name} references @moku-labs/core`).toBe(false);
       expect(code.includes("createCoreConfig"), `${name} references createCoreConfig`).toBe(false);
+    }
+  });
+
+  // The two new hierarchy deps are framework-agnostic DOM/data libs (app-spec Risk #1) — allow-listed and
+  // re-asserted node-free at the source so a future release that pulls node code fails CI, not the browser.
+  test("the allow-listed client deps ship no static node: import", () => {
+    for (const dep of ALLOWED_CLIENT_DEPS) {
+      const dist = path.join(NODE_MODULES, dep, "dist");
+      for (const file of readdirSync(dist).filter(name => /\.(m?js)$/.test(name))) {
+        const code = readFileSync(path.join(dist, file), "utf8");
+        const staticNode = code.match(/(?:from|import)\s*["']node:[a-z/]+["']/g) ?? [];
+        const requireNode = code.match(/require\(\s*["']node:[a-z/]+["']\)/g) ?? [];
+        expect(staticNode, `${dep}/${file} has a static ESM node: import`).toEqual([]);
+        expect(requireNode, `${dep}/${file} has a require("node:*")`).toEqual([]);
+      }
     }
   });
 });

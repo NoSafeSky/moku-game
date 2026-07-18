@@ -1,7 +1,8 @@
 /** @file Island registry → pluginConfigs.spa.islands. */
 import { assetBrowser } from "./asset-browser";
+import { hierarchy } from "./hierarchy";
 import { inspector } from "./inspector";
-import { sceneTree } from "./scene-tree";
+import { shortcuts } from "./shortcuts";
 import { statusBar } from "./status-bar";
 import { toolbar } from "./toolbar";
 import { viewport } from "./viewport";
@@ -12,7 +13,8 @@ import { workspace } from "./workspace";
  * `pluginConfigs.spa.islands` in `spa.tsx` so the spa kernel mounts each one onto its
  * matching `[data-island]` container. World-consuming islands reach the game runtime through
  * `lib/editor-host` (`getEditor`/`onSnapshot`); the `workspace` island is pure layout (splitter
- * resize) and touches no runtime. None touch `commands`/`ecs` directly.
+ * resize) and the `shortcuts` island is a global keymap with no visible surface. None touch
+ * `commands`/`ecs` directly.
  *
  * @example
  * ```ts
@@ -22,9 +24,10 @@ import { workspace } from "./workspace";
 export const islands = [
   viewport,
   inspector,
-  sceneTree,
+  hierarchy,
   assetBrowser,
   toolbar,
   workspace,
-  statusBar
+  statusBar,
+  shortcuts
 ];

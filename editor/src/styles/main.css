@@ -13,7 +13,7 @@
 @import "../components/EditorPage.css" layer(components);
 @import "../components/MenuBar.css" layer(panels);
 @import "../components/Toolbar.css" layer(panels);
-@import "../components/SceneTree.css" layer(panels);
+@import "../components/Hierarchy.css" layer(panels);
 @import "../components/Viewport.css" layer(panels);
 @import "../components/Inspector.css" layer(panels);
 @import "../components/AssetBrowser.css" layer(panels);

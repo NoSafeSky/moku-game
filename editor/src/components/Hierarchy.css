@@ -1,0 +1,271 @@
+@scope ([data-island="hierarchy"]) {
+  :scope {
+    display: flex;
+    flex-direction: column;
+    min-block-size: 0;
+    overflow: hidden;
+    background: var(--surface-panel);
+    border-inline-end: var(--hairline) solid var(--border-seam);
+  }
+
+  /* ── Header: uppercase label + right-aligned icon buttons ── */
+  [data-panel-header] {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 0.5rem;
+    block-size: var(--band-toolbar);
+    background: var(--surface-raised);
+    border-block-end: var(--hairline) solid var(--divider);
+  }
+
+  h2 {
+    font-size: var(--fs-label);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+  }
+
+  [data-actions] {
+    display: flex;
+    gap: 2px;
+  }
+
+  [data-actions] button {
+    inline-size: 22px;
+    block-size: 22px;
+    display: grid;
+    place-items: center;
+    font-size: var(--fs-ui);
+    color: var(--text-muted);
+    background: transparent;
+    border: var(--hairline) solid transparent;
+    cursor: pointer;
+  }
+
+  [data-actions] button:hover {
+    color: var(--text-bright);
+    background: var(--surface-control-hover);
+  }
+
+  /* ── Search row ── */
+  [data-search-row] {
+    padding: 4px 6px;
+    border-block-end: var(--hairline) solid var(--divider);
+  }
+
+  [data-search] {
+    inline-size: 100%;
+    block-size: 22px;
+    padding: 0 6px;
+    font-family: var(--font-ui);
+    font-size: var(--fs-sm);
+    color: var(--text-primary);
+    background: var(--surface-ground);
+    border: var(--hairline) solid var(--divider);
+    outline: none;
+  }
+
+  [data-search]:focus {
+    border-color: var(--accent);
+  }
+
+  /* ── The scrollable tree ── */
+  [data-tree] {
+    flex: 1;
+    min-block-size: 0;
+    overflow-y: auto;
+    padding: 2px 0;
+    outline: none;
+  }
+
+  [data-tree]:empty::before,
+  [data-tree][data-empty]::before {
+    content: "No objects";
+    display: block;
+    padding: 0.75rem;
+    color: var(--text-muted);
+    font-size: var(--fs-sm);
+  }
+
+  /* One tree row: twisty + eye + name + muted component summary, indented by depth. */
+  [data-row] {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    block-size: 24px;
+    padding-inline: calc(6px + var(--level, 0) * 14px) 6px;
+    font-size: var(--fs-sm);
+    color: var(--text-primary);
+    cursor: default;
+    user-select: none;
+    white-space: nowrap;
+  }
+
+  [data-row]:hover {
+    background: var(--surface-control);
+  }
+
+  /* Selection is never colour-only: an indigo-tinted fill plus a solid 3px indigo left-bar. */
+  [data-row][data-selected] {
+    background: var(--sel-fill);
+    color: var(--text-bright);
+  }
+
+  [data-row][data-selected]::before {
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: 0;
+    inline-size: var(--sel-bar-w);
+    background: var(--sel-bar);
+  }
+
+  /* Disabled node: greyed row, and its eye reads red-off. */
+  [data-row][data-enabled="false"] {
+    color: var(--text-muted);
+  }
+
+  /* Twisty (folders only): a rotatable caret; leaves get an inert placeholder for alignment. */
+  [data-twisty] {
+    inline-size: 12px;
+    text-align: center;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+
+  [data-twisty]::before {
+    content: "▸";
+    display: inline-block;
+    font-size: 9px;
+  }
+
+  [data-twisty][data-expanded]::before {
+    transform: rotate(90deg);
+  }
+
+  [data-twisty][data-leaf] {
+    cursor: default;
+    visibility: hidden;
+  }
+
+  /* Eye enable/disable toggle. */
+  [data-eye] {
+    inline-size: 14px;
+    text-align: center;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+
+  [data-eye]::before {
+    content: "◉";
+    font-size: 10px;
+  }
+
+  [data-eye][data-on="false"]::before {
+    content: "◎";
+    color: var(--error);
+  }
+
+  [data-name] {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  [data-name-input] {
+    flex: 1;
+    min-inline-size: 0;
+    block-size: 18px;
+    padding: 0 2px;
+    font: inherit;
+    color: var(--text-bright);
+    background: var(--surface-ground);
+    border: var(--hairline) solid var(--accent);
+    outline: none;
+  }
+
+  [data-summary] {
+    margin-inline-start: auto;
+    padding-inline-start: 8px;
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Drag source dims; drop indicators mark before / inside / after landing. */
+  [data-row][data-dragging] {
+    opacity: 0.45;
+  }
+
+  [data-row][data-drop-zone="inside"] {
+    background: var(--sel-fill);
+    box-shadow: inset 0 0 0 var(--hairline) var(--accent);
+  }
+
+  [data-row][data-drop-zone="before"]::after,
+  [data-row][data-drop-zone="after"]::after {
+    content: "";
+    position: absolute;
+    inset-inline: 0;
+    block-size: 2px;
+    background: var(--accent);
+  }
+
+  [data-row][data-drop-zone="before"]::after {
+    inset-block-start: 0;
+  }
+
+  [data-row][data-drop-zone="after"]::after {
+    inset-block-end: 0;
+  }
+
+  /* Row-window spacers (virtualization) — reserve scroll height for un-rendered rows. */
+  [data-spacer] {
+    flex: none;
+  }
+
+  /* ── Context menu (anchored, transient) ── */
+  [data-context-menu] {
+    position: fixed;
+    z-index: 50;
+    min-inline-size: 168px;
+    padding: 3px;
+    background: var(--surface-toolbar);
+    border: var(--hairline) solid var(--divider);
+  }
+
+  [data-context-menu] button {
+    display: flex;
+    inline-size: 100%;
+    align-items: center;
+    padding: 4px 8px;
+    font-family: var(--font-ui);
+    font-size: var(--fs-sm);
+    color: var(--text-primary);
+    text-align: start;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+  }
+
+  [data-context-menu] button:hover {
+    background: var(--sel-fill);
+    color: var(--text-bright);
+  }
+
+  [data-context-menu] button:disabled {
+    color: var(--text-muted);
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  [data-context-menu] [data-separator] {
+    block-size: var(--hairline);
+    margin: 3px 0;
+    background: var(--divider);
+  }
+}

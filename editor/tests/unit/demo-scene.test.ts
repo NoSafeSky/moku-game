@@ -1,39 +1,61 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock the framework so importing demo-scene pulls only a lightweight `field` builder (never the
-// real graph with pixi). demo-scene uses `field.number(...)` and nothing else from the framework.
+// real graph with pixi). demo-scene uses `field.number(...)` for the Transform schema and nothing else.
 vi.mock("@nosafesky/ludemic", () => ({
   field: { number: (opts?: object) => ({ kind: "number", ...opts }) }
 }));
 
 const { seedDemoScene } = await import("../../src/lib/demo-scene");
 
-/** A minimal stub of the game app's authoring surface, with spies on every seam demo-scene touches. */
+/** One recorded authoring call — verb + name + parent + the minted id the stub returned. */
+type Record = {
+  verb: "create" | "createShape";
+  name: string;
+  parent: number | undefined;
+  id: number;
+  kind?: string;
+};
+
+/** A stub of the game app's authoring surface: sequential-id bridge verbs + a reflection/commands spy. */
 function makeGameApp(entityCount = 0) {
   let nextId = 1;
+  const records: Record[] = [];
+  const create = vi.fn((opts: { name: string; parent?: number }) => {
+    const id = nextId++;
+    records.push({ verb: "create", name: opts.name, parent: opts.parent, id });
+    return id;
+  });
+  const createShape = vi.fn((kind: string, opts: { name: string; parent?: number }) => {
+    const id = nextId++;
+    records.push({ verb: "createShape", kind, name: opts.name, parent: opts.parent, id });
+    return id;
+  });
+  const setEnabled = vi.fn();
   const register = vi.fn();
   const count = vi.fn(() => entityCount);
-  const applyRaw = vi.fn(() => ({ ok: true as const, id: nextId++ }));
-  const resolve = vi.fn((id: number) => ({ entity: id }));
-  const attachPrimitive = vi.fn(() => true);
   const gameApp = {
     reflection: { register },
-    commands: { count, applyRaw, resolve },
-    renderer: { attachPrimitive }
+    commands: { count },
+    "editor-bridge": { create, createShape, setEnabled }
   };
-  return { gameApp, register, count, applyRaw, resolve, attachPrimitive };
+  return { gameApp, create, createShape, setEnabled, register, count, records };
 }
 
 /** Seed with a stub game app (cast — the stub is structurally partial, only the touched seams exist). */
 const seed = (stub: ReturnType<typeof makeGameApp>): void =>
   seedDemoScene(stub.gameApp as unknown as Parameters<typeof seedDemoScene>[0]);
 
+/** Index the recorded calls by object name. */
+const byName = (records: readonly Record[]): Map<string, Record> =>
+  new Map(records.map(r => [r.name, r]));
+
 describe("demo-scene", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("registers a typed Transform schema before spawning (so the inspector shows real controls)", () => {
+  it("registers a typed Transform schema before seeding (so the inspector shows real controls)", () => {
     const stub = makeGameApp();
 
     seed(stub);
@@ -44,29 +66,61 @@ describe("demo-scene", () => {
     expect(Object.keys(schema as object)).toEqual(["x", "y", "rotation", "scaleX", "scaleY"]);
   });
 
-  it("spawns each demo entity through commands.applyRaw with a Transform component", () => {
+  it("builds the whole nested tree through the bridge authoring verbs", () => {
     const stub = makeGameApp();
 
     seed(stub);
 
-    expect(stub.applyRaw).toHaveBeenCalledTimes(4);
-    for (const call of stub.applyRaw.mock.calls) {
-      const [command] = call as unknown as [{ kind: string; components: Record<string, unknown> }];
-      expect(command.kind).toBe("spawn");
-      expect(command.components).toHaveProperty("Transform");
+    // 11 objects: 3 bare-transform folders (create) + 8 shapes (createShape).
+    expect(stub.create).toHaveBeenCalledTimes(3);
+    expect(stub.createShape).toHaveBeenCalledTimes(8);
+    expect(stub.records).toHaveLength(11);
+  });
+
+  it("parents the three top-level branches at the scene root", () => {
+    const stub = makeGameApp();
+
+    seed(stub);
+
+    const named = byName(stub.records);
+    for (const root of ["Environment", "Player", "Enemies"]) {
+      expect(named.get(root)?.parent).toBeUndefined();
     }
   });
 
-  it("attaches a primitive view to every spawned entity it can resolve", () => {
+  it("threads each child under its freshly-minted parent id (real nesting)", () => {
     const stub = makeGameApp();
 
     seed(stub);
 
-    expect(stub.resolve).toHaveBeenCalledTimes(4);
-    expect(stub.attachPrimitive).toHaveBeenCalledTimes(4);
-    for (const call of stub.attachPrimitive.mock.calls) {
-      const [, primitive] = call as unknown as [unknown, { shape: string }];
-      expect(["rect", "circle"]).toContain(primitive.shape);
+    const named = byName(stub.records);
+    const environment = named.get("Environment");
+    const ground = named.get("Ground");
+    expect(ground?.parent).toBe(environment?.id);
+    expect(named.get("Platform_A")?.parent).toBe(ground?.id);
+    expect(named.get("Platform_B")?.parent).toBe(ground?.id);
+    expect(named.get("Camera_Follow")?.parent).toBe(named.get("Player")?.id);
+    expect(named.get("Drone_01")?.parent).toBe(named.get("Enemies")?.id);
+  });
+
+  it("seeds Platform_B disabled via setEnabled", () => {
+    const stub = makeGameApp();
+
+    seed(stub);
+
+    const platformB = byName(stub.records).get("Platform_B");
+    expect(stub.setEnabled).toHaveBeenCalledTimes(1);
+    expect(stub.setEnabled).toHaveBeenCalledWith(platformB?.id, false);
+  });
+
+  it("creates only rect/circle shapes", () => {
+    const stub = makeGameApp();
+
+    seed(stub);
+
+    for (const call of stub.createShape.mock.calls) {
+      const [kind] = call as unknown as [string];
+      expect(["rect", "circle"]).toContain(kind);
     }
   });
 
@@ -76,19 +130,8 @@ describe("demo-scene", () => {
     seed(stub);
 
     expect(stub.register).not.toHaveBeenCalled();
-    expect(stub.applyRaw).not.toHaveBeenCalled();
-    expect(stub.attachPrimitive).not.toHaveBeenCalled();
-  });
-
-  it("skips the view attach for an entity whose spawn failed", () => {
-    const stub = makeGameApp();
-    stub.applyRaw.mockReturnValueOnce({ ok: false, error: "boom" } as never);
-
-    seed(stub);
-
-    // 4 spawn attempts, first failed → 3 resolves + 3 attaches.
-    expect(stub.applyRaw).toHaveBeenCalledTimes(4);
-    expect(stub.resolve).toHaveBeenCalledTimes(3);
-    expect(stub.attachPrimitive).toHaveBeenCalledTimes(3);
+    expect(stub.create).not.toHaveBeenCalled();
+    expect(stub.createShape).not.toHaveBeenCalled();
+    expect(stub.setEnabled).not.toHaveBeenCalled();
   });
 });
