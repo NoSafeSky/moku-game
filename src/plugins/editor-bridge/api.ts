@@ -1,28 +1,52 @@
 /**
  * @file editor-bridge plugin — API factory (the `app["editor-bridge"]` surface).
  *
- * `snapshot()` is the one aggregation read: it memoizes the heavy entity tree by
- * `world.changeEpoch()` (delegating the walk to the pure `buildEntities` in `snapshot.ts`) and
- * re-reads the cheap scalars (`selection`/`mode`/`canUndo`/`canRedo`) fresh on every call. Every
- * other method is a thin forward to the single write-authority or the owning dep — `apply`/
- * `setField` route through `editor-history.applyTracked` (never touch `world` directly);
- * `select`/`clearSelection` route through `editor-selection`; `undo`/`redo` route through
- * `editor-history`; `play`/`stop`/`step` route through `editor-runtime`; `save`/`load` route
- * through `serialization`; `describe` passes straight through to `reflection`. Every dependency is
+ * `snapshot()` is the one aggregation read: it memoizes the heavy STRUCTURAL tree (`entities` +
+ * `roots`) by `world.changeEpoch()` (delegating the walk to the pure `buildEntities` in
+ * `snapshot.ts`) and re-reads the cheap scalars (`selection`/`mode`/`canUndo`/`canRedo`) fresh on
+ * every call. Every simple write (`apply`/`setField`/`rename`/`setEnabled`/`reorder`/
+ * `addComponent`/`removeComponent`/`create*`) routes through the single write-authority
+ * (`editor-history.applyTracked` → `commands.applyRaw`); the three COMPOUND ops
+ * (`reparent`/`delete`/`duplicate`) delegate to the pure orchestrators in `authoring.ts`, which
+ * bracket their bursts of primitives into ONE undo entry. `select`/`clearSelection` route through
+ * `editor-selection`; `undo`/`redo` route through `editor-history`; `play`/`stop`/`step` route
+ * through `editor-runtime`; `save`/`load` route through `serialization`; `describe`/
+ * `listComponents` read straight through `reflection`/`component-registry`. Every dependency is
  * resolved via `ctx.require(plugin)` at call time — the bridge holds no captured dep reference
  * (the `reflection`/`scheduler` no-capture precedent).
  */
 import { commandsPlugin } from "../commands";
 import type { Command, CommandResult, EditorId } from "../commands/types";
+import { componentRegistryPlugin } from "../component-registry";
 import { ecsPlugin } from "../ecs";
 import { editorHistoryPlugin } from "../editor-history";
 import { editorRuntimePlugin } from "../editor-runtime";
 import { editorSelectionPlugin } from "../editor-selection";
+import type { ShapeValue } from "../graphics-2d/types";
+import { hierarchyPlugin } from "../hierarchy";
+import type { NodeValue } from "../hierarchy/types";
 import { reflectionPlugin } from "../reflection";
 import type { FieldDescriptor } from "../reflection/types";
 import { serializationPlugin } from "../serialization";
+import type { AuthoringFacets } from "./authoring";
+import {
+  deleteSubtrees,
+  duplicateSubtrees,
+  idFromSpawn,
+  reparent as reparentSubtrees
+} from "./authoring";
 import { buildEntities } from "./snapshot";
-import type { Api, Config, EditorBridgeRequire, EditorSnapshot, Log, State } from "./types";
+import type {
+  Api,
+  ComponentCatalogEntryWithFields,
+  Config,
+  CreateOptions,
+  EditorBridgeRequire,
+  EditorSnapshot,
+  Log,
+  ReparentOptions,
+  State
+} from "./types";
 
 /**
  * Structural context required by {@link createApi}, so unit tests can pass a minimal mock without
@@ -32,7 +56,7 @@ import type { Api, Config, EditorBridgeRequire, EditorSnapshot, Log, State } fro
 export type EditorBridgeApiContext = {
   /** Resolved editor-bridge configuration (intentionally empty). */
   readonly config: Readonly<Config>;
-  /** editor-bridge plugin state — the epoch memoization cache (`lastEpoch`/`entities`). */
+  /** editor-bridge plugin state — the epoch memoization cache (`lastEpoch`/`entities`/`roots`). */
   readonly state: State;
   /** Logger from `logPlugin` (the skipped-select warning). */
   readonly log: Log;
@@ -54,9 +78,9 @@ export type EditorBridgeApiContext = {
 const isDefined = <T>(value: T | undefined): value is T => value !== undefined;
 
 /**
- * Builds the poll-on-epoch `EditorSnapshot`. Memoizes the heavy entity tree in `ctx.state` keyed
- * by `world.changeEpoch()` (reused verbatim while unchanged); re-reads the cheap scalars
- * (`selection`/`mode`/`canUndo`/`canRedo`) fresh every call.
+ * Builds the poll-on-epoch `EditorSnapshot`. Memoizes the heavy STRUCTURAL tree (`entities` +
+ * `roots`) in `ctx.state` keyed by `world.changeEpoch()` (reused verbatim while unchanged);
+ * re-reads the cheap scalars (`selection`/`mode`/`canUndo`/`canRedo`) fresh every call.
  *
  * @param ctx - The editor-bridge API context.
  * @returns A frozen {@link EditorSnapshot}.
@@ -69,10 +93,16 @@ const buildSnapshot = (ctx: EditorBridgeApiContext): EditorSnapshot => {
   const world = ctx.require(ecsPlugin);
   const commands = ctx.require(commandsPlugin);
   const reflection = ctx.require(reflectionPlugin);
+  const hierarchy = ctx.require(hierarchyPlugin);
 
   const epoch = world.changeEpoch();
-  if (ctx.state.entities === undefined || epoch !== ctx.state.lastEpoch) {
-    ctx.state.entities = buildEntities(world, commands, reflection);
+  let entities = ctx.state.entities;
+  let roots = ctx.state.roots;
+  if (entities === undefined || roots === undefined || epoch !== ctx.state.lastEpoch) {
+    entities = buildEntities(world, commands, reflection, hierarchy);
+    roots = Object.freeze(hierarchy.roots().map(id => id));
+    ctx.state.entities = entities;
+    ctx.state.roots = roots;
     ctx.state.lastEpoch = epoch;
   }
 
@@ -88,7 +118,8 @@ const buildSnapshot = (ctx: EditorBridgeApiContext): EditorSnapshot => {
 
   return Object.freeze({
     epoch,
-    entities: ctx.state.entities,
+    entities,
+    roots,
     selection,
     mode: runtime.mode(),
     canUndo: history.canUndo(),
@@ -124,6 +155,61 @@ const selectIds = (ctx: EditorBridgeApiContext, ids: readonly EditorId[]): void 
 };
 
 /**
+ * Composes the four structural facets `authoring.ts`'s compound-op orchestrators run over from
+ * the real deps — each real Api is a structural superset of its narrow facet, so no adapter is
+ * needed beyond the plugin lookups themselves.
+ *
+ * @param ctx - The editor-bridge API context.
+ * @returns The {@link AuthoringFacets} for `reparent`/`delete`/`duplicate`.
+ * @example
+ * ```ts
+ * deleteSubtrees(buildAuthoringFacets(ctx), ids);
+ * ```
+ */
+const buildAuthoringFacets = (ctx: EditorBridgeApiContext): AuthoringFacets => ({
+  history: ctx.require(editorHistoryPlugin),
+  hierarchy: ctx.require(hierarchyPlugin),
+  commands: ctx.require(commandsPlugin),
+  world: ctx.require(ecsPlugin)
+});
+
+/**
+ * Builds the shared `Transform` + `Node` components every `create*` verb spawns: `Transform`
+ * defaulted from `component-registry.get("Transform")?.defaults` (falling back to the ecs world's
+ * own component default when the registry has no entry) overlaid by `opts.transform`, and a fresh
+ * `Node` at `opts.parent` with a sibling order from `hierarchy.orderBetween`.
+ *
+ * @param ctx - The editor-bridge API context.
+ * @param defaultName - The display name to use when `opts.name` is omitted.
+ * @param opts - The `create*` verb's shared options.
+ * @returns A `{ Transform, Node }` components record, ready to overlay a renderable component onto.
+ * @example
+ * ```ts
+ * const base = buildBaseComponents(ctx, "", opts);
+ * ```
+ */
+const buildBaseComponents = (
+  ctx: EditorBridgeApiContext,
+  defaultName: string,
+  opts: CreateOptions | undefined
+): Record<string, unknown> => {
+  const registry = ctx.require(componentRegistryPlugin);
+  const hierarchy = ctx.require(hierarchyPlugin);
+
+  const transform = { ...registry.get("Transform")?.defaults, ...opts?.transform };
+  const node: NodeValue = {
+    parent: opts?.parent,
+    // append at scene end — before/after are required positional args typed `EditorId | undefined`.
+    // eslint-disable-next-line unicorn/no-useless-undefined -- undefined is the no-sibling-constraint order key
+    order: hierarchy.orderBetween(opts?.parent, undefined, undefined),
+    name: opts?.name ?? defaultName,
+    enabled: true
+  };
+
+  return { Transform: transform, Node: node };
+};
+
+/**
  * Creates the editor-bridge plugin API surface.
  *
  * @param ctx - Plugin context (structural — config/state/log/require).
@@ -136,7 +222,8 @@ const selectIds = (ctx: EditorBridgeApiContext, ids: readonly EditorId[]): void 
  */
 export const createApi = (ctx: EditorBridgeApiContext): Api => ({
   /**
-   * The immutable poll-on-epoch snapshot of the editor world (memoized by `epoch`).
+   * The immutable poll-on-epoch HIERARCHICAL snapshot of the editor world (structural tree
+   * memoized by `epoch`).
    *
    * @returns A frozen {@link EditorSnapshot}.
    * @example
@@ -177,6 +264,246 @@ export const createApi = (ctx: EditorBridgeApiContext): Api => ({
   setField: (id: EditorId, component: string, field: string, value: unknown): CommandResult => {
     const command: Command = { kind: "setField", id, component, field, value };
     return ctx.require(editorHistoryPlugin).applyTracked(command);
+  },
+
+  /**
+   * Creates an empty object (a `Transform` + `Node` only). One `spawn` command → ONE atomic undo
+   * entry. Returns the minted editor id, recovered from the spawn's `despawn` inverse.
+   *
+   * @param opts - Name/parent/transform overrides.
+   * @returns The newly minted `EditorId`.
+   * @example
+   * ```ts
+   * const enemies = app["editor-bridge"].create({ name: "Enemies" });
+   * ```
+   */
+  create: (opts?: CreateOptions): EditorId => {
+    const components = buildBaseComponents(ctx, "", opts);
+    const result = ctx.require(editorHistoryPlugin).applyTracked({ kind: "spawn", components });
+    return idFromSpawn(result);
+  },
+
+  /**
+   * Creates an object with a `Shape` component, defaulted from `component-registry.get("Shape")`
+   * and overlaid by `opts.shape`. One `spawn` command → ONE atomic undo entry.
+   *
+   * @param kind - The primitive kind (`"rect"` or `"circle"`).
+   * @param opts - Name/parent/transform overrides, plus `shape` style overrides.
+   * @returns The newly minted `EditorId`.
+   * @example
+   * ```ts
+   * const grunt = app["editor-bridge"].createShape("rect", { name: "Grunt", shape: { fill: "#D9534F" } });
+   * ```
+   */
+  createShape: (
+    kind: "rect" | "circle",
+    opts?: CreateOptions & { shape?: Partial<ShapeValue> }
+  ): EditorId => {
+    const registry = ctx.require(componentRegistryPlugin);
+    const defaultName = kind === "rect" ? "Rect" : "Circle";
+    const base = buildBaseComponents(ctx, defaultName, opts);
+    const shape = { ...registry.get("Shape")?.defaults, kind, ...opts?.shape };
+    const result = ctx.require(editorHistoryPlugin).applyTracked({
+      kind: "spawn",
+      components: { ...base, Shape: shape }
+    });
+    return idFromSpawn(result);
+  },
+
+  /**
+   * Creates an object with a `SpriteRenderer` bound to `alias`, defaulted from
+   * `component-registry.get("SpriteRenderer")`. One `spawn` command → ONE atomic undo entry.
+   *
+   * @param alias - The texture alias the `SpriteRenderer` binds to.
+   * @param opts - Name/parent/transform overrides.
+   * @returns The newly minted `EditorId`.
+   * @example
+   * ```ts
+   * const hero = app["editor-bridge"].createSprite("hero.png", { name: "Hero" });
+   * ```
+   */
+  createSprite: (alias: string, opts?: CreateOptions): EditorId => {
+    const registry = ctx.require(componentRegistryPlugin);
+    const base = buildBaseComponents(ctx, alias, opts);
+    const sprite = { ...registry.get("SpriteRenderer")?.defaults, sprite: alias };
+    const result = ctx.require(editorHistoryPlugin).applyTracked({
+      kind: "spawn",
+      components: { ...base, SpriteRenderer: sprite }
+    });
+    return idFromSpawn(result);
+  },
+
+  /**
+   * Deletes the given objects and ALL their descendants — a gesture-bracketed burst of despawns,
+   * deepest-first. ONE atomic undo entry; undo respawns the whole subtree, self-healing every
+   * `Node.parent` ref.
+   *
+   * @param ids - The root editor ids to delete (with their subtrees).
+   * @example
+   * ```ts
+   * app["editor-bridge"].delete(enemyId);
+   * ```
+   */
+  delete: (...ids: EditorId[]): void => {
+    deleteSubtrees(buildAuthoringFacets(ctx), ids);
+  },
+
+  /**
+   * Subtree-aware clone of the given objects — a gesture-bracketed burst of spawns, parents-first,
+   * remapping each clone's `Node.parent`. ONE atomic undo entry; SELECTS the top-level clones.
+   *
+   * @param ids - The root editor ids to duplicate (with their subtrees).
+   * @returns The top-level clone editor ids, in the same order as `ids`.
+   * @example
+   * ```ts
+   * const [clone] = app["editor-bridge"].duplicate(enemyId);
+   * ```
+   */
+  duplicate: (...ids: EditorId[]): readonly EditorId[] => {
+    const clones = duplicateSubtrees(buildAuthoringFacets(ctx), ids);
+    selectIds(ctx, clones);
+    return clones;
+  },
+
+  /**
+   * Re-parents `id` under `newParent` (`undefined` = scene root) — a gesture-bracketed burst of
+   * `setField`s: (preserve-world, the default) the local `Transform` + `Node.parent` + `Node.order`.
+   * Validated via `hierarchy.canReparent` before any write. ONE atomic undo entry.
+   *
+   * @param id - The node being reparented.
+   * @param newParent - The candidate new parent, or `undefined` for the scene root.
+   * @param opts - Reparent options (`mode`/`before`/`after`).
+   * @returns The representative `CommandResult`, or `{ ok: false, error }` when the move is illegal.
+   * @example
+   * ```ts
+   * app["editor-bridge"].reparent(grunt, undefined, { mode: "preserve-world" });
+   * ```
+   */
+  reparent: (
+    id: EditorId,
+    newParent: EditorId | undefined,
+    opts?: ReparentOptions
+  ): CommandResult => reparentSubtrees(buildAuthoringFacets(ctx), id, newParent, opts),
+
+  /**
+   * Moves `id` between two siblings (`Node.order`, computed via `hierarchy.orderBetween`);
+   * undo-tracked.
+   *
+   * @param id - The node being reordered.
+   * @param before - The sibling the node should land BEFORE, or `undefined`.
+   * @param after - The sibling the node should land AFTER, or `undefined`.
+   * @example
+   * ```ts
+   * app["editor-bridge"].reorder(grunt, siblingA, siblingB);
+   * ```
+   */
+  reorder: (id: EditorId, before: EditorId | undefined, after: EditorId | undefined): void => {
+    const commands = ctx.require(commandsPlugin);
+    const hierarchy = ctx.require(hierarchyPlugin);
+    const entity = commands.resolve(id);
+    const parent = entity === undefined ? undefined : hierarchy.parentOf(entity);
+
+    ctx.require(editorHistoryPlugin).applyTracked({
+      kind: "setField",
+      id,
+      component: "Node",
+      field: "order",
+      value: hierarchy.orderBetween(parent, before, after)
+    });
+  },
+
+  /**
+   * Renames `id` (`setField Node.name`); undo-tracked.
+   *
+   * @param id - The node being renamed.
+   * @param name - The new display name.
+   * @example
+   * ```ts
+   * app["editor-bridge"].rename(grunt, "Boss Grunt");
+   * ```
+   */
+  rename: (id: EditorId, name: string): void => {
+    ctx.require(editorHistoryPlugin).applyTracked({
+      kind: "setField",
+      id,
+      component: "Node",
+      field: "name",
+      value: name
+    });
+  },
+
+  /**
+   * Toggles `id`'s active flag (`setField Node.enabled`); undo-tracked.
+   *
+   * @param id - The node whose active flag to set.
+   * @param enabled - The new active flag.
+   * @example
+   * ```ts
+   * app["editor-bridge"].setEnabled(grunt, false);
+   * ```
+   */
+  setEnabled: (id: EditorId, enabled: boolean): void => {
+    ctx.require(editorHistoryPlugin).applyTracked({
+      kind: "setField",
+      id,
+      component: "Node",
+      field: "enabled",
+      value: enabled
+    });
+  },
+
+  /**
+   * Adds a named component, defaulted from `component-registry.get(component)?.defaults`;
+   * undo-tracked.
+   *
+   * @param id - The target entity's stable editor id.
+   * @param component - The component name to add.
+   * @returns The {@link CommandResult} relayed from `editor-history`.
+   * @example
+   * ```ts
+   * app["editor-bridge"].addComponent(grunt, "SpriteRenderer");
+   * ```
+   */
+  addComponent: (id: EditorId, component: string): CommandResult => {
+    const registry = ctx.require(componentRegistryPlugin);
+    const value = registry.get(component)?.defaults ?? {};
+    return ctx
+      .require(editorHistoryPlugin)
+      .applyTracked({ kind: "addComponent", id, component, value });
+  },
+
+  /**
+   * Removes a named component; undo-tracked.
+   *
+   * @param id - The target entity's stable editor id.
+   * @param component - The component name to remove.
+   * @returns The {@link CommandResult} relayed from `editor-history`.
+   * @example
+   * ```ts
+   * app["editor-bridge"].removeComponent(grunt, "SpriteRenderer");
+   * ```
+   */
+  removeComponent: (id: EditorId, component: string): CommandResult =>
+    ctx.require(editorHistoryPlugin).applyTracked({ kind: "removeComponent", id, component }),
+
+  /**
+   * The addable-component catalog enriched with each entry's field schema — for the
+   * Add-Component picker. Fresh every call (the catalog is static + cheap; not epoch-gated).
+   *
+   * @returns The frozen catalog entries, each carrying its `reflection.describe` field schema.
+   * @example
+   * ```ts
+   * for (const entry of app["editor-bridge"].listComponents()) addRow(entry);
+   * ```
+   */
+  listComponents: (): readonly ComponentCatalogEntryWithFields[] => {
+    const registry = ctx.require(componentRegistryPlugin);
+    const reflection = ctx.require(reflectionPlugin);
+    return Object.freeze(
+      registry
+        .list()
+        .map(entry => Object.freeze({ ...entry, fields: reflection.describe(entry.name) }))
+    );
   },
 
   /**

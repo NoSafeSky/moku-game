@@ -14,6 +14,10 @@ describe("editor-bridge createState", () => {
     expect(createState().entities).toBeUndefined();
   });
 
+  it("seeds roots as undefined", () => {
+    expect(createState().roots).toBeUndefined();
+  });
+
   it("returns a fresh object on every call (no shared mutable state)", () => {
     const a = createState();
     const b = createState();

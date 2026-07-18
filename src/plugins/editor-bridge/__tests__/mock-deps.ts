@@ -1,18 +1,21 @@
 /**
  * @file editor-bridge plugin — shared test doubles.
  *
- * Spy-instrumented fakes of the nine dependency APIs (ecs / reflection / commands /
- * editor-selection / editor-gizmos / editor-history / editor-runtime / serialization / mcp), the
- * `ctx.require` resolver, a spied logger, and `EditorBridgeApiContext`/`StartContext` builders.
- * Reused across the state, snapshot, api, and lifecycle unit suites. Not a test file itself (no
- * `.test.ts` suffix), so vitest does not collect it.
+ * Spy-instrumented fakes of the eleven dependency APIs (ecs / reflection / commands / hierarchy /
+ * component-registry / editor-selection / editor-gizmos / editor-history / editor-runtime /
+ * serialization / mcp), the `ctx.require` resolver, a spied logger, and
+ * `EditorBridgeApiContext`/`StartContext` builders. Reused across the state, snapshot, api, and
+ * lifecycle unit suites. Not a test file itself (no `.test.ts` suffix), so vitest does not
+ * collect it.
  */
 import { type Mock, vi } from "vitest";
 
 import { commandsPlugin } from "../../commands";
 import type { Api as CommandsApi, EditorId } from "../../commands/types";
+import { componentRegistryPlugin } from "../../component-registry";
+import type { Api as ComponentRegistryApi } from "../../component-registry/types";
 import { ecsPlugin } from "../../ecs";
-import type { Entity, World } from "../../ecs/types";
+import type { Component, Entity, World } from "../../ecs/types";
 import { editorGizmosPlugin } from "../../editor-gizmos";
 import type { Api as EditorGizmosApi } from "../../editor-gizmos/types";
 import { editorHistoryPlugin } from "../../editor-history";
@@ -21,6 +24,8 @@ import { editorRuntimePlugin } from "../../editor-runtime";
 import type { Api as EditorRuntimeApi } from "../../editor-runtime/types";
 import { editorSelectionPlugin } from "../../editor-selection";
 import type { Api as EditorSelectionApi } from "../../editor-selection/types";
+import { hierarchyPlugin } from "../../hierarchy";
+import type { Api as HierarchyApi, NodeValue } from "../../hierarchy/types";
 import { mcpPlugin } from "../../mcp";
 import type { Api as McpApi } from "../../mcp/types";
 import { reflectionPlugin } from "../../reflection";
@@ -58,18 +63,20 @@ export const makeLog = (): Log => ({
 // Dependency API fakes
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** A spied `World` slice — `changeEpoch`/`liveEntities`/`componentsOf`. */
-export type MockWorld = Pick<World, "changeEpoch" | "liveEntities" | "componentsOf"> & {
+/** A spied `World` slice — `changeEpoch`/`liveEntities`/`componentsOf`/`get`. */
+export type MockWorld = Pick<World, "changeEpoch" | "liveEntities" | "componentsOf" | "get"> & {
   changeEpoch: Mock;
   liveEntities: Mock;
   componentsOf: Mock;
+  get: Mock;
 };
 
-/** Build a spied world double: epoch 0, no live entities, unless overridden. */
+/** Build a spied world double: epoch 0, no live entities, `get` reads `undefined`, unless overridden. */
 export const makeWorldMock = (overrides: Partial<MockWorld> = {}): MockWorld => ({
   changeEpoch: vi.fn(() => 0),
   liveEntities: vi.fn(() => []),
   componentsOf: vi.fn(() => []),
+  get: vi.fn(() => undefined),
   ...overrides
 });
 
@@ -98,6 +105,55 @@ export const makeCommandsMock = (overrides: Partial<MockCommands> = {}): MockCom
   editorIdOf: vi.fn(() => undefined),
   resolve: vi.fn(() => undefined),
   setValidator: vi.fn(),
+  ...overrides
+});
+
+/** A fake `Node` component token — a stable callable reference, never invoked in these tests. */
+const FAKE_NODE_TOKEN = vi.fn() as unknown as Component<NodeValue>;
+
+/** A spied `hierarchy` slice — `Node`/`childrenOf`/`roots`/`parentOf`/`canReparent`/`computeLocalForPreserveWorld`/`orderBetween`. */
+export type MockHierarchy = Pick<
+  HierarchyApi,
+  | "Node"
+  | "childrenOf"
+  | "roots"
+  | "parentOf"
+  | "canReparent"
+  | "computeLocalForPreserveWorld"
+  | "orderBetween"
+> & {
+  childrenOf: Mock;
+  roots: Mock;
+  parentOf: Mock;
+  canReparent: Mock;
+  computeLocalForPreserveWorld: Mock;
+  orderBetween: Mock;
+};
+
+/** Build a spied hierarchy double: no children/roots, reparent always legal, unless overridden. */
+export const makeHierarchyMock = (overrides: Partial<MockHierarchy> = {}): MockHierarchy => ({
+  Node: FAKE_NODE_TOKEN,
+  childrenOf: vi.fn(() => []),
+  roots: vi.fn(() => []),
+  parentOf: vi.fn(() => undefined),
+  canReparent: vi.fn(() => true),
+  computeLocalForPreserveWorld: vi.fn(() => ({ x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 })),
+  orderBetween: vi.fn(() => 0),
+  ...overrides
+});
+
+/** A spied `component-registry` slice — `list`/`get`. */
+export type MockComponentRegistry = Pick<ComponentRegistryApi, "list" | "get"> & {
+  list: Mock;
+  get: Mock;
+};
+
+/** Build a spied component-registry double: an empty catalog, unless overridden. */
+export const makeComponentRegistryMock = (
+  overrides: Partial<MockComponentRegistry> = {}
+): MockComponentRegistry => ({
+  list: vi.fn(() => []),
+  get: vi.fn(() => undefined),
   ...overrides
 });
 
@@ -205,11 +261,13 @@ export const makeMcpMock = (overrides: Partial<MockMcp> = {}): MockMcp => ({
 // require() dispatcher
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** The full set of fakes a `makeRequire` call wires to the nine dependency plugin instances. */
+/** The full set of fakes a `makeRequire` call wires to the eleven dependency plugin instances. */
 export type MockDeps = {
   world: MockWorld;
   reflection: MockReflection;
   commands: MockCommands;
+  hierarchy: MockHierarchy;
+  componentRegistry: MockComponentRegistry;
   editorSelection: MockEditorSelection;
   editorGizmos: MockEditorGizmos;
   editorHistory: MockEditorHistory;
@@ -223,6 +281,8 @@ export const makeMockDeps = (): MockDeps => ({
   world: makeWorldMock(),
   reflection: makeReflectionMock(),
   commands: makeCommandsMock(),
+  hierarchy: makeHierarchyMock(),
+  componentRegistry: makeComponentRegistryMock(),
   editorSelection: makeEditorSelectionMock(),
   editorGizmos: makeEditorGizmosMock(),
   editorHistory: makeEditorHistoryMock(),
@@ -240,6 +300,8 @@ export const makeRequire = (deps: MockDeps): EditorBridgeRequire => {
     if (plugin === ecsPlugin) return deps.world;
     if (plugin === reflectionPlugin) return deps.reflection;
     if (plugin === commandsPlugin) return deps.commands;
+    if (plugin === hierarchyPlugin) return deps.hierarchy;
+    if (plugin === componentRegistryPlugin) return deps.componentRegistry;
     if (plugin === editorSelectionPlugin) return deps.editorSelection;
     if (plugin === editorGizmosPlugin) return deps.editorGizmos;
     if (plugin === editorHistoryPlugin) return deps.editorHistory;
