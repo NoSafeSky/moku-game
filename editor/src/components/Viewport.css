@@ -1,9 +1,78 @@
 @scope ([data-island="viewport"]) {
   :scope {
-    position: relative;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
     min-inline-size: 0;
+    min-block-size: 0;
+    overflow: hidden;
+    background: var(--surface-raised);
+  }
+
+  /* ── Panel header — title + a Scene|Game tab hint. ── */
+  [data-vp-header] {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    block-size: var(--row-h);
+    padding-inline: 0.6rem;
+    background: var(--surface-raised);
+    border-block-end: 1px solid var(--divider);
+  }
+
+  [data-vp-title] {
+    font-size: var(--fs-label);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  [data-vp-tabs] {
+    display: flex;
+    gap: 2px;
+
+    & button {
+      padding: 1px 8px;
+      font-size: var(--fs-sm);
+      color: var(--text-muted);
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: var(--radius);
+      cursor: pointer;
+    }
+
+    & [data-active] {
+      color: var(--text-bright);
+      border-color: var(--divider);
+      background: var(--surface-panel);
+    }
+
+    & [data-disabled] {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+  }
+
+  /* ── Stage host — a container the aspect-correct canvas is letterboxed within. ── */
+  [data-vp-body] {
+    position: relative;
+    container-type: size;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.75rem;
     overflow: hidden;
     background: var(--surface-panel);
+  }
+
+  /* The stage keeps the canvas's intrinsic aspect (island-set --aw/--ah; default 16:9) and fits within the
+     panel — width = min(container width, container height × aspect) — so it is centred + letterboxed. */
+  [data-stage] {
+    position: relative;
+    aspect-ratio: var(--aw, 16) / var(--ah, 9);
+    inline-size: min(100cqi, 100cqb * var(--aw, 16) / var(--ah, 9));
+    background: var(--surface-ground);
+    outline: 1px solid var(--border-seam);
   }
 
   canvas {
@@ -12,14 +81,65 @@
     block-size: 100%;
   }
 
-  /* The viewport island sets [data-has-selection] from the snapshot — a focus ring, drawn in DOM so
-     it never competes with the in-canvas selection/gizmo overlay the game plugins paint. */
-  :scope[data-has-selection]::after {
+  /* Selection focus ring — drawn in DOM around the stage so it never competes with the in-canvas
+     selection/gizmo overlay the game plugins paint. */
+  :scope[data-has-selection] [data-stage]::after {
     content: "";
     position: absolute;
     inset: 0;
     pointer-events: none;
     outline: 1px solid var(--accent-bright);
     outline-offset: -1px;
+  }
+
+  /* ── Overlay controls — grid/snap (top) + zoom/focus readout (bottom), floated over the stage. ── */
+  [data-vp-overlay] {
+    position: absolute;
+    inset-inline-end: 0.6rem;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px;
+    background: color-mix(in srgb, var(--surface-raised) 88%, transparent);
+    border: 1px solid var(--border-seam);
+  }
+
+  [data-corner="top"] {
+    inset-block-start: 0.6rem;
+  }
+
+  [data-corner="bottom"] {
+    inset-block-end: 0.6rem;
+  }
+
+  [data-vp-overlay] button {
+    min-inline-size: 26px;
+    padding: 2px 7px;
+    font-size: var(--fs-sm);
+    color: var(--text-primary);
+    background: var(--surface-control);
+    border: 1px solid var(--border-seam);
+    border-radius: var(--radius);
+    cursor: pointer;
+
+    &:hover {
+      background: var(--surface-control-hover);
+      color: var(--text-bright);
+    }
+  }
+
+  /* Grid / Snap read accented when their toggle is on (the island stamps [data-on]). */
+  [data-vp-overlay] button[data-on] {
+    background: var(--sel-fill);
+    color: var(--text-bright);
+    border-color: var(--accent);
+  }
+
+  [data-zoom] {
+    min-inline-size: 44px;
+    padding-inline: 4px;
+    font-size: var(--fs-sm);
+    text-align: center;
+    color: var(--text-bright);
   }
 }

@@ -11,9 +11,14 @@
   [data-group] {
     display: flex;
     gap: 2px;
+    align-items: center;
   }
 
-  [data-group] + [data-group] {
+  /* Structural rule + spacing between control clusters. */
+  [data-group] + [data-group],
+  [data-group] + [data-segment],
+  [data-segment] + [data-segment],
+  [data-segment] + [data-group] {
     margin-inline-start: 0.4rem;
     padding-inline-start: 0.5rem;
     border-inline-start: 1px solid var(--divider);
@@ -33,17 +38,86 @@
       color: var(--text-bright);
     }
 
-    &[data-disabled] {
+    &[data-disabled],
+    &:disabled {
       opacity: 0.45;
       cursor: not-allowed;
       pointer-events: none;
     }
   }
 
-  /* The island sets [data-mode] from the snapshot; the active mode's Play button reads as accented. */
+  /* ── Transform tools — label + a tiny corner shortcut badge; accent-outlined when active. ── */
+  [data-group="tools"] button {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+
+  [data-badge] {
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    line-height: 1;
+    padding: 1px 3px;
+    color: var(--text-muted);
+    border: 1px solid var(--divider);
+  }
+
+  [data-tool][data-active] {
+    background: var(--sel-fill);
+    color: var(--text-bright);
+    border-color: var(--accent);
+
+    & [data-badge] {
+      color: var(--accent-bright);
+      border-color: var(--accent);
+    }
+  }
+
+  /* ── Segmented controls (Pivot⇄Center, Local⇄Global) — a hairline two-option toggle. ── */
+  [data-segment] {
+    display: inline-flex;
+
+    & button {
+      border-radius: 0;
+    }
+
+    & button + button {
+      border-inline-start: none;
+    }
+
+    & [data-active] {
+      background: var(--sel-fill);
+      color: var(--text-bright);
+      border-color: var(--accent);
+    }
+  }
+
+  /* ── Transport + mode chip. ── */
+  [data-mode-chip] {
+    margin-inline-start: 0.4rem;
+    padding: 2px 6px;
+    font-size: var(--fs-xs);
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    border: 1px solid var(--divider);
+  }
+
+  /* The island stamps [data-mode] from the snapshot; Play + the chip read accented while playing. */
   :scope[data-mode="play"] [data-action="play"] {
     background: var(--accent);
     color: var(--accent-contrast);
     border-color: var(--accent);
+  }
+
+  :scope[data-mode="play"] [data-mode-chip] {
+    color: var(--accent-bright);
+    border-color: var(--accent);
+  }
+
+  /* ── Right-aligned layout-switcher stub (saved layouts are P4). ── */
+  [data-layout-stub] {
+    margin-inline-start: auto;
+    font-size: var(--fs-sm);
   }
 }
