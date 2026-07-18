@@ -1,14 +1,19 @@
-# game — comprehensive LLM reference
+# @nosafesky/ludemic — comprehensive LLM reference
 
 > An ECS game framework for Moku — Spark-style public API and memory layout, PixiJS v8 rendering
 > (with a first-class headless mode), built on @moku-labs/core, composable with @moku-labs/web, with
 > a first-class MCP plugin exposing the live runtime to agent clients over stdio, Streamable HTTP,
-> and/or an in-page inMemory transport (environment-aware default).
+> and/or an in-page inMemory transport (environment-aware default), plus an additive Layer-2
+> in-browser editor subsystem the Layer-3 web shell consumes through one typed seam.
 
-This is the comprehensive reference for `game`. Everything below is grounded in source. The package
-is **unpublished** (`name: "game"`, `version: "0.0.0"`). Use `bun` exclusively. Per-plugin READMEs
-under `src/plugins/<name>/README.md` are the authoritative API source and remain the canonical
-detail; this file consolidates the public surface.
+This is the comprehensive reference for `@nosafesky/ludemic`. Everything below is grounded in source.
+The package is **unpublished** (`name: "@nosafesky/ludemic"`, `version: "0.3.0"`; repo
+`NoSafeSky/moku-game`). Use `bun` exclusively. Per-plugin READMEs under `src/plugins/<name>/README.md`
+are the authoritative API source and remain the canonical detail; this file consolidates the public
+surface. The framework is **twenty-seven plugins**: sixteen runtime plugins + an eleven-plugin
+Layer-2 in-browser editor subsystem registered after `mcp` (`editor-bridge` last). Two of the editor
+newcomers — `hierarchy` (scene graph) and `graphics-2d` (render components) — are dual-use runtime
+capabilities usable by any game.
 
 --------------------------------------------------------------------------------
 ## 1. The three-layer Moku model (factory chain)
@@ -50,8 +55,14 @@ logging) and `ctx.env` (validated environment access) are available on every plu
 ```ts
 const framework = createCore(coreConfig, {
   plugins: [
+    // 16 runtime plugins…
     ecsPlugin, schedulerPlugin, rendererPlugin, inputPlugin,
-    loopPlugin, assetsPlugin, contextPlugin, scenePlugin, mcpPlugin
+    loopPlugin, assetsPlugin, contextPlugin, scenePlugin, audioPlugin,
+    storagePlugin, platformPlugin, vfxPlugin, uiPlugin, tweenPlugin, cameraPlugin, mcpPlugin,
+    // …then the 11-plugin Layer-2 editor subsystem (editor-bridge LAST — all edges point backwards):
+    commandsPlugin, reflectionPlugin, componentRegistryPlugin, hierarchyPlugin, graphics2dPlugin,
+    serializationPlugin, editorSelectionPlugin, editorHistoryPlugin, editorGizmosPlugin,
+    editorRuntimePlugin, editorBridgePlugin
   ],
   pluginConfigs: {
     context: { bindGameContext: true } // framework default; consumers override via createApp
@@ -64,12 +75,14 @@ export const createPlugin = framework.createPlugin;
 
 // Advanced / headless escape hatches — re-exported from ./config. `createApp` stays the default.
 export { createCore, createCoreConfig } from "./config";
+// The reflection field.* builder set, for authoring typed component schemas at module scope.
+export { field } from "./plugins/reflection";
 ```
 
 **Layer 3 — your app**:
 
 ```ts
-import { createApp } from "game";
+import { createApp } from "@nosafesky/ludemic";
 
 const app = createApp({ pluginConfigs: { /* per-plugin overrides */ } });
 await app.start();   // async — boots Pixi Application, registers DOM listeners + systems, binds resources
@@ -85,8 +98,8 @@ before using lifecycle-owning plugin APIs (renderer/input/loop/context/mcp). `ap
 **Custom plugins** integrate via `createPlugin` from `game`:
 
 ```ts
-import { createPlugin } from "game";
-import { assetsPlugin } from "game"; // or "game/.../assets" — depend on the instance
+import { createPlugin } from "@nosafesky/ludemic";
+import { assetsPlugin } from "@nosafesky/ludemic"; // depend on the instance
 
 const myPlugin = createPlugin("myPlugin", {
   depends: [assetsPlugin],                 // declares the dependency edge
@@ -117,7 +130,7 @@ Layer-1/2 escape hatches for composing a custom core (tooling, tests, agent-only
 bespoke `Config`/`Events` shape.
 
 ```ts
-import { createCore, createCoreConfig, createPlugin, ecsPlugin, schedulerPlugin, rendererPlugin } from "game";
+import { createCore, createCoreConfig, createPlugin, ecsPlugin, schedulerPlugin, rendererPlugin } from "@nosafesky/ludemic";
 
 // (a) createCore — assemble a custom core from a SUBSET of the framework's own plugins. The first
 //     argument is a type-only carrier for the bound createPlugin (pass `{ createPlugin }` or `coreConfig`);
@@ -157,26 +170,38 @@ platform       (depends: audio, loop, storage — Wave 2; registered after them,
 vfx            (depends: ecs, scheduler, renderer — Wave 3; registered after platform, before mcp)
 ui             (depends: renderer, scheduler, input — leaf; registered after vfx, before mcp)
 tween          (depends: scheduler — leaf; registered after ui, before mcp)
-camera         (depends: renderer, scheduler, tween — leaf; registered after tween, before mcp)
+camera         (depends: renderer, scheduler, tween, input — leaf; registered after tween, before mcp; the input edge is inert unless editorControls)
 
-# Editor subsystem (Layer-2, additive — plugins #17–#24, registered AFTER mcp; all edges point backwards)
+# Editor subsystem (Layer-2, additive — 11 plugins, registered AFTER mcp; all edges point backwards)
 commands          (depends: ecs — the single write-authority; owns the branded EditorId)
 reflection        (depends: ecs — field-schema registry)
+component-registry (depends: none — the enumerable Add-Component catalog)
+hierarchy         (depends: ecs, renderer, commands, reflection — the scene-graph Node + world-transform sync)
+graphics-2d       (depends: ecs, renderer, reflection, component-registry, assets — the 2D render-component library)
 serialization     (depends: ecs, storage, commands, reflection — scene (de)serializer)
-editor-selection  (depends: ecs, renderer, camera, input — viewport picking + selection)
+editor-selection  (depends: ecs, renderer, camera, input — viewport picking + selection + marquee)
 editor-history    (depends: commands — undo/redo)
-editor-gizmos     (depends: renderer, camera, editor-selection, commands — translate gizmo)
+editor-gizmos     (depends: renderer, camera, editor-selection, commands — translate/rotate/scale/rect gizmo)
 editor-runtime    (depends: loop, scheduler, serialization, commands, tween, vfx, camera — edit/play FSM)
-editor-bridge     (depends: ecs, reflection, commands, editor-selection, editor-gizmos, editor-history, editor-runtime, serialization, mcp — the terminal facade; registered LAST)
+editor-bridge     (depends: ecs, reflection, commands, hierarchy, component-registry, editor-selection, editor-gizmos, editor-history, editor-runtime, serialization, mcp — the terminal facade; registered LAST)
 ```
 
 Build/resolve order: ecs → scheduler → renderer + input → loop + assets → context → scene → audio →
-storage → platform → vfx → ui → tween → camera → mcp → commands + reflection → serialization + editor-selection
-→ editor-history + editor-gizmos + editor-runtime → editor-bridge (the dependency-free `audio` + `storage`, then `platform` which depends
+storage → platform → vfx → ui → tween → camera → mcp → commands + reflection → component-registry +
+hierarchy → graphics-2d → serialization + editor-selection → editor-history + editor-gizmos +
+editor-runtime → editor-bridge (the dependency-free `audio` + `storage`, then `platform` which depends
 on `audio` + `loop` + `storage`, then `vfx` on `ecs` + `scheduler` + `renderer`, then `ui` on `renderer` +
-`scheduler` + `input`, then `tween` on `scheduler` only, then `camera` on `renderer` + `scheduler` + `tween`,
-all registered before `mcp`; then the additive **Layer-2 editor subsystem** #17–#24 after `mcp`, `editor-bridge` last).
-The editor subsystem is supported by additive **extension deltas** on already-built plugins: `ecs` gains `changeEpoch()` (per-write counter) + `setActiveStages`/`activeStages` (stage gate); `scheduler` forwards `setActiveStages`/`activeStages`; `assets` gains `entries()`/`manifest()`/`metadata()`; `tween`/`vfx`/`camera` gain `reset()`. All non-breaking; a non-editor game pays nothing (`editor-runtime` never gates until `enterEdit()`).
+`scheduler` + `input`, then `tween` on `scheduler` only, then `camera` on `renderer` + `scheduler` + `tween` +
+`input`, all registered before `mcp`; then the additive **Layer-2 editor subsystem** after `mcp`, `editor-bridge`
+last with eleven dependency edges — every editor seam it aggregates + `mcp` — all pointing backwards).
+The editor subsystem is supported by additive **extension deltas** on already-built plugins (all non-breaking;
+a non-editor game pays nothing, and `editor-runtime` never gates until `enterEdit()`): `ecs` gains
+`changeEpoch()` (per-write counter) + `setActiveStages`/`activeStages` (stage gate); `scheduler` forwards
+`setActiveStages`/`activeStages`; `renderer` gains `attachSprite` + `setTextureResolver`/
+`setWorldTransformResolver` + `setEntityVisible` + `setGridVisible`; `input` gains a per-frame `wheel` delta;
+`reflection` gains schema-only `entity-ref`/`asset-ref` field kinds; `assets` gains `entries()`/`manifest()`/
+`metadata()`; `camera` gains `focus`/`zoomAt`/`panBy` + the opt-in `editorControls` system; and
+`tween`/`vfx`/`camera` gain `reset()`.
 Each plugin declares `depends: [...]` and resolves the API at runtime with `ctx.require(...)`.
 There are no dependency cycles. `loop` depends on `ecs` (to publish the `Time` resource), the
 `context` plugin depends on `ecs` + `assets`, and `mcp` depends on its seven build-dependency plugins (its
@@ -225,15 +250,23 @@ Event catalog (complete):
 | `platform:ready` | `{ portal: Portal }` | platform plugin Events / platform | once the active portal adapter is initialised and loading is signalled finished |
 | `platform:adStart` | `{ type: "interstitial" \| "rewarded" }` | platform plugin Events / platform | when an ad begins, after `loop` is paused + `audio` muted |
 | `platform:adEnd` | `{ type: "interstitial" \| "rewarded"; rewarded?: boolean }` | platform plugin Events / platform | when an ad ends, after `loop` + `audio` are restored (`rewarded` set for rewarded ads) |
+| `commands:restored` | `{ source: "reload" \| "exit-play" }` | commands plugin Events / commands | after a non-undoable `commands.restore()` reseeds the world + EditorId map (scene load / exit-play); `editor-history` clears its stacks |
+| `serialization:loaded` | `{ name: string; entityCount: number }` | serialization plugin Events / serialization | after `deserialize()`/`load()`/`import()` reseeds and the named scene is live (distinct from the lower-level `commands:restored`) |
+| `editor-selection:changed` | `{ selected: readonly Entity[] }` | editor-selection plugin Events / editor-selection | after the editor selection set actually changes (user-gesture frequency, never per-frame) |
+| `editor-runtime:modeChanged` | `{ mode: "edit" \| "play" }` | editor-runtime plugin Events / editor-runtime | after an edit↔play mode flip |
+
+The four editor events are declared on their plugins' `Events` (via `register.map<Events>`), coarse
+and user-gesture-frequency; the editor subsystem is otherwise **poll-on-epoch** (panels read
+`app["editor-bridge"].snapshot()` and re-render when `epoch` advances — no per-frame `emit`).
 
 Design note: per-frame hot-path work (ticks, sync, render, input, structural mutations, resource
 ops) is **deliberately not emitted** as kernel events — emitting an event per frame would defeat the
-kernel-bypass that keeps the loop fast. ecs, scheduler, renderer, input, loop, context, and vfx emit
-no events and register no hooks (vfx's particles/shake/pop/floating-text are all per-frame hot-path
-work); `mcp` emits one (`game:reset`) and `audio` two coarse mute/volume
-milestones (`play`/`playMusic`/`stopMusic` are hot-path and emit nothing). The `context` plugin hands
-systems a typed `emit` (the framework emitter) inside `GameContext`, but owns no event surface of
-its own.
+kernel-bypass that keeps the loop fast. `ecs`, `scheduler`, `renderer`, `input`, `loop`, `context`,
+`vfx`, `ui`, `tween`, `camera`, `component-registry`, `hierarchy`, `graphics-2d`, `reflection`,
+`editor-history`, `editor-gizmos`, and `editor-bridge` emit no events; `mcp` emits one (`game:reset`),
+`audio` two mute/volume milestones, `platform` three, and `commands`/`serialization`/
+`editor-selection`/`editor-runtime` one apiece. The `context` plugin hands systems a typed `emit`
+(the framework emitter) inside `GameContext`, but owns no event surface of its own.
 
 --------------------------------------------------------------------------------
 ## 4. ecs — data/runtime core (Complex)
@@ -290,6 +323,11 @@ export type World = {
   // ... query(c1..c8) ...
   addSystem(stage: Stage, system: System): () => void;
   tick(dt: number): void;
+
+  // ── Change-epoch + stage gate (editor extension deltas; additive, non-breaking) ──
+  changeEpoch(): number;                                                   // monotone counter bumped once per data write (structural + set + updateEach); the poll-on-epoch gate, NO emit
+  setActiveStages(stages: readonly Stage[] | undefined): void;            // gate which stages `tick` runs; `undefined` = all (editor-runtime drives this for edit-vs-play)
+  activeStages(): readonly Stage[] | undefined;                           // the current gate, or `undefined` for all
 
   // ── Introspection (read-only — for tooling such as the mcp plugin) ──
   liveEntities(): readonly Entity[];                                       // fresh snapshot of all live handles (order unspecified)
@@ -443,6 +481,8 @@ export type Api = {
   readonly stages: readonly Stage[];                          // ["input","update","physics","sync","render"]
   addSystem(stage: Stage, system: System): () => void;        // forwards to world.addSystem
   tick(dt: number): void;                                     // forwards to world.tick
+  setActiveStages(stages: readonly Stage[] | undefined): void; // forwards to world.setActiveStages (undefined = all)
+  activeStages(): readonly Stage[] | undefined;              // forwards to world.activeStages (the edit-vs-play gate)
 };
 export type { Stage, System, World } from "../ecs/types";
 ```
@@ -515,6 +555,22 @@ export type PrimitiveSpec =
 // Anchor contract: `rect` & `circle` are drawn CENTERED on the entity's Transform; `polygon` points are
 // in the entity's local space with the origin at the Transform; `line` runs from the local origin to (x2, y2).
 
+// ── Phase-1 (Wave F1) resolver seams + sprite/grid specs — no Pixi types leak ──
+export type TextureHandle = { readonly __textureHandle: unique symbol };  // opaque; the renderer casts it to a Pixi Texture internally
+export type TextureResolver = (alias: string) => TextureHandle | undefined;         // injected by graphics-2d over assets
+export type WorldTransformResolver = (entity: Entity) => TransformValue | undefined; // injected by hierarchy; undefined → fall back to local Transform
+export type SpriteSpec = {              // plain-data build spec for attachSprite
+  alias: string;                        // texture alias resolved via the TextureResolver
+  tint?: number | string;               // 0xrrggbb int or "#rrggbb" string; default no tint
+  flipX?: boolean;                      // mirror horizontally (view-local, untouched by the Transform sync)
+  width?: number;                       // explicit display width in px (overrides the texture's natural width)
+  height?: number;                      // explicit display height in px
+};
+export type GridSpec = {                // editor grid-overlay style for setGridVisible
+  size?: number;                        // cell size in world px; default 32
+  color?: number;                       // line color as a hex int; default a slate hairline
+};
+
 export type Config = {
   width: number;       // @default 800
   height: number;      // @default 600
@@ -537,6 +593,13 @@ export type Api = {
   getStage(): Container | undefined;              // root Pixi stage
   getEntityView(entity: Entity): Container | undefined;  // entity's attached view (undefined if none/headless); view-local state (tint/alpha) the Transform sync doesn't manage — e.g. vfx flash
   markDirty(entity: Entity): void;                // re-sync view on next "sync" tick
+
+  // ── Phase-1 additions (Wave F1) — no Pixi types leak ──
+  attachSprite(entity: Entity, spec: SpriteSpec): boolean;  // build a Pixi Sprite via the injected texture resolver + self-parent it (placeholder Graphics when unresolved); false when headless/before start
+  setTextureResolver(resolve: TextureResolver | undefined): void;       // install/clear the alias→texture seam (graphics-2d injects it so the renderer never imports assets)
+  setWorldTransformResolver(resolve: WorldTransformResolver | undefined): void; // install/clear the entity→WORLD-transform seam (hierarchy injects `e => worldOf(e)`; undefined = local-Transform behavior)
+  setEntityVisible(entity: Entity, visible: boolean): void;             // toggle a view's visibility (the render-side bridge for Node.enabled); no-op without a view
+  setGridVisible(visible: boolean, spec?: GridSpec): void;             // show/update or hide the editor grid overlay on a dedicated below-world layer; headless-tolerant
 };
 ```
 
@@ -562,6 +625,24 @@ export type Api = {
   positions it from the entity's `Transform`. Designed so an MCP-spawned entity actually renders
   without the caller needing a stage handle. Returns `false` when headless / before start (nothing
   is added). Backed by `src/plugins/renderer/primitives.ts`.
+
+### Phase-1 additions (Wave F1) — sprites, DI resolver seams, visibility, grid
+
+- **`attachSprite(entity, spec)`** — builds a Pixi `Sprite` from the injected `TextureResolver`,
+  self-parents it to the stage, and registers it for sync. An unresolved alias (no resolver / resolver
+  → `undefined`) falls back to a placeholder `Graphics` so the entity is still visible. `tint`/`flipX`/
+  `width`/`height` are applied to the inner sprite so the Transform sync (which drives the wrapper)
+  never clobbers them. `false` when headless / before start.
+- **Resolver seams (dependency inversion).** `setTextureResolver` and `setWorldTransformResolver`
+  install (or clear with `undefined`) the two seams that keep the renderer Pixi-only and
+  assets/hierarchy-agnostic: `graphics-2d` injects `alias → TextureHandle` at its `onStart`, and
+  `hierarchy` injects `entity → worldOf(entity)` at its `onStart` so the sync positions parented
+  entities in world space. With no world resolver installed the sync uses the local `Transform` —
+  unchanged flat-app behavior.
+- **`setEntityVisible(entity, visible)`** — toggles a view's visibility; the render-side bridge for
+  `Node.enabled`. No-op when the entity has no view (headless / not attached); never throws.
+- **`setGridVisible(visible, spec?)`** — shows/updates or hides the editor grid overlay on a dedicated
+  below-world `Graphics` layer, restyled by `spec` (`size`, `color`) on show. Headless-tolerant.
 
 ### tree() / SceneNode
 
@@ -613,13 +694,15 @@ export type InputSnapshot = {
   justPressed(key: string): boolean;   // one frame only; key-repeat ignored
   justReleased(key: string): boolean;  // one frame only
   readonly pointer: { readonly x: number; readonly y: number; readonly buttons: number };
+  readonly wheel: { readonly deltaX: number; readonly deltaY: number };  // accumulated wheel/trackpad delta this frame (deltaMode-normalized to px); { 0, 0 } on a frame with no wheel motion
 };
 
 export type Config = {
   target: string;          // @default "window" ("window" → global; else CSS selector via querySelector)
   pointer: boolean;        // @default true
   keyboard: boolean;       // @default true
-  preventDefault: boolean; // @default false
+  wheel: boolean;          // @default true — track mouse-wheel / trackpad delta (accumulated per frame, reset each input-stage tick)
+  preventDefault: boolean; // @default false — preventDefault on tracked key/wheel events
 };
 
 export type Api = {
@@ -637,7 +720,8 @@ export type Api = {
 | `target` | `string` | `"window"` | DOM target for listeners. `"window"` = global window; any other string is a CSS selector resolved via `document.querySelector` at start. |
 | `pointer` | `boolean` | `true` | Attach `pointermove`/`pointerdown`/`pointerup`; track position + buttons. |
 | `keyboard` | `boolean` | `true` | Attach `keydown`/`keyup`; track key state. |
-| `preventDefault` | `boolean` | `false` | Call `event.preventDefault()` on tracked key events (e.g. stop arrow/space scrolling). |
+| `wheel` | `boolean` | `true` | Attach `wheel`; accumulate a `deltaMode`-normalized `{ deltaX, deltaY }` into the snapshot, reset each input-stage tick. (Powers `camera.editorControls` wheel-zoom.) |
+| `preventDefault` | `boolean` | `false` | Call `event.preventDefault()` on tracked key/wheel events (e.g. stop arrow/space scrolling or page-zoom). |
 
 ### Key injection + alias normalization (Cycle 5)
 
@@ -820,12 +904,19 @@ export type Config = {
   throwOnError: boolean;                     // @default true
 };
 
+// One asset in the enumeration surface (the editor's asset-browser panel polls entries()).
+export type AssetEntry = { alias: string; loaded: boolean; url?: string };
+
 export type Api = {
   load(alias: string): Promise<Texture>;
   loadBundle(bundle: string, entries: Readonly<Record<string, string>>): Promise<Record<string, Texture>>;
   get(alias: string): Texture | undefined;   // cache read; does NOT load
   sprite(alias: string): Promise<Sprite>;    // load-on-miss, then build Sprite
   isLoaded(alias: string): boolean;          // session state.loaded, not the Pixi cache
+  // ── Editor enumeration (Phase-1) — read-only projections, cheap to poll ──
+  entries(): readonly AssetEntry[];          // union of manifest aliases + session-loaded aliases, each flagged `loaded` (+ manifest url)
+  manifest(): Readonly<Record<string, string>>;  // a read-only view of config.manifest (alias → url)
+  metadata(alias: string): { width: number; height: number } | undefined;  // pixel dims of a loaded texture (from the Pixi cache), or undefined
 };
 ```
 
@@ -1478,6 +1569,7 @@ stopShake(): void                                              // clear trauma +
 pop(entity: Entity, opts?: PopOptions): void                   // scale-pop a Transform to opts.scale× (@default 1.3) over opts.duration (@default 0.15s) and back; no-op without a Transform
 flash(entity: Entity, opts?: FlashOptions): void               // hit-flash: snap view.tint to opts.color (@default white) then ease back to the captured base over opts.duration (@default 0.12s); alive entity; tint only with a view (headless → ages out); re-call refreshes
 floatText(x: number, y: number, text: string, opts?: FloatTextOptions): Entity  // rising, alpha-fading floating number/text (e.g. "+50"); returns its entity handle
+reset(): void                                                  // EDITOR DELTA: despawn every live Emitter/Particle/FloatingText + clear trauma; editor-runtime.stop() calls it on exit-play
 readonly easing: Readonly<Record<EasingName, (t: number) => number>>  // frozen curve table (see below)
 lerp(a: number, b: number, t: number): number                  // linear interpolation a + (b − a) * t
 // EasingName = "linear" | "easeInQuad" | "easeOutQuad" | "easeInOutQuad" | "easeOutCubic" | "easeOutBack" | "easeOutElastic".
@@ -1694,6 +1786,7 @@ from<T>(target: T, props: NumericProperties<T>, opts?: TweenOptions): TweenHandl
 value(from: number, to: number, opts: ValueTweenOptions): TweenHandle;            // tween a bare scalar, driving opts.onUpdate(value) each frame (onUpdate REQUIRED — there is no target)
 killAll(): void;                                 // stop + drop every active tween (no onComplete; each done settles)
 count(): number;                                 // number of active tweens
+reset(): void;                                   // EDITOR DELTA: settle + drop every active tween (editor-runtime.stop() calls it on exit-play)
 readonly easing: Readonly<Record<EasingName, (t: number) => number>>;  // the frozen 7-curve table (parity with vfx)
 lerp(a: number, b: number, t: number): number;   // linear interpolation a + (b − a) * t (unclamped)
 
@@ -1734,7 +1827,12 @@ camera that `follow`s a moving target with per-frame exponential smoothing, pans
 or animated over time (the animated forms delegate to `app.tween`, so they are pause-safe for free),
 applies a decaying **screen shake** (also `app.tween`-driven), renders **parallax** across world-space
 **layer containers it owns**, and maps points between screen and world space. Depends on `renderer` +
-`scheduler` + `tween`. Emits no events. Headless-safe and pause-safe. No new package dependency.
+`scheduler` + `tween` + `input`. Emits no events. Headless-safe and pause-safe. No new package
+dependency. **Phase-1 F2** adds instant editor controls (`focus`/`zoomAt`/`panBy`), a `reset()` for
+editor exit-play, and an opt-in `editorControls` config field that registers an `"update"`-stage
+system reading `app.input.snapshot()` each frame (cursor-anchored wheel-zoom via `zoomAt`;
+middle-button/space drag-pan via `panBy`). The `input` edge stays **declared-but-inert** for any
+consumer that leaves `editorControls` at its default (`false`).
 
 **Design calls:** (1) **Transforms world-space LAYER containers it OWNS, NOT the renderer root stage** —
 a default `world` `Container` parented at stage index 0 (`stage.addChildAt(world, 0)`, below the ui
@@ -1776,6 +1874,12 @@ getRotation(): number;
 shake(intensity: number, duration: number, opts?: ShakeOptions): void; // additive screen shake decaying to 0 over duration s via app.tween; replaces any in-flight shake
 screenToWorld(point: Point): Point;                // map a screen point to world space (picking); pure, works before start
 worldToScreen(point: Point): Point;                // map a world point to screen space (place UI over a world object); pure
+reset(): void;                                     // EDITOR DELTA: recentre (0,0), zoom→config.zoom, rotation→0, clear follow, stop shake — editor-runtime.stop() calls it on exit-play
+
+// ── Editor controls (Phase-1 F2; instant, tween-free, valid before start — mutate only numeric state) ──
+focus(target: Point, opts?: { zoom?: number }): void;  // frame a world point: snap centre (+ optional clamped zoom); clears follow
+zoomAt(screen: Point, factor: number): void;           // cursor-anchored zoom: scale zoom by factor keeping the world point under `screen` fixed; clears follow
+panBy(dxScreen: number, dyScreen: number): void;       // free-pan by a screen-pixel delta (rotation-aware, ÷zoom); clears follow
 
 // MoveOptions = Pick<TweenOptions, "duration" | "easing" | "delay" | "onComplete" | "onUpdate">  (NO repeat/yoyo)
 // ShakeOptions = { easing?: Easing }  (the intensity → 0 decay curve, @default "linear")
@@ -1795,9 +1899,10 @@ const screen = app.camera.worldToScreen({ x: enemy.x, y: enemy.y }); // place a 
 
 **Config** (`pluginConfigs.camera`): `zoom` (@default 1), `minZoom` (@default 0.1), `maxZoom` (@default 10),
 `followLerp` (@default 0.15 — per-fixed-step smoothing in `[0,1]`; 1 = snap), `width` (@default 800),
-`height` (@default 600), `updateStage` (@default `"sync"`). `width`/`height` are a **reference viewport**
-(the renderer exposes no canvas dims via its API — the ui-plugin precedent) used for centering and the
-screen↔world math.
+`height` (@default 600), `updateStage` (@default `"sync"`), `editorControls` (@default `false` — when
+`true`, capture `app.input` and register the `"update"`-stage wheel-zoom/drag-pan system). `width`/`height`
+are a **reference viewport** (the renderer exposes no canvas dims via its API — the ui-plugin precedent)
+used for centering and the screen↔world math.
 
 **Apply semantics:** the `"sync"`-stage system, each frame, (1) eases the centre toward the follow target
 via `app.tween.lerp` (frame-rate-stable under the fixed timestep), (2) computes one random shake offset
@@ -1808,58 +1913,281 @@ early when headless (numeric state already updated), else (4) writes each layer 
 advances via its **tweens** (stepped by the tween plugin's own `"update"` system), so a paused loop freezes
 all camera motion for free.
 
-## 20. Editor subsystem — Layer-2 in-browser editor (#17–#24, additive)
+## 20. Editor subsystem — Layer-2 in-browser editor (11 plugins, additive)
 --------------------------------------------------------------------------------
 
-An in-browser, Unity-style editor over the LIVE ECS, added as 8 Layer-2 plugins registered after `mcp`
-(`editor-bridge` last). Design pillars: a **single validated write-authority** (`commands`), **poll-on-epoch**
-reactivity (no per-frame `emit`), a **two-`createApp` split** (the Layer-3 `@moku-labs/web` editor app is a
-separate `createApp` that consumes only `app["editor-bridge"]`), and **pay-for-what-you-use** (a non-editor
-game never calls these and `editor-runtime` never gates the scheduler until `enterEdit()`). Per-plugin READMEs
-under `src/plugins/<name>/README.md` remain the authoritative API detail; this consolidates the surface.
+An in-browser, Unity-2D-class editor over the LIVE ECS, added as **11 Layer-2 plugins** registered after
+`mcp` (`editor-bridge` last). Design pillars: a **single validated write-authority** (`commands`),
+**poll-on-epoch** reactivity (no per-frame `emit`), a **two-`createApp` split** (the Layer-3
+`@moku-labs/web` editor app under `editor/` consumes only `app["editor-bridge"]`), and
+**pay-for-what-you-use** (a non-editor game never calls these and `editor-runtime` never gates the
+scheduler until `enterEdit()`). Two members — `hierarchy` (scene graph) and `graphics-2d` (render
+components) — are **dual-use runtime capabilities**. Per-plugin READMEs under
+`src/plugins/<name>/README.md` remain the authoritative API detail; this consolidates the surface. The
+supporting extension deltas on already-built plugins are documented in §2.
 
-Extension deltas on already-built plugins (all additive, non-breaking):
-- **ecs** — `changeEpoch(): number` (monotone per-write counter, powering poll-on-epoch with NO emit) +
-  `setActiveStages(stages | undefined)` / `activeStages()` (the stage gate on `world.tick`; `undefined` = all).
-- **scheduler** — forwards `setActiveStages`/`activeStages` to the world (the edit-vs-play mechanism).
-- **assets** — `entries(): AssetEntry[]` / `manifest()` / `metadata(alias)` (read-only enumeration for the asset browser).
-- **tween** / **vfx** / **camera** — `reset()` (clear transient runtime; `editor-runtime.stop()` calls all three on exit-play).
+### commands (Standard, depends: ecs) — the single validated write-authority
 
-The 8 editor plugins:
-- **commands** (Standard, depends ecs) — the SINGLE validated write-authority; owns the branded, save-durable
-  `EditorId`. `apply(command): CommandResult` (returns the inverse), `applyRaw` (primitive editor-history wraps),
-  `restore(entities, "reload"|"exit-play")` (non-undoable reseed → emits `commands:restored`),
-  `resolve`/`editorIdOf` (validate-before-return recycled-id guard), `setValidator` (inject reflection.validate), `count`.
-  `Command` = a discriminated union addressed by component NAME (spawn/despawn/setField/addComponent/removeComponent).
-- **reflection** (Standard, depends ecs) — field-schema registry: `describe(name)` (registered schema, else inferred
-  from a live value by `typeof`, else `[]`), `register(name, schema)`, `validate(name, partial)` (pure — the function
-  `commands.setValidator` receives), `field.*` builders (number/boolean/string/color/select/vector2/readonly).
-- **serialization** (Complex, depends ecs/storage/commands/reflection) — scene (de)serializer keyed by `EditorId`.
-  `serialize()`/`deserialize()`, `save`/`load` (storage-backed JSON), `list`, `export`/`import`. Migrates via
-  `storage`'s Migration chain, validates via `reflection`, routes loads through `commands.restore`. Emits `serialization:loaded`.
-- **editor-selection** (Standard, depends ecs/renderer/camera/input) — viewport picking + selection. `enable`/`disable`
-  flip Pixi `eventMode` on ONE camera pick layer (zero cost outside edit mode); `pickAt(screen)` resolves the topmost
-  entity via a non-enumerable stamped handle; `select`/`toggle`/`clear`/`selected`/`isSelected`. Emits `editor-selection:changed`.
-- **editor-history** (Standard, depends commands) — undo/redo. `applyTracked` wraps `commands.applyRaw` synchronously +
-  records a bounded field-diff inverse; `undo`/`redo`; `beginGesture`/`endGesture` coalesce a drag into one entry; ring
-  buffer capped at `maxDepth`; clears on `commands:restored` (via hooks). `canUndo`/`canRedo` polled on `changeEpoch`.
-- **editor-gizmos** (Complex, depends renderer/camera/editor-selection/commands) — direct-manipulation translate gizmo
-  (a Pixi overlay OUTSIDE the ECS). Drag deltas recomputed via `camera.screenToWorld` EVERY event (anti-drift); commits
-  ≤2 `setField` on pointerup through `commands`, gesture-coalesced via an injected `setGestureSink`. MVP translate only.
-  `enable`/`disable`/`setMode`/`setSnap`/`mode`/`setGestureSink`.
-- **editor-runtime** (Complex, depends loop/scheduler/serialization/commands/tween/vfx/camera) — edit/play FSM via
-  scheduler stage-gating over ONE world. `enterEdit` gates gameplay off, `enterPlay` snapshots + un-gates + starts the
-  loop, `stop` restores the snapshot (`commands.restore`) THEN `reset()`s tween/vfx/camera THEN re-gates, `step` advances
-  one frame. Emits `editor-runtime:modeChanged`. Does NOT gate at boot (pay-for-what-you-use).
-- **editor-bridge** (Complex, depends all 9 editor seams + mcp; registered LAST) — the terminal facade, the one typed
-  seam the Layer-3 web editor consumes. `snapshot(): EditorSnapshot` is immutable + poll-on-epoch (epoch mirrors
-  `world.changeEpoch()`; entities memoized by epoch; selection/mode/canUndo/canRedo read fresh). Writes forward through
-  the authority (`apply`/`setField` → editor-history.applyTracked → commands.applyRaw); `select`/`clearSelection`/`undo`/
-  `redo`/`play`/`stop`/`step`/`save`/`load`/`describe` forward to the owning plugin. At onStart wires
-  `commands.setValidator(reflection.validate)` and probes `mcp` readiness (the `editor://schema` + `editor:apply` mirror is a fast-follow).
+```ts
+export type EditorId = number & { readonly __editorId: unique symbol }; // branded, save-durable; ≠ generational Entity
+export type Command =
+  | { kind: "spawn"; components: Readonly<Record<string, unknown>>; id?: EditorId }  // id only on an undo-inverse
+  | { kind: "despawn"; id: EditorId }
+  | { kind: "setField"; id: EditorId; component: string; field: string; value: unknown }
+  | { kind: "addComponent"; id: EditorId; component: string; value?: Readonly<Record<string, unknown>> }
+  | { kind: "removeComponent"; id: EditorId; component: string };
+export type CommandResult = { ok: true; inverse: Command } | { ok: false; error: string };
+export type RawResult    = { ok: true; id: EditorId } | { ok: false; error: string };
+export type RestoreSource = "reload" | "exit-play";
+export type Api = {
+  apply(command: Command): CommandResult;          // validate + apply, returns the INVERSE (one-shot revertable)
+  applyRaw(command: Command): RawResult;           // the primitive editor-history wraps (no inverse)
+  restore(entities: readonly RestoreEntity[], source: RestoreSource): void; // non-undoable bulk reseed → emits commands:restored
+  resolve(id: EditorId): Entity | undefined;       // validate-before-return against world.isAlive (prunes stale)
+  editorIdOf(entity: Entity): EditorId | undefined;
+  setValidator(validate: FieldValidator | undefined): void; // inject reflection.validate (the decoupling seam)
+  count(): number;                                 // live editor-owned entity count
+};
+// Config: maxIdWarn (@default 100000 — soft ceiling on live editor-owned entities; 0 disables).
+// Structural validation is in-plugin; an optional injected rich validator (setValidator) adds field checks.
+// Components are addressed by NAME (ties to reflection + serialization); values are plain data. Emits commands:restored.
+```
+
+### reflection (Standard, depends: ecs) — field-schema registry
+
+```ts
+export type FieldSpec =                            // what a field.* builder produces (8 kinds)
+  | { kind: "number"; min?: number; max?: number; step?: number; readonly?: boolean }
+  | { kind: "boolean"; readonly?: boolean } | { kind: "string"; readonly?: boolean }
+  | { kind: "color"; readonly?: boolean } | { kind: "select"; options: readonly string[]; readonly?: boolean }
+  | { kind: "vector2"; readonly?: boolean }
+  | { kind: "entity-ref"; readonly?: boolean }     // Phase-1: value is an EditorId | undefined — schema-only (NOT inferred)
+  | { kind: "asset-ref"; readonly?: boolean };     // Phase-1: value is an asset alias | undefined — schema-only (NOT inferred)
+export type FieldDescriptor = FieldSpec & { key: string; label: string };  // what describe() returns
+export type ValidationResult = { ok: true } | { ok: false; errors: readonly { key: string; message: string }[] };
+export type Api = {
+  describe(componentName: string): FieldDescriptor[]; // registered schema, else inferred from a live value by typeof, else []
+  register(componentName: string, schema: Schema): void; // typed field.* schema — SHADOWS inference for that name
+  validate(componentName: string, partial): ValidationResult; // pure — the function commands.setValidator receives
+  readonly field: FieldBuilders;                   // number/boolean/string/color/select/vector2/entityRef/assetRef/readonly
+};
+// field is also re-exported standalone from the framework entry for module-scope authoring.
+// Config: humanizeLabels (@default true — label = Title Case of key; false = raw key). entity-ref/asset-ref are
+// schema-only because a bare number/string is ambiguous between a plain value and a reference.
+```
+
+### component-registry (Standard, depends: none) — the enumerable Add-Component catalog
+
+```ts
+export type ComponentCategory = "Transform" | "Rendering" | "Physics" | "Animation" | "Audio" | "Scripts";
+export type ComponentCatalogEntry = {
+  readonly name: string;                           // matches the world/reflection registered name
+  readonly category: ComponentCategory;            // the picker section
+  readonly defaults: Readonly<Record<string, unknown>>; // merged by editor-bridge.addComponent into the command value
+  readonly addable: boolean;                       // false for Transform (implicit on every object)
+};
+export type Api = {
+  register(entry: ComponentCatalogEntry): void;    // idempotent by name (last-write wins, warns on replace); insertion order preserved
+  list(): readonly ComponentCatalogEntry[];        // all entries in registration order
+  byCategory(): ReadonlyMap<ComponentCategory, readonly ComponentCatalogEntry[]>; // keyed by EVERY category (empty ones present)
+  get(name: string): ComponentCatalogEntry | undefined;
+  has(name: string): boolean;
+};
+// Pure data — no world/Pixi/reflection imports leak in. No config, no events, no lifecycle. Domain plugins
+// (graphics-2d) register their addable components at onStart; editor-bridge lists them (enriched with field schemas).
+```
+
+### hierarchy (Complex, depends: ecs, renderer, commands, reflection) — the scene-graph layer
+
+```ts
+export type NodeValue = {                          // hierarchy as an ORDINARY component (rides serialization flat)
+  parent: EditorId | undefined;                    // undefined = scene root
+  order: number;                                   // fractional sibling sort-key
+  name: string;                                    // display name
+  enabled: boolean;                                // disabled hides the view + (via effectiveEnabled) its subtree
+};
+export type Api = {
+  readonly Node: Component<NodeValue>;             // defined at onStart; getter THROWS before start (the renderer.Transform precedent)
+  worldOf(entity: Entity): TransformValue;         // local Transform composed up the parent chain; root-heals a dangling parent at read time
+  parentOf(entity: Entity): EditorId | undefined;
+  childrenOf(id: EditorId): readonly EditorId[];   // direct children, ordered by Node.order
+  roots(): readonly EditorId[];                    // top-level (parent === undefined) nodes, ordered
+  depth(entity: Entity): number;                   // 0 for a root; capped at maxDepth
+  canReparent(childId: EditorId, newParentId: EditorId | undefined): boolean; // false on a cycle or a maxDepth overflow
+  computeLocalForPreserveWorld(childId, newParentId): TransformValue; // local Transform to keep the WORLD transform unchanged
+  orderBetween(parentId, before, after): number;   // a fractional Node.order between two siblings
+};
+// Config: maxDepth (@default 64 — bounds worldOf recursion + the canReparent depth ceiling).
+// onStart defines the Node token, self-registers the Node reflection schema, registers a "sync"-stage
+// world-transform system, and injects renderer.setWorldTransformResolver(e => worldOf(e)). Reparent is a
+// setField burst (composed by editor-bridge), NOT a new Command kind — so serialization is unchanged. Emits nothing.
+```
+
+### graphics-2d (Standard, depends: ecs, renderer, reflection, component-registry, assets) — 2D render-component library
+
+```ts
+export type SpriteRendererValue = {                // a textured sprite built from assets.get(sprite)
+  sprite: string;                                  // asset alias (empty → placeholder)
+  tint: string;                                    // "#rrggbb" (#ffffff = untinted)
+  flipX: boolean; sortingLayer: string; orderInLayer: number; // z-order authored/serialized (application deferred to P1b)
+};
+export type ShapeValue = {                          // a vector primitive via renderer.attachPrimitive
+  kind: "rect" | "circle"; width: number; height: number; radius: number;
+  fill: string; stroke: string; strokeWidth: number; // "#rrggbb" colors
+};
+export type Api = {
+  readonly SpriteRenderer: Component<SpriteRendererValue>; // defined at onStart; getter THROWS before start
+  readonly Shape: Component<ShapeValue>;                    // defined at onStart; getter THROWS before start
+};
+// "The component IS the renderable." onStart defines both components, registers their reflection schemas +
+// component-registry catalog entries (SpriteRenderer + Shape under "Rendering", both addable; Transform under
+// its own section, non-addable), runs a changeEpoch-gated "sync"-stage reconciler that (re)builds/updates/disposes
+// Pixi views via the renderer's PUBLIC API (attachPrimitive/attachSprite/detach/markDirty — a value-signature
+// diff triggers a rebuild), and injects an assets→renderer texture resolver. NO pixi.js import; no onStop
+// (views are renderer-owned scene data); emits no events. Config is intentionally empty.
+```
+
+### serialization (Complex, depends: ecs, storage, commands, reflection) — scene (de)serializer
+
+```ts
+export type SceneEntity = { id: EditorId; components: Record<string, unknown> }; // NAMED components as plain data
+export type SceneDocument = { version: number; name: string; entities: SceneEntity[] }; // stays FLAT — NO parent field
+export type Api = {
+  serialize(): SceneDocument;                      // walk editor-owned entities, capture named components, keyed by EditorId
+  deserialize(doc: SceneDocument): void;           // migrate → validate (reflection) → commands.restore atomically → emit serialization:loaded
+  save(name: string): boolean;                     // serialize + persist under `${storageKeyPrefix}${name}` via storage
+  load(name: string): boolean;                     // load + deserialize; false if absent
+  list(): string[];                                // saved scene names in this prefix
+  export(): string;                                // serialize to a JSON string (clipboard / file / AI hand-off)
+  import(json: string): void;                      // parse + deserialize (migrate + validate + restore)
+};
+// Config: storageKeyPrefix (@default "scene:"), version (@default 2), migrations (@default { 2: identityMigration }).
+// The SceneDocument stays FLAT: the hierarchy Node rides inside each entity's `components` as an ordinary named
+// entry, so the scene graph needs no document-shape change. v1→v2 is an IDENTITY migration (a version-stamp
+// passthrough — a v1 document is already valid at v2). SceneEntity is structurally compatible with commands'
+// RestoreEntity, so deserialize passes doc.entities straight to commands.restore with no adapter. Emits serialization:loaded.
+```
+
+### editor-selection (Standard, depends: ecs, renderer, camera, input) — viewport picking + selection + marquee
+
+```ts
+export type Rect = { x: number; y: number; width: number; height: number }; // world-space AABB
+export type Api = {
+  enable(): void; disable(): void;                 // flip Pixi eventMode on ONE camera pick layer; wire/hide the marquee overlay
+  select(entity: Entity): void;                    // replace (single-select) or add (multiSelect); ignores despawned
+  toggle(entity: Entity): void;                    // the Ctrl/Cmd-click path
+  clear(): void;
+  selected(): readonly Entity[];                   // a fresh pruned copy (never the live Set)
+  isSelected(entity: Entity): boolean;
+  pickAt(screen: Point): Entity | undefined;       // topmost entity via a non-enumerable stamped handle
+  selectInRect(rect: Rect): void;                  // select every stamped, alive entity whose WORLD bounds intersect rect (additive under multiSelect)
+};
+// Config: pickLayer (@default "world"), multiSelect (@default false — the editor app sets true; framework default keeps
+// non-editor single-select), marquee (@default true — a primary drag on empty space draws a dashed screen-space rect
+// and unions its world-bounds hits on release). Emits editor-selection:changed ONLY on a real change. Headless-safe.
+```
+
+### editor-history (Standard, depends: commands) — undo/redo authority
+
+```ts
+export type Api = {
+  applyTracked(command: Command): CommandResult;   // wrap commands.applyRaw synchronously + record a bounded field-diff inverse (or buffer into an open gesture)
+  undo(): boolean; redo(): boolean;                // replay inverses/forwards via commands.applyRaw
+  canUndo(): boolean; canRedo(): boolean;          // poll on the ecs changeEpoch
+  beginGesture(): void; endGesture(): void;        // coalesce a drag burst into ONE undo entry
+  clear(): void;                                   // empty both stacks (also called on commands:restored, via hooks)
+};
+// Config: maxDepth (@default 100 — ring-buffer cap; oldest step evicted past it; < 1 treated as 1). Emits nothing.
+```
+
+### editor-gizmos (Complex, depends: renderer, camera, editor-selection, commands) — direct-manipulation gizmo
+
+```ts
+export type GizmoMode = "translate" | "rotate" | "scale" | "rect"; // rect = scale-on-bounds in P1
+export type GizmoSpace = "local" | "global";       // scale axis frame (rotate: no-op in 2D; local-under-rotation approximated)
+export type GizmoPivot = "pivot" | "center";        // drag anchor: entity origin vs world-space bounds centre
+export type Api = {
+  enable(): void; disable(): void;                 // show/hide the overlay + respond to pointer drags (abort in-flight WITHOUT committing)
+  setMode(mode: GizmoMode): void; mode(): GizmoMode; // rotate/scale/rect warn+no-op while translateOnly
+  setSnap(n: number): void;                        // mode-interpreted: world units / scale factor / radians (0 = off)
+  setSpace(space: GizmoSpace): void; space(): GizmoSpace;
+  setPivot(pivot: GizmoPivot): void; pivot(): GizmoPivot;
+  setGestureSink(sink: GestureSink | undefined): void; // injected editor-history {begin, applyTracked, end}
+};
+// Config: overlayLayer (@default "editor-gizmos"), snap (@default 0), translateOnly (@default true — the editor app
+// sets false to enable rotate/scale/rect). A Pixi overlay OUTSIDE the ECS; drag deltas recomputed via
+// camera.screenToWorld EVERY event (anti-drift); commits setField on pointerup through commands, gesture-coalesced
+// via the injected sink (undefined → straight through commands.apply, no undo). Headless-safe. Emits nothing.
+```
+
+### editor-runtime (Complex, depends: loop, scheduler, serialization, commands, tween, vfx, camera) — edit/play FSM
+
+```ts
+export type Mode = "edit" | "play";
+export type Api = {
+  enterEdit(): void;                               // gate the scheduler to config.editStages (update/physics OFF)
+  enterPlay(): void;                               // snapshot (serialize) + un-gate (setActiveStages undefined) + loop.start
+  stop(): void;                                    // restore the snapshot (commands.restore) THEN reset() tween/vfx/camera THEN re-gate
+  step(): TimeStepResult;                          // advance one fixed step + render (delegates to loop.step)
+  mode(): Mode; isPlaying(): boolean;
+};
+// Config: editStages (@default ["input", "sync", "render"] — gameplay update/physics gated OFF in edit mode).
+// Does NOT gate at boot (pay-for-what-you-use). Emits editor-runtime:modeChanged only on an actual flip.
+```
+
+### editor-bridge (Complex, depends: ecs, reflection, commands, hierarchy, component-registry, editor-selection, editor-gizmos, editor-history, editor-runtime, serialization, mcp; registered LAST) — the terminal facade
+
+```ts
+export type ComponentSnapshot = { readonly name: string; readonly value: unknown; readonly fields: readonly FieldDescriptor[] }; // never "Node"
+export type EntitySnapshot = {                     // FLAT node carrying Node-derived identity + refs
+  readonly id: EditorId; readonly name: string; readonly enabled: boolean;
+  readonly parent: EditorId | undefined; readonly children: readonly EditorId[];
+  readonly components: readonly ComponentSnapshot[]; // Node filtered out — lifted to the entity level
+};
+export type EditorSnapshot = {                      // immutable, poll-on-epoch, HIERARCHICAL
+  readonly epoch: number;                          // mirrors world.changeEpoch() — the panels' re-render gate
+  readonly entities: readonly EntitySnapshot[];    // FLAT (nesting re-derived from parent/children/roots — @headless-tree model)
+  readonly roots: readonly EditorId[];
+  readonly selection: readonly EditorId[]; readonly mode: "edit" | "play";
+  readonly canUndo: boolean; readonly canRedo: boolean;
+};
+export type Api = {
+  snapshot(): EditorSnapshot;                       // structural tree memoized by epoch; scalars read fresh
+  // generic write funnel (undo-tracked: editor-history.applyTracked → commands.applyRaw):
+  apply(command: Command): CommandResult;
+  setField(id: EditorId, component: string, field: string, value: unknown): CommandResult;
+  // authoring verbs (each ONE atomic undo step; compounds are gesture-bracketed bursts, no new command kind):
+  create(opts?): EditorId; createShape(kind: "rect" | "circle", opts?): EditorId; createSprite(alias: string, opts?): EditorId;
+  delete(...ids: EditorId[]): void;                // cascade descendants, deepest-first; ONE undo entry
+  duplicate(...ids: EditorId[]): readonly EditorId[]; // subtree-aware clone; ONE undo entry; selects the clones
+  reparent(id, newParent: EditorId | undefined, opts?): CommandResult; // preserve-world local Transform + Node.parent + Node.order burst
+  reorder(id, before, after): void; rename(id, name: string): void; setEnabled(id, enabled: boolean): void;
+  addComponent(id, component: string): CommandResult; removeComponent(id, component: string): CommandResult;
+  listComponents(): readonly ComponentCatalogEntryWithFields[]; // the Add-Component catalog enriched with field schemas
+  // selection / history / runtime / persistence / schema (forward to the owning plugin):
+  select(...ids: EditorId[]): void; clearSelection(): void; undo(): void; redo(): void;
+  play(): void; stop(): void; step(): void; save(name: string): boolean; load(name: string): boolean;
+  describe(componentName: string): FieldDescriptor[];
+};
+// Config: empty (a pure aggregation + forwarding + orchestration facade). At onStart wires
+// commands.setValidator(reflection.validate) + the editor-gizmos gesture sink, and probes mcp readiness (the
+// editor://schema + editor:apply mirror is a fast-follow). Holds no dep references — every call resolves via
+// ctx.require at call time. Emits nothing; listens to nothing (pull-facade — poll-on-epoch).
+```
 
 Editor events (all coarse, user-gesture frequency — never per-frame): `commands:restored { source }`,
-`serialization:loaded { name, entityCount }`, `editor-selection:changed { selected }`, `editor-runtime:modeChanged { mode }`.
+`serialization:loaded { name, entityCount }`, `editor-selection:changed { selected }`,
+`editor-runtime:modeChanged { mode }`.
+
+```ts
+// A Layer-3 web shell drives the editor entirely through app["editor-bridge"]:
+const bridge = gameApp["editor-bridge"];
+const id = bridge.createShape("rect", { name: "Wall", transform: { x: 100, y: 80 } }); // one undo step
+bridge.setField(id, "Shape", "fill", "#3366ff");     // undo-tracked field edit
+bridge.reparent(id, parentId);                        // preserve-world burst; ONE undo entry
+const snap = bridge.snapshot();                       // poll-on-epoch: re-render panels only when snap.epoch changes
+bridge.play(); bridge.step(); bridge.stop();          // edit/play FSM (stop reverts to the pre-play snapshot)
+```
 
 --------------------------------------------------------------------------------
 --------------------------------------------------------------------------------
@@ -1867,9 +2195,9 @@ Editor events (all coarse, user-gesture frequency — never per-frame): `command
 --------------------------------------------------------------------------------
 
 ```ts
-import { createApp } from "game";
+import { createApp } from "@nosafesky/ludemic";
 import { Container } from "pixi.js";
-import { Time } from "game"; // or "../loop/resources" — the well-known Time token
+import { Time } from "@nosafesky/ludemic"; // or "../loop/resources" — the well-known Time token
 
 const app = createApp({
   pluginConfigs: {
@@ -1932,7 +2260,7 @@ await app.stop();   // destroys the Pixi Application (frees VRAM), removes liste
 **Listening for `game:reset`** (a consumer plugin re-initializing after an agent hard reset):
 
 ```ts
-import { createPlugin, mcpPlugin } from "game";
+import { createPlugin, mcpPlugin } from "@nosafesky/ludemic";
 
 const reinit = createPlugin("reinit", {
   depends: [mcpPlugin],
@@ -1963,6 +2291,15 @@ const reinit = createPlugin("reinit", {
   tool does).
 - **React to milestones:** subscribe to `assets:loaded` / `scene:loaded` (framework) or `game:reset`
   (mcp) from a consumer plugin's `hooks` map.
+- **Author with render components:** add `graphics-2d`'s `SpriteRenderer` / `Shape` to an entity with a
+  `renderer.Transform` (and optionally a `hierarchy.Node`) — the `graphics-2d` sync reconciler builds
+  and positions the Pixi view. "The component IS the renderable."
+- **Register an addable component:** call `app["component-registry"].register({ name, category,
+  defaults, addable: true })` at your plugin's `onStart` so it appears in the editor's Add-Component
+  picker (and, with a `reflection.register` schema, lays out correctly in the inspector).
+- **Drive the editor:** the Layer-3 web shell consumes exactly one seam — `app["editor-bridge"]` —
+  reading `snapshot()` poll-on-epoch and calling its authoring verbs / `play`/`stop`/`step` /
+  `save`/`load`. Never `createCore`/`createCoreConfig` from an editor panel.
 - **Headless / agent-only host:** force `renderer: { headless: true }` (auto-detected under Node/Bun)
   to boot without a GPU; `loop.step()` still advances `Time` deterministically and returns its
   snapshot.
@@ -2013,6 +2350,7 @@ Scripts (package.json, run with `bun`):
 
 ```
 bun run build              # tsdown
+bun run typecheck          # tsc --noEmit
 bun run lint               # biome check . && eslint .
 bun run lint:fix           # biome check --write . && eslint --fix .
 bun run format             # biome format --write .
@@ -2023,19 +2361,20 @@ bun run test:coverage      # vitest run --project unit --project integration --c
 ```
 
 Requirements: Node `>= 24`, Bun `>= 1.3.14` (bun exclusively). TypeScript strict +
-`exactOptionalPropertyTypes` + `noUncheckedIndexedAccess`. Dependencies: `@moku-labs/core`,
-`@moku-labs/common`, `pixi.js@^8`; mcp adds `@modelcontextprotocol/sdk`, `hono`, `zod`. Composable
-with `@moku-labs/web`.
+`exactOptionalPropertyTypes` + `noUncheckedIndexedAccess`. Dependencies: `@moku-labs/core` (1.5.0),
+`@moku-labs/common` (0.3.0), `pixi.js@^8`; mcp adds `@modelcontextprotocol/sdk`, `hono`, `zod`.
+Composable with `@moku-labs/web`.
 
 Layout:
 
 ```
 src/config.ts              # Layer 1 — createCoreConfig, Config = {}, Events, createPlugin/createCore
-src/index.ts               # Layer 2 — createCore(24 plugins: 16 runtime + 8 editor); exports createApp/createPlugin (+ createCore/createCoreConfig)
+src/index.ts               # Layer 2 — createCore(27 plugins: 16 runtime + 11 editor); exports createApp/createPlugin (+ createCore/createCoreConfig + field)
 src/plugins/index.ts       # plugin barrel (instances + Ecs/Scheduler/Context/... type namespaces)
 src/plugins/<name>/        # api.ts, types.ts, index.ts, lifecycle.ts / resources.ts / primitives.ts (where applicable), README.md, __tests__/
+editor/                    # Layer-3 @moku-labs/web (Preact) editor app consuming app["editor-bridge"] (a separate createApp)
 tests/                     # framework-level unit + integration tests
-.planning/specs/           # design specs (intent)
+.planning/                 # design specs (intent)
 ```
 
 License: MIT © moku-labs.

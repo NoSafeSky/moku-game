@@ -121,7 +121,11 @@ export const menuBar = createIsland("menu-bar", {
     const closeMenu = (): void => {
       dropdown?.remove();
       dropdown = undefined;
-      if (openName) host.querySelector(`[data-menu="${openName}"]`)?.removeAttribute("data-open");
+      if (openName) {
+        const trigger = host.querySelector(`[data-menu="${openName}"]`);
+        trigger?.removeAttribute("data-open");
+        trigger?.setAttribute("aria-expanded", "false");
+      }
       openName = undefined;
     };
 
@@ -157,6 +161,7 @@ export const menuBar = createIsland("menu-bar", {
       const button = host.querySelector<HTMLElement>(`[data-menu="${name}"]`);
       if (!button || (button as HTMLButtonElement).disabled) return;
       button.dataset.open = "";
+      button.setAttribute("aria-expanded", "true");
 
       const menu = document.createElement("div");
       menu.dataset.dropdown = "";

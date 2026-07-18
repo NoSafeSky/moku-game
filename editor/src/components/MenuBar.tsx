@@ -8,6 +8,8 @@ function Menu({ label, disabled }: { label: string; disabled?: boolean }) {
       data-menu={label.toLowerCase()}
       title={label}
       disabled={disabled === true}
+      aria-haspopup="true"
+      aria-expanded="false"
     >
       {label}
     </button>

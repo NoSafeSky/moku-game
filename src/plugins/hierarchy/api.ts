@@ -172,14 +172,20 @@ export function createApi(ctx: HierarchyApiContext): Api {
 
     const nodeToken = getNodeToken();
     const buckets = new Map<EditorId | undefined, Array<{ id: EditorId; order: number }>>();
-    world.query(nodeToken).updateEach((values, entity) => {
-      const [node] = values;
+    // Read-only scan: iterate the query (the `Symbol.iterator` read path — NO epoch bump) and read
+    // each Node via `get`. `updateEach` MUST NOT be used here: it is the value-mutation path and bumps
+    // `changeEpoch` on every call. Because the editor-bridge polls `snapshot()` (→ `roots`/`childrenOf`
+    // → this memo) once per frame, an `updateEach` here churns the epoch continuously and defeats the
+    // poll-on-epoch gate (the whole editor re-renders every frame). A sibling-order READ never mutates.
+    for (const entity of world.query(nodeToken)) {
+      const node = world.get(entity, nodeToken);
+      if (!node) continue;
       const id = commands.editorIdOf(entity);
-      if (id === undefined) return;
+      if (id === undefined) continue;
       const bucket = buckets.get(node.parent) ?? [];
       bucket.push({ id, order: node.order });
       buckets.set(node.parent, bucket);
-    });
+    }
 
     const index = new Map<EditorId | undefined, readonly EditorId[]>();
     for (const [parent, entries] of buckets) {

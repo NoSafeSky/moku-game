@@ -1,482 +1,260 @@
-# game
+# @nosafesky/ludemic
 
-> An ECS game framework for Moku — Spark-style public API and memory layout, PixiJS v8 rendering, built on @moku-labs/core, composable with @moku-labs/web, with a first-class MCP plugin exposing the live runtime to agent clients.
+> An ECS game framework for Moku — Spark-style public API and memory layout, PixiJS v8 rendering, built on @moku-labs/core, composable with @moku-labs/web, with a first-class MCP plugin exposing the live runtime to agents AND an additive Layer-2 in-browser editor.
 
-`game` is a typed Entity-Component-System runtime composed of twenty-four plugins (sixteen runtime plugins + an additive 8-plugin Layer-2 in-browser editor subsystem, #17–#24). It is unpublished
-(version 0.0.0) and not a game engine UI or editor — it owns the data model (archetype object-SoA
-storage), the fixed-timestep frame, and the GPU lifecycle; you write components and systems in
-TypeScript. Hot-path frame work bypasses the Moku kernel for performance and is NOT emitted as
-kernel events. Systems reach shared services (assets, logging, frame time) through a typed world
-**resource registry** — the system signature stays `(world, dt)`.
+`@nosafesky/ludemic` (version 0.3.0, repo NoSafeSky/moku-game) is a typed Entity-Component-System
+runtime composed of twenty-seven plugins: sixteen runtime plugins + an eleven-plugin Layer-2
+in-browser editor subsystem (registered after `mcp`; two of them — `hierarchy` and `graphics-2d` —
+are dual-use runtime capabilities). It is not a game engine UI — it owns the data model (archetype
+object-SoA storage), the fixed-timestep frame, and the GPU lifecycle; you write components and
+systems in TypeScript. Hot-path frame work bypasses the Moku kernel and is NOT emitted as kernel
+events. Systems reach shared services (assets, logging, frame time) through a typed world **resource
+registry** — the system signature stays `(world, dt)`. The editor is **poll-on-epoch** and
+**pay-for-what-you-use**: a non-editor game never touches it.
 
 ## Core Concepts
 
 - **Three-layer Moku model.** `createCoreConfig` (Layer 1: config + events) → `createCore`
-  (Layer 2: framework + the 24 built-in plugins) → `createApp({ pluginConfigs })` (Layer 3: your
-  app). Consumers import `createApp` / `createPlugin` from `game` and never import
+  (Layer 2: framework + the 27 built-in plugins) → `createApp({ pluginConfigs })` (Layer 3: your
+  app). Consumers import `createApp` / `createPlugin` from `@nosafesky/ludemic` and never import
   `@moku-labs/core` directly. `createApp(...)` returns an App synchronously; `await app.start()`
   boots the Pixi Application and registers DOM listeners. Each plugin's API is reached as
-  `app.<plugin>.<method>()` (e.g. `app.ecs`, `app.scheduler`, `app.renderer`, `app.context`).
-  **Advanced / headless escape hatches** (also exported from `game`): `createCore(carrier, { plugins })`
-  assembles a custom core from a plugin subset (carrier is type-only — pass `{ createPlugin }` or
-  `coreConfig`); `createCoreConfig(name, { config, plugins })` (re-exported from `@moku-labs/core`)
-  builds a bespoke Layer-1 config with its own `Config`/`Events`/core-plugin set. `createApp` stays
-  the default — these are for tooling, tests, and agent-only hosts.
+  `app.<plugin>.<method>()` (bracket form for hyphenated names, e.g. `app["editor-bridge"]`).
+  **Advanced / headless escape hatches** (also exported): `createCore(carrier, { plugins })` assembles
+  a custom core from a plugin subset (carrier type-only); `createCoreConfig(name, { config, plugins })`
+  (re-exported from `@moku-labs/core`) builds a bespoke Layer-1 config. `createApp` stays the default.
 - **Config composition.** The framework defines no global config fields (`Config = {}`). All
   configuration is per-plugin via `createApp({ pluginConfigs: { <plugin>: { ... } } })`. Core
   plugins `logPlugin` + `envPlugin` from `@moku-labs/common` are registered in `config.ts`, so
   `ctx.log` and `ctx.env` are on every plugin context.
 - **ECS data model.** `app.ecs` returns the `World` facade directly (no wrapper). Components are
   registered with `defineComponent(create, opts?)` and are themselves callable: `Position({x,y})`
-  produces a `ComponentInit` spawn payload. `opts.name` makes a component discoverable by name via
-  the introspection facet. Storage is archetype object-SoA by default (`"archetype"`) with a
-  per-component `"sparse"` opt-out for high-churn tags. `Entity` is a generational handle
-  (`(generation << 16) | index`), so stale handles are detectably dead via `isAlive`. Typed
-  variadic `query(...)` covers arities 1–8. Structural mutations during iteration go through a
-  deferred command buffer flushed at each stage boundary.
-- **ECS introspection facet (read-only, for tooling such as mcp).** `liveEntities()`,
-  `entityCount()`, `componentNames()`, `componentsOf(entity)`, and `componentByName(name)` expose
-  the live world without touching layout. `componentByName` resolves a component registered with
-  `opts.name` to its callable token (widened to `Component<Record<string, unknown>>` so callers
-  pass partial values without per-component generics); `undefined` for unknown/anonymous names,
-  first-wins on duplicate names.
-- **World resources (first-class systems access).** The world owns a typed singleton registry —
-  `Resource<T>` tokens identify shared services/state systems read through the `world` argument
-  with no closure capture. `defineResource(create?)` mints an auto-keyed (`"res:N"`) token and
-  registers an optional lazy factory; `setResource`/`getResource`/`resource`/`hasResource`/
-  `removeResource` read and write. `resource(token)` asserts presence (THROWS an actionable error
-  if unset with no factory); `getResource(token)` returns `T | undefined`. Resource ops are
-  **immediate** — they bypass the command buffer even mid-iteration, and are NOT counted by
-  `maxStructuralOpsWarn`. Framework well-known resources are wired at `app.start()`: `Assets` +
-  `GameContext` (context plugin), `Time` (loop plugin).
+  produces a `ComponentInit`. `opts.name` makes a component discoverable by name. Storage is
+  archetype object-SoA by default with a per-component `"sparse"` opt-out. `Entity` is a generational
+  handle (`(generation << 16) | index`), detectably dead via `isAlive`. Typed variadic `query(...)`
+  covers arities 1–8. Structural mutations during iteration go through a deferred command buffer
+  flushed at each stage boundary. `changeEpoch()` is a monotone per-write counter powering the
+  editor's poll-on-epoch reads with no `emit`.
+- **ECS introspection facet (read-only).** `liveEntities()`, `entityCount()`, `componentNames()`,
+  `componentsOf(entity)`, and `componentByName(name)` expose the live world for tooling (the `mcp`
+  plugin, the editor). `componentByName` resolves a named component to its callable token (widened to
+  `Component<Record<string, unknown>>`); `undefined` for unknown/anonymous, first-wins on duplicates.
+- **World resources (first-class systems access).** A typed singleton registry —
+  `defineResource(create?)` mints a `Resource<T>` token; `setResource`/`getResource`/`resource`/
+  `hasResource`/`removeResource` read and write. `resource(token)` asserts presence (THROWS if unset
+  with no factory); `getResource` returns `T | undefined`. Resource ops are **immediate** — never
+  command-buffered, not counted by `maxStructuralOpsWarn`. Well-known resources wired at `app.start()`:
+  `Assets` + `GameContext` (context), `Time` (loop).
 - **Fixed-timestep loop.** The `loop` plugin owns the frame: a `requestAnimationFrame` loop with a
-  fixed-timestep accumulator. Each frame it clamps the real delta (`maxFrameDelta`), runs
-  `scheduler.tick(fixedDt)` zero-or-more times (capped at `maxStepsPerFrame`), then calls
-  `renderer.render()` once. `step()` advances exactly one deterministic tick + render and now
-  RETURNS a `TimeStepResult` (`{ frame, elapsed, dt }`) snapshot of the just-advanced clock
-  (`{ 0, 0, 0 }` before start / after stop; widening from `void` is non-breaking). Each fixed step
-  it updates the `Time` world resource in place (`{ dt, elapsed, frame }`, seconds; no per-step
-  allocation).
+  fixed-timestep accumulator. Each frame it clamps the real delta, runs `scheduler.tick(fixedDt)`
+  zero-or-more times (capped at `maxStepsPerFrame`), then calls `renderer.render()` once. `step()`
+  advances one deterministic tick + render and returns a `TimeStepResult` (`{ frame, elapsed, dt }`;
+  `{ 0,0,0 }` before start / after stop). Each fixed step it mutates the `Time` resource in place.
 - **Scheduler stages.** Five fixed, ordered stages: `input → update → physics → sync → render`.
-  Systems are `(world, dt) => void`. The command buffer is flushed between stages. `scheduler` is a
-  thin facade that forwards to `world.addSystem` / `world.tick`.
+  Systems are `(world, dt) => void`. The command buffer flushes between stages. `scheduler` forwards
+  to `world.addSystem`/`world.tick` and exposes the stage gate (`setActiveStages`/`activeStages`,
+  `undefined` = all) that `editor-runtime` drives for edit-vs-play.
 - **Polled input + injection.** DOM listeners mutate a live resource; an `"input"`-stage system
-  freezes it into an immutable `InputSnapshot` per frame. Programmatic `keyDown`/`keyUp`/`keyPress`
-  inject keys (for agents/tests); each normalizes a small alias set first — `"Space"`/`"Spacebar"`
-  → `" "`, `"Esc"` → `"Escape"`, all other keys pass through — so the snapshot observes the
-  canonical `KeyboardEvent.key`.
-- **MCP runtime exposure.** The `mcp` plugin attaches a Model Context Protocol server exposing
-  read-only + mutating tools and JSON resources (15 tools total). The transport default is
-  **environment-aware**: `["stdio"]` under Node/Bun, `["inMemory"]` in a browser (an in-page
-  `InMemoryTransport` pair, no socket — reach the client side via `app.mcp.clientTransport()`);
-  Streamable HTTP is opt-in. The stdio transport is guarded on `process?.stdin` so a browser
-  default never crashes. Mutating tools enqueue closures drained on the next `"input"` stage tick
-  (frame-safe). Mutations are honest: unknown component/scene names, dead entities, and headless
-  renderers return MCP `isError` / `{ changed: false }` rather than optimistic success.
-- **Headless renderer.** `renderer.headless` (auto-detected: `true` when `typeof document ===
-  "undefined"`, explicitly overridable) skips Pixi/GPU entirely in `onStart` — no `Application` is
-  created, `state.app` stays `undefined`, `render()`/`getView()`/`getStage()`/`screenshot()`/
-  `tree()`/`attachPrimitive()` become safe no-ops/`undefined`/`false` — but `Transform` is still
-  defined and the `sync` system still registered, so ECS/scene code is identical headless or not.
+  freezes it into an immutable `InputSnapshot` per frame (keys, pointer, and accumulated `wheel`
+  delta). `keyDown`/`keyUp`/`keyPress` inject keys with a small alias normalization (`"Space"` →
+  `" "`, `"Esc"` → `"Escape"`).
+- **MCP runtime exposure.** The `mcp` plugin attaches a Model Context Protocol server (15 tools).
+  Transport default is **environment-aware**: `["stdio"]` under Node/Bun, `["inMemory"]` in a browser
+  (reach the client via `app.mcp.clientTransport()`); Streamable HTTP is opt-in. Mutating tools return
+  MCP `isError` / `{ changed: false }` on unknown names, dead entities, and headless renderers.
+- **Headless renderer.** `renderer.headless` (auto-detected when `typeof document === "undefined"`,
+  overridable) skips Pixi/GPU in `onStart` while still defining `Transform` and running `sync`, so
+  ECS/scene code is identical headless or not.
+- **In-browser editor (Layer-2, additive).** Single validated write-authority (`commands` + branded
+  `EditorId`), poll-on-epoch reactivity, a two-`createApp` split (the Layer-3 web shell in `editor/`
+  consumes exactly one seam, `app["editor-bridge"]`), and pay-for-what-you-use gating. `SceneDocument`
+  stays FLAT — the scene graph rides as each entity's ordinary `Node` component.
 
 ## Quick Reference
 
 ```ts
-import { createApp, createPlugin } from "game";
+import { createApp, createPlugin } from "@nosafesky/ludemic";
 
 const app = createApp({
   pluginConfigs: {
     ecs:       { initialCapacity: 1024, maxStructuralOpsWarn: 0 },
     scheduler: { strictStages: true },
     renderer:  { width: 800, height: 600, background: 0x000000, antialias: true, mount: "#game" },
-    input:     { target: "window", keyboard: true, pointer: true, preventDefault: false },
+    input:     { target: "window", keyboard: true, pointer: true, wheel: true, preventDefault: false },
     loop:      { fixedDt: 1 / 60, maxFrameDelta: 0.25, maxStepsPerFrame: 5, autoStart: true },
     assets:    { basePath: "assets/", manifest: { ship: "sprites/ship.png" }, throwOnError: true },
     context:   { bindGameContext: true },
     scene:     { despawnOnUnload: true },
-    mcp:       { transports: ["stdio"], httpPort: 3333, httpAuth: "none", enableMutations: true }
+    camera:    { editorControls: true },              // opt-in wheel-zoom + drag-pan
+    mcp:       { transports: ["stdio"], httpPort: 3333, enableMutations: true }
   }
 });
-await app.start();          // async — boots Pixi Application, attaches DOM listeners, binds resources
+await app.start();          // async — boots Pixi, attaches DOM listeners, binds resources
 // ... use the app ...
 await app.stop();           // tears down GPU + listeners
 ```
 
-### app.ecs — the World facade (Complex)
+## Editor extension deltas (additive, non-breaking)
 
-```ts
-defineComponent<T>(create: () => T, opts?: { storage?: "archetype" | "sparse"; name?: string }): Component<T>
-defineTag(opts?: { storage?: "archetype" | "sparse"; name?: string }): Tag      // storage default "sparse"
-// component tokens are callable: Position({ x, y }) => ComponentInit
-spawn(...parts: ComponentInit[]): Entity
-despawn(entity: Entity): void
-isAlive(entity: Entity): boolean
-add<T>(entity, component, value?: Partial<T>): void
-remove<T>(entity, component): void
-has<T>(entity, component): boolean
-get<T>(entity, component): T | undefined
-set<T>(entity, component, value: Partial<T>): void
-query(...components): Query<Values>            // overloads arity 1..8
-//   Query: updateEach(cb), count(), first(), [Symbol.iterator]
-addSystem(stage: Stage, system: System): () => void
-tick(dt: number): void                         // runs all stages in order, flushes buffer between
-// ── Introspection (read-only — for tooling such as the mcp plugin) ──
-liveEntities(): readonly Entity[]              // fresh snapshot of all live entity handles
-entityCount(): number                          // direct count of live entities
-componentNames(): readonly string[]            // names of components defined with opts.name (registration order)
-componentsOf(entity): ReadonlyArray<{ name: string; value: unknown }>  // named components on an entity
-componentByName(name: string): Component<Record<string, unknown>> | undefined  // name → callable token; first-wins on dup
-// ── World resources (typed singletons) — immediate, never command-buffered ──
-defineResource<T>(create?: () => T): Resource<T>   // mints "res:N" key + optional lazy factory
-setResource<T>(resource: Resource<T>, value: T): void
-getResource<T>(resource: Resource<T>): T | undefined  // lazy-init from factory; undefined if unset+no factory
-resource<T>(resource: Resource<T>): T              // same lazy-init, THROWS if unset + no factory
-hasResource<T>(resource: Resource<T>): boolean     // true if a value is set OR a factory exists
-removeResource<T>(resource: Resource<T>): void     // clears value; factory (if any) re-inits next read
-// Resource<T> = { readonly __key: string; readonly __value?: T }  // __value is phantom (type-level only)
-```
+The editor subsystem is supported by additive methods on already-built plugins — a non-editor game
+never calls them:
 
-### app.scheduler (Standard)
+- **ecs** — `changeEpoch()` (per-write counter) + `setActiveStages(stages | undefined)` /
+  `activeStages()` (stage gate on `world.tick`).
+- **scheduler** — forwards `setActiveStages` / `activeStages` to the world.
+- **renderer** — `attachSprite` + `setTextureResolver` / `setWorldTransformResolver` (DI seams for
+  graphics-2d / hierarchy) + `setEntityVisible` + `setGridVisible`.
+- **input** — a per-frame `wheel` `{ deltaX, deltaY }` on the snapshot (`deltaMode`-normalized).
+- **reflection** — schema-only `entity-ref` + `asset-ref` field kinds (8 kinds total).
+- **assets** — `entries()` / `manifest()` / `metadata(alias)` (read-only enumeration for the asset browser).
+- **camera** — instant `focus` / `zoomAt` / `panBy` + the opt-in `editorControls` input system.
+- **tween** / **vfx** / **camera** — `reset()` (clear transient runtime; `editor-runtime.stop()` calls all three on exit-play).
 
-```ts
-readonly stages: readonly Stage[]              // ["input","update","physics","sync","render"]
-addSystem(stage: Stage, system: System): () => void   // forwards to world.addSystem
-tick(dt: number): void                                // forwards to world.tick
-```
+## Plugins
 
-### app.renderer (Complex) — PixiJS v8 (headless-capable)
+Built/resolved in dependency order (`depends` → resolved with `ctx.require`). Purpose | Tier | key API | events | depends.
 
-```ts
-readonly Transform: Component<{ x; y; rotation; scaleX; scaleY }>   // throws if read before start(); defined even when headless
-attach(entity: Entity, view: Container): void  // Container/Sprite/Graphics — caller owns stage.addChild
-attachPrimitive(entity: Entity, spec: PrimitiveSpec): boolean  // builds a Pixi Graphics from plain data, ADDS it to the stage; false when headless/before start
-detach(entity: Entity): void                   // destroy()s view, idempotent
-render(): void                                 // draws one frame; no-op before start AND when headless
-screenshot(): Promise<string | undefined>      // PNG data URL via Pixi extract; undefined when headless/before start
-tree(): SceneNode | undefined                  // JSON scene-graph snapshot; SceneNode.type ∈ Text|Graphics|Sprite|Container
-getView(): HTMLCanvasElement | undefined       // canvas for manual mounting; undefined when headless
-getStage(): Container | undefined              // root Pixi stage; undefined when headless
-getEntityView(entity: Entity): Container | undefined  // entity's attached view (undefined if none/headless); for view-local state (tint/alpha) the Transform sync doesn't manage — e.g. vfx flash
-markDirty(entity: Entity): void                // re-sync view next "sync" tick
-// PrimitiveStyle = { fill?: number; stroke?: number; strokeWidth?: number; alpha?: number; label?: string }  // hex-int colors, no Pixi types
-// PrimitiveSpec = discriminated union on `shape`:
-//   { shape:"rect"; width; height } | { shape:"circle"; radius }
-//   | { shape:"line"; x2; y2 } | { shape:"polygon"; points: ReadonlyArray<{x;y}> }  (each & PrimitiveStyle)
-//   Anchor: rect & circle are CENTERED on the entity's Transform; polygon points are local (origin at Transform); line runs from the origin to (x2,y2).
-// Config.headless: boolean — @default detectHeadless() (true when typeof document === "undefined").
-```
+### Runtime plugins (16)
 
-### app.input (Standard) — polled + injectable
+- **ecs** — data/runtime core: generational entities, archetype object-SoA storage, typed queries,
+  deferred command buffer, read-only introspection, typed world resource registry, change-epoch +
+  stage gate. | Complex | `defineComponent`/`spawn`/`query`/`addSystem`/`resource`/`componentByName`/
+  `changeEpoch`/`setActiveStages`/`activeStages`/`tick` | events: none | depends: none.
+- **scheduler** — ordered stage contract facade over the world; forwards the stage gate. | Standard |
+  `addSystem(stage,fn)`/`tick`/`stages`/`setActiveStages`/`activeStages` | events: none | depends: ecs.
+- **renderer** — PixiJS v8 backend; defines `Transform`, syncs ECS→views on `sync`, attaches
+  primitives + textured sprites, injected texture/world-transform resolver seams, per-view visibility,
+  editor grid overlay, first-class `headless` mode. | Complex | `Transform`/`attach`/`attachPrimitive`/
+  `attachSprite`/`setTextureResolver`/`setWorldTransformResolver`/`setEntityVisible`/`setGridVisible`/
+  `detach`/`render`/`screenshot`/`tree`/`getView`/`getStage`/`getEntityView`/`markDirty` | events: none |
+  depends: ecs, scheduler.
+- **input** — polled keyboard/pointer/wheel → per-frame `InputSnapshot`; key injection w/ alias
+  normalization. | Standard | `snapshot()` → `isDown`/`justPressed`/`justReleased`/`pointer`/`wheel`;
+  `keyDown`/`keyUp`/`keyPress` | events: none | depends: scheduler.
+- **loop** — fixed-timestep rAF loop driving `scheduler.tick` then `renderer.render`; publishes the
+  `Time` resource; `step()` → `TimeStepResult`. | Standard | `start`/`stop`/`step`/`isRunning`/`time` |
+  events: none | depends: scheduler, renderer, ecs.
+- **assets** — Pixi v8 `Assets` wrapper: load/cache textures + bundles, sprites; editor enumeration. |
+  Standard | `load`/`loadBundle`/`sprite`/`get`/`isLoaded`/`entries`/`manifest`/`metadata` |
+  events: `assets:loaded` | depends: renderer.
+- **context** — binds the well-known `Assets` + `GameContext` world resources at start. | Standard |
+  `app.context` → `assets`/`game` | events: none | depends: ecs, assets.
+- **scene** — named scene lifecycle with entity-ownership tracking + bundle pre-load. | Standard |
+  `define`/`load`/`unload`/`currentScene`/`sceneNames`/`ownedEntities` | events: `scene:loaded` |
+  depends: ecs, renderer, assets.
+- **mcp** — first-class MCP server over stdio / Streamable HTTP / in-page `inMemory` (env-aware
+  default). 15 tools (4 read-only; 11 mutation/play gated by `enableMutations`). | Complex |
+  `isRunning`/`httpEndpoint`/`toolNames`/`clientTransport` | events: `game:reset` |
+  depends: ecs, scheduler, renderer, input, loop, assets, scene.
+- **audio** — native WebAudio SFX + music with a master mute bus; zero deps, headless-safe. | Standard |
+  `unlock`/`load`/`play`/`playMusic`/`stopMusic`/`mute`/`unmute`/`setMuted`/`isMuted`/`setVolume`/
+  `getVolume` | events: `audio:muteChanged`, `audio:volumeChanged` | depends: none.
+- **storage** — namespaced, versioned key/value save persistence behind a pluggable `StorageBackend`
+  seam; never throws. | Standard | `get`/`set`/`has`/`remove`/`clear`/`keys`/`isPersistent`/
+  `getVersion`/`setBackend` | events: none | depends: none.
+- **platform** — portal-SDK adapter layer (CrazyGames/Poki/Newgrounds/none) selected via `ctx.env`;
+  capture-then-restore ads; injects a portal `StorageBackend`; persists audio prefs. | Complex |
+  `getPortal`/`gameplayStart`/`gameplayStop`/`loadingStart`/`loadingFinished`/`commercialBreak`/
+  `rewardedAd`/`isAdPlaying` | events: `platform:ready`, `platform:adStart`, `platform:adEnd` |
+  depends: audio, loop, storage.
+- **vfx** — game-juice: ECS-native particle emitters + bursts, trauma screen shake, scale-pop,
+  hit-flash, floating text, easing curves; `reset()`. | Complex | `createEmitter`/`configureEmitter`/
+  `setEmitterEnabled`/`removeEmitter`/`burst`/`shake`/`stopShake`/`pop`/`flash`/`floatText`/`easing`/
+  `lerp`/`reset` | events: none | depends: ecs, scheduler, renderer.
+- **ui** — PixiJS-native UI: screen stack + declarative widgets (label/button/panel/bar) + HUD +
+  pointer/touch hit-testing. | Complex | `pushScreen`/`popScreen`/`replaceScreen`/`clearScreens`/
+  `topScreen`/`screenCount`/`addHud`/`removeHud`/`getWidget`/`setText`/`setValue`/`setVisible`/
+  `getRoot` | events: none | depends: renderer, scheduler, input.
+- **tween** — shared, ECS-agnostic tweening (`to`/`from`/`value`) advanced by one scheduler system
+  (pause-safe); `reset()`. | Standard | `to`/`from`/`value`/`killAll`/`count`/`easing`/`lerp`/`reset` |
+  events: none | depends: scheduler.
+- **camera** — 2D follow/shake/parallax camera over world-space layer containers; animated moves
+  delegate to `app.tween`; opt-in editor controls; `reset()`. | Standard | `follow`/`setPosition`/
+  `moveTo`/`getPosition`/`setZoom`/`zoomTo`/`getZoom`/`setRotation`/`rotateTo`/`getRotation`/`shake`/
+  `focus`/`zoomAt`/`panBy`/`reset`/`world`/`addLayer`/`layer`/`screenToWorld`/`worldToScreen` |
+  events: none | depends: renderer, scheduler, tween, input.
 
-```ts
-snapshot(): InputSnapshot
-keyDown(key: string): void    // hold a key (alias-normalized: "Space"/"Spacebar"→" ", "Esc"→"Escape")
-keyUp(key: string): void      // release a key (alias-normalized)
-keyPress(key: string): void   // one-frame tap: justPressed + justReleased, never sticks (alias-normalized)
-// InputSnapshot:
-//   isDown(key: string): boolean
-//   justPressed(key: string): boolean         // one frame only
-//   justReleased(key: string): boolean         // one frame only
-//   readonly pointer: { x: number; y: number; buttons: number }  // buttons: 1=L 2=R 4=M
-// Injection is immediate (between frames, NOT command-buffered); the snapshot observes the canonical key.
-```
+### Editor subsystem (Layer-2, additive — 11 plugins, registered after `mcp`, `editor-bridge` last)
 
-### app.loop (Standard) — fixed-timestep rAF + Time resource
-
-```ts
-start(): void          // begin/resume rAF loop (no-op if running)
-stop(): void           // pause; cancels pending frame
-isRunning(): boolean
-step(): TimeStepResult // one deterministic fixed tick + render; returns { frame, elapsed, dt }; { 0,0,0 } before start/after stop
-readonly time: Resource<TimeState>   // well-known Time token, also exported as Time from loop/resources
-// TimeState (all readonly to consumers; loop mutates in place each step — no allocation):
-//   dt: number        // fixed step length in SECONDS (== config.fixedDt)
-//   elapsed: number   // total simulated time in SECONDS (sum of all fixed steps)
-//   frame: number     // count of fixed steps since start (not seconds)
-// TimeStepResult = Pick<TimeState, "frame" | "elapsed" | "dt">
-// read from a system: world.resource(app.loop.time) → { dt, elapsed, frame }
-```
-
-### app.assets (Standard) — Pixi v8 Assets wrapper
-
-```ts
-load(alias: string): Promise<Texture>                                   // emits assets:loaded {kind:"asset"}
-loadBundle(bundle: string, entries: Record<string,string>): Promise<Record<string,Texture>> // emits {kind:"bundle"}
-get(alias: string): Texture | undefined                                 // cache read, no load
-sprite(alias: string): Promise<Sprite>                                  // load-on-miss, build Sprite
-isLoaded(alias: string): boolean                                        // session state, not Pixi cache
-```
-
-### app.context (Standard) — well-known world resources
-
-```ts
-readonly assets: Resource<AssetsApi>           // __key "ctx:assets"; ALWAYS bound at onStart
-readonly game:   Resource<GameContextValue>    // __key "ctx:game"; bound only when bindGameContext (default true)
-// Both tokens are fixed-key module consts (valid before start); onStart binds their VALUES on the world.
-// GameContextValue = { readonly log: LogApi; readonly emit: EmitFn<FrameworkEvents>; readonly env: EnvApi }
-// read from a system: world.resource(app.context.assets) / world.resource(app.context.game)
-```
-
-### app.scene (Standard) — named lifecycle + ownership
-
-```ts
-define(name: string, definition: SceneDefinition): void
-//   SceneDefinition = { setup: (world: World) => void | Promise<void>; bundle?: Record<string,string> }
-load(name: string): Promise<void>     // unload current → preload bundle → run setup → emit scene:loaded
-unload(): void                        // detach + despawn owned entities (if despawnOnUnload)
-currentScene(): string | undefined
-sceneNames(): readonly string[]       // registered scene names (registration order); [] before any define
-ownedEntities(): readonly Entity[]    // snapshot of current scene's owned entities; [] after unload
-```
-
-### app.mcp (Complex) — MCP server (env-aware transports)
-
-```ts
-isRunning(): boolean
-httpEndpoint(): string | undefined    // e.g. "http://127.0.0.1:3333/mcp", or undefined when no "http" transport
-toolNames(): readonly string[]
-clientTransport(): InMemoryClientTransportLike | undefined  // in-page client paired with the server when "inMemory" is active
-// Config.transports: ReadonlyArray<"stdio" | "http" | "inMemory">
-//   @default env-aware: ["inMemory"] in a browser, ["stdio"] under Node/Bun. "inMemory" is in-page only (no socket).
-// Config.enableMutations: boolean — @default true. false → only the 4 read-only tools are registered.
-// Config.inMemoryGlobalKey: string — @default "__MOKU_GAME_MCP__" ("" disables the globalThis publish).
-```
-
-MCP tools — 15 total.
-Read-only (always, 4): `ecs:query`, `renderer:screenshot`, `renderer:tree`, `scene:getInfo`.
-Mutating / play (when `enableMutations: true`, 11): `ecs:spawn` (REAL components resolved via
-`componentByName`), `ecs:despawn`, `ecs:setComponent`, `ecs:removeComponent`, `renderer:attach`
-(visible primitive), `input:key`, `loop:step`, `loop:pause`, `loop:resume`, `scene:load`,
-`game:reset`. Unknown component/scene names + dead entities return `isError`; despawn/remove report
-`{ changed: boolean }`.
-MCP resources: `game://world/snapshot` (every live entity + named values), `game://systems/list`
-(stage names only — systems are anonymous), `game://stats/frame`, `game://scene/current`.
-
-### app.audio (Standard) — native WebAudio SFX + music (zero deps)
-
-```ts
-unlock(): Promise<void>                          // resume AudioContext after a user gesture; idempotent; sets state.unlocked
-load(name: string, url?: string): Promise<void>  // fetch + decodeAudioData + cache; url falls back to manifest[name]; one decode per name
-play(name: string, opts?: { volume?: number; rate?: number }): void       // one-shot on sfx; no-op if headless/not-unlocked/not-loaded
-playMusic(name: string, opts?: { loop?: boolean; fadeIn?: number }): void // looping on music; stops previous; fadeIn ramps from 0
-stopMusic(opts?: { fadeOut?: number }): void     // stop current track; fadeOut ramps to 0 first
-mute(): void                                     // zero the master mute bus; emits audio:muteChanged on change
-unmute(): void                                   // restore master gain to masterVolume; emits on change
-setMuted(muted: boolean): void                   // explicit; emits only on change
-isMuted(): boolean
-setVolume(channel: Channel, value: number): void // clamp 0..1; write gain; emit audio:volumeChanged on change; master-while-muted keeps bus at 0
-getVolume(channel: Channel): number
-// Channel = "master" | "sfx" | "music".
-// Gain graph: source → channelGain(sfx|music) → masterGain(mute bus) → destination. Held in a ctx.global WeakMap.
-// Config: masterVolume/sfxVolume/musicVolume (0..1, @default 1), muted (@default false), manifest (name→url, @default {}).
-//   Volume/mute config double as rehydration inputs a storage/platform plugin feeds via pluginConfigs.audio.*.
-// Headless-safe: with no AudioContext (SSR/tests) every method no-ops (getters still return state). onStart/onStop own the AudioContext.
-```
-
-### app.storage (Standard) — versioned key/value save persistence (zero deps)
-
-```ts
-get<T>(key: string, fallback?: T): T | undefined  // JSON-parse; fallback on missing/unparseable/unavailable; triggers lazy migration; never throws
-set(key: string, value: unknown): boolean         // JSON-serialize + write; false on rejected write / unserializable value; never throws
-has(key: string): boolean
-remove(key: string): void                          // no-op if absent
-clear(): void                                      // wipe every namespace key, then re-stamp the schema version
-keys(): string[]                                   // namespace keys, `${namespace}:` prefix stripped, meta key excluded; [] on failure
-isPersistent(): boolean                            // false on the in-memory fallback / an injected non-persistent backend
-getVersion(): number                               // schema version in effect after any lazy migration
-setBackend(backend: StorageBackend): void          // inject platform's CrazyGames backend; resets `migrated` → re-migrate on next access
-// Values stored as `${namespace}:${key}` (JSON). StorageBackend = { getItem→string|null, setItem→boolean, removeItem, keys(prefix)→string[], persistent } — synchronous, non-throwing.
-// Config: namespace (@default "game"), version (@default 1), migrations (target-version → whole-namespace Snapshot transform, @default {}).
-// Migration runs lazily on first access, once (memoized): migrations[n] upgrades a v(n-1) snapshot to vn; a store already at version is untouched; a downgrade warns + leaves data intact.
-// Safe by construction: the default backend probes localStorage and falls back to an in-memory Map (persistent=false) when partitioned/blocked/absent — get/set never crash the game. No events, no hooks, no lifecycle.
-```
-
-### app.platform (Complex) — portal-SDK adapter layer (zero new deps)
-
-```ts
-getPortal(): Portal                              // "crazygames" | "poki" | "newgrounds" | "none" — resolved at onStart
-gameplayStart(): void                            // signal active gameplay started (portals gate ad timing/analytics on it)
-gameplayStop(): void                             // signal gameplay stopped (menu/pause/game-over)
-loadingStart(): void                             // signal loading started (usually driven by onStart)
-loadingFinished(): void                          // signal loading finished (game interactive)
-commercialBreak(): Promise<void>                 // interstitial; pauses loop + mutes audio, restores on settle; frequency-capped; never rejects
-rewardedAd(): Promise<boolean>                   // rewarded; same coordination; true = watched-to-completion (grant reward); noop adapter → true
-isAdPlaying(): boolean
-// Portal = "crazygames" | "poki" | "newgrounds" | "none". Active adapter selected per build via ctx.env: config.portal "auto" → ctx.env.get(portalEnvVar) (default GAME_PORTAL, case-insensitive); explicit config overrides; unknown/headless → none.
-// Ads are capture-then-restore: capture loop.isRunning()+audio.isMuted() before pausing+muting, restore only what changed on settle (resolve OR reject); re-entrancy guard (state.adPlaying); minInterstitialSeconds cap on interstitials. The same coordination drives window focus/blur + visibilitychange listeners.
-// One PortalAdapter interface, four implementations in adapters/. CrazyGames provides a native StorageBackend over its async data API (synchronous, non-throwing facade over an init-hydrated write-through snapshot) injected via storage.setBackend() when useNativeStorage; Poki/Newgrounds keep storage's localStorage default.
-// persistAudioPrefs (default): hooks audio:muteChanged/audio:volumeChanged → storage.set("audio.muted"/"audio.volume.<channel>"); rehydrates audio mute/volume at onStart. Iframe-safe (own window, never window.top). onStart/onStop own the loaded SDK + focus/visibility listeners in a ctx.global WeakMap. No new package deps (SDKs runtime-injected, globals typed structurally, shipped .d.ts SDK-ambient-free).
-// Config: portal (@default "auto"), portalEnvVar (@default "GAME_PORTAL"), pauseOnAd (@default true), minInterstitialSeconds (@default 60), useNativeStorage (@default true), persistAudioPrefs (@default true).
-```
-
-### app.vfx (Complex) — game-juice / visual-feedback layer (zero new deps)
-
-```ts
-createEmitter(spec: EmitterSpec): Entity        // persistent emitter entity (Emitter + Transform at spec.x/y); required: rate, speed, lifetime
-configureEmitter(emitter, patch: Partial<EmitterSpec>): void  // shallow-merge emission params (position moves via the Transform, not here)
-setEmitterEnabled(emitter, enabled): void       // pause/resume emission; existing particles stay alive
-removeEmitter(emitter): void                    // despawn the emitter AND only its own live particles (burst particles untouched)
-burst(x, y, spec: BurstSpec): void              // one-shot spark/explosion/pickup; required: count, speed, lifetime; defaults to full-circle spread
-shake(amplitude, duration): void                // bank screen-shake trauma (0..1); render system offsets the stage root by trauma² · shakeMaxOffset
-stopShake(): void                               // clear trauma + reset the stage offset to (0,0) immediately
-pop(entity, opts?): void                        // scale-pop a Transform to opts.scale× (@default 1.3) over opts.duration (@default 0.15s) and back; no-op without a Transform
-flash(entity, opts?): void                      // hit-flash: snap view.tint to opts.color (@default white) then ease back to the captured base over opts.duration (@default 0.12s); alive entity, tint only if it has a view (headless → ages out); re-call refreshes
-floatText(x, y, text, opts?): Entity            // rising, alpha-fading floating number/text (e.g. "+50"); returns its entity handle
-readonly easing: Readonly<Record<EasingName, (t: number) => number>>  // frozen curve table: linear, easeInQuad, easeOutQuad, easeInOutQuad, easeOutCubic, easeOutBack, easeOutElastic
-lerp(a: number, b: number, t: number): number   // linear interpolation a + (b − a) * t
-// Particles are ECS entities (renderer.Transform + a named Particle) drawn via renderer.attachPrimitive — the renderer owns their whole view lifecycle; they fade by scaling out startScale → endScale (no alpha), so NO new dependency (Pixi arrives via renderer). vfx keeps no per-particle handle; only floating-text Text handles are retained (to fade alpha).
-// Emitter/Particle/Pop/Flash/FloatingText are named components (MCP-introspectable by name). A single maxParticles budget spans every emitter + burst; over-budget emission is dropped (ctx.log debug once per over-budget frame).
-// Every effectful method is a guarded no-op before app.start() and on dead / wrong-type entities. Emits NO events (per-frame hot path — same stance as ecs/renderer/scheduler/loop). No onStop (the renderer disposes every view). Headless-safe: systems run identically; only Pixi view creation guards on renderer.getStage().
-// Config: maxParticles (@default 1000), shakeDecay (@default 1.8), shakeMaxOffset (@default 24), defaultColor (@default 0xffffff).
-```
-
-### app.ui (Complex) — PixiJS-native game-UI layer (zero new deps)
-
-```ts
-pushScreen(spec: ScreenSpec): ScreenHandle      // build + push a screen (widgets + optional dimming backdrop); only the TOP screen's buttons are tappable (modal capture)
-popScreen(): void                               // remove + destroy the top screen
-replaceScreen(spec: ScreenSpec): ScreenHandle   // popScreen() then pushScreen(spec)
-clearScreens(): void                            // remove + destroy every screen (HUD untouched)
-topScreen(): ScreenHandle | undefined           // the top screen's handle, or undefined when empty
-screenCount(): number                           // stack depth
-addHud(spec: WidgetSpec): WidgetHandle          // persistent HUD widget (outside the stack); HUD buttons tappable only when the stack is empty
-removeHud(handle): void                         // remove + destroy a HUD widget (and drop its buttons from the hit-set)
-getWidget(screen: ScreenHandle, id: string): WidgetHandle | undefined  // resolve a screen widget by spec id (recursive through panels)
-setText(handle, text): void                     // update a label/button caption (no-op on non-text / stale)
-setValue(handle, value): void                   // update a bar (clamped to [0,max]; scales the fill)
-setVisible(handle, visible): void               // show/hide a widget's node
-getRoot(): Container | undefined                // the UI root Container (advanced), or undefined before start / headless
-// Declarative plain-data specs: WidgetSpec = label | button | panel(children) | bar (discriminated on `kind`); ScreenSpec = { backdrop?, widgets }. ui builds the Pixi subtree once and returns opaque handles (retained-mode), parented under renderer.getStage(). NO Pixi types leak into specs; only the structural Container handle escapes via getRoot().
-// A single "update"-stage system reads input.snapshot().pointer, computes its own press/release edges from the button bitmask, and fires a button's onTap on release over the SAME button armed on press. Hover fill re-paints as the pointer enters/leaves. Touch == mouse (both arrive as DOM pointer events). Modal capture: only the top screen (or the HUD when the stack is empty) is tappable.
-// Emits NO events (interactions are declarative onTap callbacks). No onStop (the renderer disposes the whole subtree; in-run disposal is the API's job). Headless-safe: with renderer.getStage() undefined, no root is built and every method + the system are guarded no-ops.
-// Config: textColor (@default 0xffffff), fontSize (@default 20), fontFamily (@default "sans-serif"), buttonColor (@default 0x3355ff), buttonHoverColor (@default 0x4466ff), panelColor (@default 0x141821), panelAlpha (@default 0.92), backdropColor (@default 0x000000), backdropAlpha (@default 0.6), padding (@default 12), width (@default 800), height (@default 600 — reference viewport for the backdrop/layout; the renderer exposes no dims via its API).
-```
-
-### app.tween (Standard) — shared ECS-agnostic tweening (zero new deps)
-
-```ts
-to<T>(target: T, props: NumericProperties<T>, opts?: TweenOptions): TweenHandle   // tween numeric props of any plain object TO the given values; start values captured at creation; non-finite props skipped
-from<T>(target: T, props: NumericProperties<T>, opts?: TweenOptions): TweenHandle // apply the "from" values immediately, then tween back to the current values
-value(from: number, to: number, opts: ValueTweenOptions): TweenHandle            // tween a bare scalar, driving opts.onUpdate(value) each frame (onUpdate required)
-killAll(): void                                 // stop + drop every active tween (no onComplete; each done settles)
-count(): number                                 // number of active tweens
-easing: Readonly<Record<EasingName, (t) => number>>  // the frozen 7-curve table (parity with vfx; the canonical shared source)
-lerp(a, b, t): number                           // linear interpolation a + (b − a) * t
-// TweenHandle: stop() (cancel now, no onComplete, settles done, idempotent) · pause()/resume() (freeze/unfreeze advancement) · active (still registered?) · done (Promise, settles on complete OR stop — never rejects/hangs).
-// TweenOptions: duration (@default config.defaultDuration) · easing (EasingName | (t)=>number, @default config.defaultEasing) · delay (@default 0; does NOT defer start-value capture) · repeat (@default 0; Infinity allowed) · yoyo (@default false; ping-pong) · onUpdate(progress) · onComplete().
-// One "update"-stage system advances all tweens by dt on the game clock, so a paused loop freezes every tween automatically (pause-safe, zero coupling to platform/loop). Advanced by scheduler ONLY (not ecs/renderer/loop). onStart-only wiring; NO onStop (tweens are plain GC-able data). Emits NO events. Headless-safe. Before-start / over-maxActive creators warn + return a dead handle (no hot-path throw).
-// Config: defaultDuration (@default 0.3), defaultEasing (@default "easeOutCubic"), updateStage (@default "update"), maxActive (@default 2048).
-```
-
-### app.camera (Standard) — 2D follow/shake/parallax camera (consumes app.tween; zero new deps)
-
-```ts
-world: Container | undefined                    // the default world layer (parallax factor 1); undefined headless — add world content here
-addLayer(name: string, factor: number): Container | undefined // create/return a named parallax layer (idempotent by name; factor NOT overwritten); undefined headless
-layer(name: string): Container | undefined      // look up a previously-added layer container
-follow(target?: { x: number; y: number }): void // continuously ease the centre toward a LIVE { x, y } each frame (a Container / entity Transform value / bare point); no arg clears
-setPosition(x, y): void                         // snap the centre immediately (clears follow)
-moveTo(x, y, opts?: MoveOptions): TweenHandle   // animated pan via app.tween (clears follow); returns the tween handle
-getPosition(): Point                            // the current centre (a fresh copy — never the mutable state object)
-setZoom(zoom): void                             // set zoom immediately, clamped to [minZoom, maxZoom]
-zoomTo(zoom, opts?: MoveOptions): TweenHandle   // animated zoom via app.tween (final value clamped)
-getZoom(): number
-setRotation(radians): void                      // set rotation immediately
-rotateTo(radians, opts?: MoveOptions): TweenHandle // animated rotate via app.tween
-getRotation(): number
-shake(intensity, duration, opts?: ShakeOptions): void // additive screen shake decaying to 0 over duration s via app.tween; replaces any in-flight shake
-screenToWorld(point: Point): Point              // map a screen point to world space (picking); pure, works before start
-worldToScreen(point: Point): Point              // map a world point to screen space (place UI over a world object); pure
-// MoveOptions = Pick<TweenOptions, "duration"|"easing"|"delay"|"onComplete"|"onUpdate"> (NO repeat/yoyo — a repeating pan is nonsensical). ShakeOptions = { easing? } (decay curve, @default "linear").
-// Transforms world-space LAYER containers it OWNS (world at stage index 0 via addChildAt, below the ui overlay), NEVER the root stage — so the HUD stays screen-fixed and parallax works (one plane per layer). Limitation: renderer.attachPrimitive self-parents to the stage root → NOT camera-transformed; the camera path is renderer.attach + camera.world/a layer.
-// One "sync"-stage system eases centre→target (via app.tween.lerp), writes each layer's pivot/position/scale/rotation, and adds the shake offset. moveTo/zoomTo/rotateTo/shake + follow-lerp all delegate to app.tween → pause-safe for free (rides scheduler.tick; NO platform/loop edge). Depends on renderer + scheduler + tween (all real edges); NOT ecs (structural {x,y} target) / NOT loop. onStart-only (@no-resource-check); NO onStop (containers parented under the renderer-owned stage; no external resource). Emits NO events. Headless-safe (numeric state + screen↔world still track).
-// Config: zoom (@default 1), minZoom (@default 0.1), maxZoom (@default 10), followLerp (@default 0.15), width (@default 800), height (@default 600), updateStage (@default "sync"). width/height = reference viewport (the renderer exposes no canvas dims via API — the ui-plugin precedent).
-reset(): void                                   // EDITOR DELTA: recentre (0,0), zoom→config.zoom, rotation→0, clear follow, stop shake — editor-runtime.stop() calls this on exit-play
-```
-
-### Editor subsystem (Layer-2, additive — plugins #17–#24)
-
-An in-browser Unity-style editor over the live ECS. Single write-authority, poll-on-epoch reactivity (no per-frame emit), two-`createApp` split. **Pay-for-what-you-use:** a non-editor game never calls these; `editor-runtime` does not gate the scheduler until `enterEdit()`. The extension deltas that support it: `ecs` gains `changeEpoch()` (per-write counter) + `setActiveStages`/`activeStages` (stage gate); `scheduler` forwards `setActiveStages`/`activeStages`; `assets` gains `entries()`/`manifest()`/`metadata()`; `tween`/`vfx`/`camera` gain `reset()`.
-
-```ts
-// app.commands (Standard) — the SINGLE validated write-authority; owns the save-durable branded EditorId. Depends on ecs only.
-apply(command: Command): CommandResult          // validate + apply, returns the inverse ({ ok:true; inverse } | { ok:false; error })
-applyRaw(command: Command): RawResult           // the primitive editor-history wraps (no inverse)
-restore(entities: readonly RestoreEntity[], source: "reload"|"exit-play"): void // non-undoable bulk reseed; emits commands:restored
-resolve(id: EditorId): Entity | undefined       // validate-before-return against world.isAlive (prunes stale); editorIdOf(entity): EditorId | undefined; count(): number
-setValidator(fn: FieldValidator | undefined): void // inject reflection.validate (the decoupling seam)
-// Command = discriminated union: spawn | despawn | setField | addComponent | removeComponent (components by NAME, plain data)
-
-// app.reflection (Standard) — field-schema registry for named components. Depends on ecs only.
-describe(componentName: string): FieldDescriptor[] // registered schema, else inferred from a live value by typeof, else []
-register(componentName: string, schema: Schema): void // typed field.* schema (registered wins over inference)
-validate(componentName: string, partial): ValidationResult // pure check used by commands.setValidator
-field: FieldBuilders                            // number/boolean/string/color/select/vector2/readonly builders (also re-exported standalone)
-
-// app.serialization (Complex) — scene (de)serializer. Depends on ecs/storage/commands/reflection.
-serialize(): SceneDocument                      // walk liveEntities, capture editor-owned entities' named components, keyed by EditorId
-deserialize(doc): void                          // migrate (via storage chain) → validate (reflection) → commands.restore atomically → emit serialization:loaded
-save(name)/load(name): boolean; list(): string[]; export(): string; import(json): void
-
-// app["editor-selection"] (Standard) — viewport picking + selection. Depends on ecs/renderer/camera/input.
-enable()/disable(): void                        // flip Pixi eventMode on ONE camera pick layer (zero cost outside edit mode)
-pickAt(screen: Point): Entity | undefined       // topmost entity via a non-enumerable stamped handle; select/toggle/clear; selected(): readonly Entity[]; isSelected(e): boolean
-// emits editor-selection:changed only on a real change; headless-safe
-
-// app["editor-history"] (Standard) — undo/redo authority. Depends on commands.
-applyTracked(command): CommandResult            // wraps commands.applyRaw synchronously + records a bounded field-diff inverse
-undo()/redo(): boolean; canUndo()/canRedo(): boolean // poll on ecs changeEpoch
-beginGesture()/endGesture(): void               // coalesce a drag burst into ONE undo entry; clear(): void (also on commands:restored, via hooks)
-
-// app["editor-gizmos"] (Complex) — direct-manipulation translate gizmo (overlay outside the ECS). Depends on renderer/camera/editor-selection/commands.
-enable()/disable(): void; setMode(mode)/mode(): translate only in MVP (rotate/scale warn+no-op); setSnap(n): void
-setGestureSink(sink | undefined): void          // injected editor-history {begin,applyTracked,end}; drag deltas recomputed via camera.screenToWorld EVERY event (anti-drift), commits ≤2 setField on pointerup
-
-// app["editor-runtime"] (Complex) — edit/play FSM via scheduler stage-gating. Depends on loop/scheduler/serialization/commands/tween/vfx/camera.
-enterEdit(): void                               // gate to config.editStages (update/physics OFF); does NOT gate at boot (pay-for-what-you-use)
-enterPlay(): void                               // snapshot (serialize) + un-gate (setActiveStages undefined) + loop.start
-stop(): void                                    // restore snapshot (commands.restore) THEN tween/vfx/camera reset() THEN re-gate; step(): TimeStepResult; mode()/isPlaying()
-// emits editor-runtime:modeChanged on each flip
-
-// app["editor-bridge"] (Complex) — the terminal facade (Layer-3 web editor's single seam). Depends on all 9 editor seams + mcp; registered LAST.
-snapshot(): EditorSnapshot                      // immutable, poll-on-epoch (epoch mirrors world.changeEpoch; entities memoized by epoch; selection/mode/canUndo/canRedo read fresh)
-apply(command)/setField(id, component, field, value): CommandResult // → editor-history.applyTracked → commands.applyRaw (undo-tracked)
-select/clearSelection; undo/redo; play/stop/step; save/load; describe(component) // forward to the owning plugin
-// onStart wires commands.setValidator(reflection.validate); probes mcp readiness (mirror is fast-follow). Emits nothing; no hooks; headless-safe.
-```
+- **commands** — the SINGLE validated write-authority; owns the branded, save-durable `EditorId`.
+  `Command` = discriminated union addressed by component NAME (spawn/despawn/setField/addComponent/
+  removeComponent). | Standard | `apply`/`applyRaw`/`restore`/`resolve`/`editorIdOf`/`setValidator`/
+  `count` | events: `commands:restored` | depends: ecs.
+- **reflection** — field-schema registry: infer a `FieldDescriptor[]` from a live value or register a
+  typed `field.*` schema (registered wins); pure `validate`. 8 field kinds incl. schema-only
+  `entity-ref`/`asset-ref`. | Standard | `describe`/`register`/`validate`/`field` | events: none |
+  depends: ecs.
+- **component-registry** — an enumerable Add-Component catalog: a pure `Map<string,
+  ComponentCatalogEntry>` (name/category/defaults/`addable`) domain plugins register into and the
+  inspector picker lists. | Standard | `register`/`list`/`byCategory`/`get`/`has` | events: none |
+  depends: none.
+- **hierarchy** — scene-graph layer: owns one `Node` component (`{ parent, order, name, enabled }`, an
+  ordinary component so serialization stays flat) + a `sync`-stage world-transform system; injects
+  `renderer.setWorldTransformResolver`. Reparent = a `setField` burst, not a new command kind. |
+  Complex | `Node`/`worldOf`/`parentOf`/`childrenOf`/`roots`/`depth`/`canReparent`/
+  `computeLocalForPreserveWorld`/`orderBetween` | events: none | depends: ecs, renderer, commands,
+  reflection.
+- **graphics-2d** — 2D render-component library ("the component IS the renderable"): defines
+  `SpriteRenderer` + `Shape`, a `changeEpoch`-gated `sync` reconciler over the renderer's public API,
+  and an assets→renderer texture resolver; registers its catalog entries + reflection schemas. |
+  Standard | `SpriteRenderer`/`Shape` (component tokens) | events: none | depends: ecs, renderer,
+  reflection, component-registry, assets.
+- **serialization** — scene (de)serializer keyed by `EditorId`; the `SceneDocument` stays FLAT (the
+  `Node` rides as a plain component); v1→v2 identity migration; validates via `reflection`; routes
+  loads through `commands.restore`. | Complex | `serialize`/`deserialize`/`save`/`load`/`list`/
+  `export`/`import` | events: `serialization:loaded` | depends: ecs, storage, commands, reflection.
+- **editor-selection** — viewport picking + selection: `enable`/`disable` flip Pixi `eventMode` on one
+  camera pick layer; `pickAt` via a stamped handle; modifier-aware multi-select + a drag marquee
+  (`selectInRect`). | Standard | `enable`/`disable`/`select`/`toggle`/`clear`/`selected`/`isSelected`/
+  `pickAt`/`selectInRect` | events: `editor-selection:changed` | depends: ecs, renderer, camera, input.
+- **editor-history** — undo/redo authority: `applyTracked` wraps `commands.applyRaw` + records a
+  bounded field-diff inverse; gesture coalescing; ring buffer capped at `maxDepth`; clears on
+  `commands:restored`. | Standard | `applyTracked`/`undo`/`redo`/`canUndo`/`canRedo`/`beginGesture`/
+  `endGesture`/`clear` | events: none | depends: commands.
+- **editor-gizmos** — direct-manipulation gizmo (a Pixi overlay outside the ECS); anti-drift via
+  `camera.screenToWorld` per event; commits `setField` on pointerup through `commands`, coalesced via
+  an injected sink. translate/rotate/scale/rect modes (gated by `translateOnly`) + space + pivot. |
+  Complex | `enable`/`disable`/`setMode`/`mode`/`setSnap`/`setSpace`/`space`/`setPivot`/`pivot`/
+  `setGestureSink` | events: none | depends: renderer, camera, editor-selection, commands.
+- **editor-runtime** — edit/play FSM via scheduler stage-gating; `stop()` restores the snapshot then
+  `reset()`s tween/vfx/camera. Does NOT gate at boot. | Complex | `enterEdit`/`enterPlay`/`stop`/
+  `step`/`mode`/`isPlaying` | events: `editor-runtime:modeChanged` | depends: loop, scheduler,
+  serialization, commands, tween, vfx, camera.
+- **editor-bridge** — the terminal facade (the Layer-3 web editor's single seam). `snapshot()` is
+  immutable, poll-on-epoch, HIERARCHICAL (flat entities carrying `Node`-derived identity +
+  `roots`/`children`). Writes forward through the authority; eleven authoring verbs (create/
+  createShape/createSprite/delete/duplicate/reparent/reorder/rename/setEnabled/addComponent/
+  removeComponent) + `listComponents`; wires `commands.setValidator(reflection.validate)` + the gizmo
+  gesture sink at onStart. Registered LAST. | Complex | `snapshot`/`apply`/`setField`/`create`/
+  `createShape`/`createSprite`/`delete`/`duplicate`/`reparent`/`reorder`/`rename`/`setEnabled`/
+  `addComponent`/`removeComponent`/`listComponents`/`select`/`clearSelection`/`undo`/`redo`/`play`/
+  `stop`/`step`/`save`/`load`/`describe` | events: none | depends: ecs, reflection, commands,
+  hierarchy, component-registry, editor-selection, editor-gizmos, editor-history, editor-runtime,
+  serialization, mcp.
 
 ## Events
 
-The catalog is intentionally tiny — per-frame work is on the hot path, off the event bus.
+The catalog is intentionally tiny — per-frame work is on the hot path, off the event bus. Subscribe
+from a consumer plugin's `hooks` map; the editor is otherwise POLL-ON-EPOCH (panels read
+`app["editor-bridge"].snapshot()` and re-render only when `epoch` advances).
 
 - `assets:loaded` — `{ alias: string; kind: "asset" | "bundle" }` — after `load()`/`loadBundle()`. (framework Events)
 - `scene:loaded` — `{ name: string }` — after a scene's `setup` completes during `load()`. (framework Events)
-- `game:reset` — `{ reason: "mcp" }` — after the mcp `game:reset` tool despawns all MCP-tracked
-  entities and unloads the current scene. (mcp plugin event — declared + emitted by the mcp plugin)
-- `audio:muteChanged` — `{ muted: boolean }` — after `mute()`/`unmute()`/`setMuted()` changes the
-  mute state. (audio plugin event — a storage/platform plugin persists it)
-- `audio:volumeChanged` — `{ channel: "master" | "sfx" | "music"; value: number }` — after
-  `setVolume()` changes a channel volume. (audio plugin event)
-- `platform:ready` — `{ portal: Portal }` — once the active portal adapter is initialised and loading
-  is signalled finished. (platform plugin event)
-- `platform:adStart` — `{ type: "interstitial" | "rewarded" }` — when an ad begins, after `loop` is
-  paused + `audio` muted. (platform plugin event)
-- `platform:adEnd` — `{ type: "interstitial" | "rewarded"; rewarded?: boolean }` — when an ad ends,
-  after `loop` + `audio` are restored; `rewarded` set for rewarded ads. (platform plugin event)
-- `commands:restored` — `{ source: "reload" | "exit-play" }` — after a non-undoable `commands.restore()`
-  reseeds the world + EditorId map; editor-history listens + clears its stacks. (commands plugin event)
-- `serialization:loaded` — `{ name: string; entityCount: number }` — after `deserialize()`/`load()` and
-  the named scene is live (distinct from the lower-level commands:restored). (serialization plugin event)
-- `editor-selection:changed` — `{ selected: readonly Entity[] }` — after the editor selection set changes
-  (user-gesture frequency, never per-frame). (editor-selection plugin event)
-- `editor-runtime:modeChanged` — `{ mode: "edit" | "play" }` — after an edit↔play flip. (editor-runtime plugin event)
+- `game:reset` — `{ reason: "mcp" }` — after the mcp `game:reset` tool despawns MCP-tracked entities + unloads the scene. (mcp)
+- `audio:muteChanged` — `{ muted: boolean }` — after `mute()`/`unmute()`/`setMuted()` changes the mute state. (audio)
+- `audio:volumeChanged` — `{ channel: "master" | "sfx" | "music"; value: number }` — after `setVolume()`. (audio)
+- `platform:ready` — `{ portal: Portal }` — once the active portal adapter is initialised + loading finished. (platform)
+- `platform:adStart` — `{ type: "interstitial" | "rewarded" }` — when an ad begins (loop paused + audio muted). (platform)
+- `platform:adEnd` — `{ type: "interstitial" | "rewarded"; rewarded?: boolean }` — when an ad ends (loop + audio restored). (platform)
+- `commands:restored` — `{ source: "reload" | "exit-play" }` — after a non-undoable `commands.restore()` reseeds the world + EditorId map. (commands)
+- `serialization:loaded` — `{ name: string; entityCount: number }` — after `deserialize()`/`load()` and the named scene is live. (serialization)
+- `editor-selection:changed` — `{ selected: readonly Entity[] }` — after the editor selection set changes. (editor-selection)
+- `editor-runtime:modeChanged` — `{ mode: "edit" | "play" }` — after an edit↔play flip. (editor-runtime)
 
-`assets:loaded`/`scene:loaded` are declared in `src/config.ts` (framework `Events`); `game:reset`
-(mcp), `audio:muteChanged`/`audio:volumeChanged` (audio), `platform:ready`/`platform:adStart`/`platform:adEnd`
-(platform), and the editor milestones `commands:restored`/`serialization:loaded`/`editor-selection:changed`/`editor-runtime:modeChanged`
-are declared on their plugins' `Events`. The editor subsystem is otherwise POLL-ON-EPOCH — panels read `app["editor-bridge"].snapshot()` on their own tick.
-Subscribe from a consumer plugin's `hooks`. The `context` plugin exposes the framework emitter to
-systems via `GameContext.emit`, but owns no events of its own.
+`assets:loaded`/`scene:loaded` are declared in `src/config.ts` (framework `Events`); the rest are
+plugin-level events declared + emitted by their plugins. `ecs`, `scheduler`, `renderer`, `input`,
+`loop`, `context`, `vfx`, `ui`, `tween`, `camera`, `component-registry`, `hierarchy`, `graphics-2d`,
+`reflection`, `editor-history`, `editor-gizmos`, and `editor-bridge` emit no events.
 
 ## File Structure
 
@@ -484,176 +262,25 @@ systems via `GameContext.emit`, but owns no events of its own.
 game/
 ├── src/
 │   ├── config.ts            # Layer 1: createCoreConfig, Config = {}, Events, createPlugin/createCore
-│   ├── index.ts             # Layer 2: createCore assembles the 24 plugins (16 runtime + 8 editor); exports createApp/createPlugin (+ createCore/createCoreConfig for advanced/headless assembly)
-│   └── plugins/
-│       ├── index.ts         # plugin barrel (instances + type namespaces)
-│       ├── ecs/             # data/runtime core + introspection + resource registry (world.ts, types.ts, README.md, __tests__/)
-│       ├── scheduler/       # stage contract facade
-│       ├── renderer/        # PixiJS v8 backend (api.ts, lifecycle.ts, sync.ts, primitives.ts, types.ts)
-│       ├── input/           # polled keyboard/pointer + key injection (api.ts)
-│       ├── loop/            # fixed-timestep rAF loop + Time resource (resources.ts)
-│       ├── assets/          # Pixi Assets wrapper
-│       ├── context/         # binds Assets + GameContext world resources (resources.ts, lifecycle.ts)
-│       ├── scene/           # named scene lifecycle + ownership
-│       ├── mcp/             # MCP server (transport.ts, tools.ts, resources.ts)
-│       ├── audio/           # native WebAudio SFX + music, mute bus (engine.ts, lifecycle.ts)
-│       ├── storage/         # versioned key/value save persistence (backend.ts, migrate.ts)
-│       ├── platform/        # portal-SDK adapter layer (api.ts, lifecycle.ts, prefs.ts, adapters/{crazygames,poki,newgrounds,noop})
-│       ├── vfx/             # game-juice / visual-feedback layer (api.ts, lifecycle.ts, easing.ts, views.ts, state.ts, systems/{emit,particles,shake,pop,floating})
-│       ├── ui/              # PixiJS-native UI: screen stack + widgets + HUD + pointer hit-testing (widgets.ts, system.ts, api.ts, lifecycle.ts, state.ts)
-│       ├── tween/           # shared ECS-agnostic tweening advanced by one scheduler system (api.ts, advance.ts, easing.ts, state.ts)
-│       └── camera/          # 2D follow/shake/parallax camera over world-space layer containers; delegates animated moves + follow-lerp to app.tween (api.ts, apply.ts, transform.ts, state.ts)
+│   ├── index.ts             # Layer 2: createCore assembles the 27 plugins (16 runtime + 11 editor); exports createApp/createPlugin (+ createCore/createCoreConfig + field)
+│   └── plugins/             # one dir per plugin (index.ts, types.ts, api.ts, lifecycle.ts, README.md, __tests__/)
+├── editor/                  # Layer-3 @moku-labs/web (Preact) editor app consuming app["editor-bridge"]
 ├── tests/                   # framework-level unit + integration tests
-├── .planning/specs/         # design specs (intent)
+├── .planning/               # design specs (intent)
 ├── README.md
 ├── llms.txt
 └── llms-full.txt
 ```
 
-## Plugins
-
-Built/resolved in dependency order. (depends → resolved with `ctx.require`.)
-
-- **ecs** — data/runtime core: generational entities, archetype object-SoA storage, typed queries,
-  deferred command buffer, read-only introspection facet, typed world resource registry,
-  `world.tick`. | Complex | `defineComponent`/`spawn`/`query`/`addSystem`/`liveEntities`/
-  `entityCount`/`componentNames`/`componentsOf`/`componentByName`/`defineResource`/`setResource`/
-  `getResource`/`resource`/`hasResource`/`removeResource`/`tick` | events: none | depends: none.
-- **scheduler** — ordered stage contract; thin facade over the world. | Standard |
-  `addSystem(stage,fn)`/`tick`/`stages` | events: none | depends: ecs.
-- **renderer** — PixiJS v8 backend; owns the GPU `Application`, defines `Transform`, syncs
-  ECS→display objects on the `sync` stage, attaches plain-data primitives. First-class `headless`
-  config (auto-detected; skips Pixi/GPU, still defines `Transform` + sync). | Complex |
-  `Transform`/`attach`/`attachPrimitive`/`detach`/`render`/`screenshot`/`tree`/`getView`/`getStage`/
-  `getEntityView`/`markDirty` | new types: `PrimitiveSpec`, `PrimitiveStyle`, `SceneNode` | config: +`headless` |
-  events: none | depends: ecs, scheduler.
-- **input** — polled keyboard/pointer from DOM listeners → per-frame `InputSnapshot` on the `input`
-  stage; programmatic `keyDown`/`keyUp`/`keyPress` injection with alias normalization
-  (`"Space"`/`"Spacebar"`→`" "`, `"Esc"`→`"Escape"`). | Standard |
-  `snapshot`/`keyDown`/`keyUp`/`keyPress` | events: none | depends: scheduler.
-- **loop** — fixed-timestep rAF loop driving `scheduler.tick` then `renderer.render` each frame
-  (kernel-bypassing hot path); publishes + mutates the `Time` world resource in place each step;
-  `step()` returns a `TimeStepResult` clock snapshot. | Standard | `start`/`stop`/`step`/
-  `isRunning`/`time` | new type: `TimeStepResult` | events: none | depends: scheduler, renderer, ecs.
-- **assets** — Pixi v8 `Assets` wrapper: load/cache textures + bundles, build sprites. | Standard |
-  `load`/`loadBundle`/`sprite`/`get`/`isLoaded` | events: `assets:loaded` | depends: renderer.
-- **context** — binds the well-known `Assets` + `GameContext` world resources at start so systems
-  reach framework services via `world.resource(token)`; static API exposes the two tokens. |
-  Standard | `app.context` → `assets`/`game` | events: none | depends: ecs, assets.
-- **scene** — named scene lifecycle with entity-ownership tracking, clean transitions, bundle
-  pre-load. | Standard | `define`/`load`/`unload`/`currentScene`/`sceneNames`/`ownedEntities` |
-  events: `scene:loaded` | depends: ecs, renderer, assets.
-- **mcp** — first-class MCP server exposing the runtime to agents over stdio / Streamable HTTP /
-  in-page `inMemory` (env-aware default: `["stdio"]` Node-Bun, `["inMemory"]` browser; stdio guarded
-  on `process?.stdin`). 15 tools (4 read-only; 11 mutation/play gated by `enableMutations`). |
-  Complex | `isRunning`/`httpEndpoint`/`toolNames`/`clientTransport` | config: +`inMemoryGlobalKey` |
-  events: `game:reset` (`{ reason: "mcp" }`) | depends: ecs, scheduler, renderer, input, loop, assets, scene.
-- **audio** — native WebAudio SFX + music (zero runtime deps, no Howler/Pixi). Owns a small gain
-  graph `source → channelGain(sfx|music) → masterGain → destination` whose `masterGain` is the
-  **mute bus** the `platform` adapter ducks on ad breaks. Pooled one-shots (decoded-buffer
-  cache), looping music with fade, per-channel + master volume, user-gesture `unlock()` (no
-  autoplay). Headless-safe (every method no-ops without an `AudioContext`); owns the `AudioContext`
-  via onStart/onStop. | Standard | `unlock`/`load`/`play`/`playMusic`/`stopMusic`/`mute`/`unmute`/
-  `setMuted`/`isMuted`/`setVolume`/`getVolume` | new types: `Channel`, `PlayOptions`,
-  `PlayMusicOptions`, `StopMusicOptions` | events: `audio:muteChanged`, `audio:volumeChanged` |
-  depends: none (foundational, Wave 1).
-- **storage** — namespaced, versioned key/value save persistence with a migration chain behind a
-  pluggable synchronous `StorageBackend` seam. Safe default: probes `localStorage`, falls back to an
-  in-memory `Map` (partitioned/blocked/absent) — get/set never throw. Migration runs lazily on first
-  access, once (memoized); `setBackend()` (the `platform` CrazyGames adapter) resets it. No
-  events, no hooks, no lifecycle. | Standard | `get`/`set`/`has`/`remove`/`clear`/`keys`/
-  `isPersistent`/`getVersion`/`setBackend` | new types: `StorageBackend`, `Migration`, `Snapshot` |
-  config: `namespace`/`version`/`migrations` | events: none | depends: none (foundational, Wave 1).
-- **platform** — portal-SDK adapter layer (CrazyGames / Poki / Newgrounds / no-op) selected per build
-  via `ctx.env` (`config.portal "auto"` → `ctx.env.get(portalEnvVar)`; explicit config overrides;
-  unknown/headless → `none`). Promise-based ads that **capture-then-restore-pause** `loop` + mute
-  `audio` on settle (frequency-capped interstitials, re-entrancy guard, never reject); one
-  `PortalAdapter` interface + four `adapters/` implementations. Injects a portal-native
-  `StorageBackend` into `storage` via `setBackend()` (CrazyGames async data API bridged behind a sync
-  facade; Poki/Newgrounds keep localStorage). Persists + rehydrates `audio` mute/volume through
-  `storage` (hooks `audio:muteChanged`/`audio:volumeChanged`). Iframe-safe; owns the loaded SDK +
-  focus/visibility listeners via onStart/onStop (`ctx.global` WeakMap). No new package deps. | Complex |
-  `getPortal`/`gameplayStart`/`gameplayStop`/`loadingStart`/`loadingFinished`/`commercialBreak`/
-  `rewardedAd`/`isAdPlaying` | new types: `Portal`, `AdType`, `PortalAdapter`, `AdapterContext` |
-  config: `portal`/`portalEnvVar`/`pauseOnAd`/`minInterstitialSeconds`/`useNativeStorage`/`persistAudioPrefs` |
-  events: `platform:ready`, `platform:adStart`, `platform:adEnd` | depends: audio, loop, storage (Wave 2).
-- **vfx** — the game-juice / visual-feedback layer. ECS-native particle emitters + one-shot bursts
-  (each particle is an entity with `renderer.Transform` + a named `Particle`, drawn via
-  `renderer.attachPrimitive` so the renderer owns the view lifecycle; particles fade by scaling out
-  `startScale → endScale`), trauma-based screen shake (offsets the Pixi stage root by
-  `trauma² · shakeMaxOffset`, decays by `shakeDecay`), Transform scale-pop, hit-flash tint (snaps a
-  view's `tint` to a color then eases it back via `renderer.getEntityView`), floating rising/alpha-fading
-  damage/score `Text`, and pure easing curves + `lerp` (vfx ships its own identical table; a `tween`
-  dedupe via depends+ctx.require is deferred). `onStart` captures `renderer.Transform`, defines five named components
-  (`Emitter`/`Particle`/`Pop`/`Flash`/`FloatingText`), and registers six systems
-  (emit/particle/pop/flash/floating in `"update"`, shake in `"render"`); no `onStop` (the renderer disposes
-  every view). A single `maxParticles` budget spans every emitter + burst. Headless-safe (systems run;
-  only Pixi view creation guards on `renderer.getStage()`). No new package dep (Pixi via `renderer`). |
-  Complex | `createEmitter`/`configureEmitter`/`setEmitterEnabled`/`removeEmitter`/`burst`/`shake`/
-  `stopShake`/`pop`/`flash`/`floatText`/`easing`/`lerp` | new types: `EmitterSpec`, `BurstSpec`, `PopOptions`,
-  `FlashOptions`, `FloatTextOptions`, `EasingName` | config: `maxParticles`/`shakeDecay`/`shakeMaxOffset`/`defaultColor` |
-  events: none | depends: ecs, scheduler, renderer (Wave 3; registered after platform, before mcp).
-- **ui** — the PixiJS-native game-UI layer. A screen stack (`pushScreen`/`popScreen`/`replaceScreen`/
-  `clearScreens`/`topScreen`/`screenCount`) of modal cards (title / pause / game-over / upgrade); a
-  declarative widget set (`label`/`button`/`panel`/`bar`) described as plain data and built once into a
-  Pixi subtree under `renderer.getStage()` (retained-mode, opaque handles); a persistent HUD
-  (`addHud`/`removeHud`) mutated via `setText`/`setValue`/`setVisible`, resolved by `getWidget`; and a
-  single `"update"`-stage pointer/touch hit-test system that computes its own press/release edges from
-  `input.snapshot().pointer` and fires a button's `onTap` on release over the same armed button (modal
-  capture: only the top screen — or the HUD when the stack is empty — is tappable). `onStart` captures
-  `renderer.getStage()`, builds the root, and registers the system; no `onStop` (the renderer disposes
-  the whole subtree; in-run disposal is the API's job). Headless-safe (no stage → no root; every method +
-  the system are no-ops). No new package dep (Pixi via `renderer`). | Complex |
-  `pushScreen`/`popScreen`/`replaceScreen`/`clearScreens`/`topScreen`/`screenCount`/`addHud`/`removeHud`/
-  `getWidget`/`setText`/`setValue`/`setVisible`/`getRoot` | new types: `ScreenSpec`, `WidgetSpec`
-  (`LabelSpec`/`ButtonSpec`/`PanelSpec`/`BarSpec`), `ScreenHandle`, `WidgetHandle` | config:
-  `textColor`/`fontSize`/`fontFamily`/`buttonColor`/`buttonHoverColor`/`panelColor`/`panelAlpha`/
-  `backdropColor`/`backdropAlpha`/`padding`/`width`/`height` | events: none | depends: renderer,
-  scheduler, input (registered after vfx, before mcp).
-- **tween** — shared, ECS-agnostic tweening. `to`/`from` mutate the numeric props of any plain object
-  over time; `value` drives a scalar `onUpdate`; each tween supports `duration`/`easing` (named curve or
-  custom `(t)=>number`)/`delay`/`repeat`/`yoyo` and returns an opaque `TweenHandle`
-  (`stop`/`pause`/`resume`/`active` + a `done` Promise). Re-exposes the canonical 7-curve `easing` table
-  + `lerp`. One `"update"`-stage system advances all tweens by `dt` on the game clock, so a paused loop
-  freezes every tween for free (pause-safe, zero coupling to platform/loop). | Standard |
-  `to`/`from`/`value`/`killAll`/`count`/`easing`/`lerp` | new types: `TweenOptions`, `ValueTweenOptions`,
-  `TweenHandle`, `Easing`, `EasingName`, `NumericProperties` | config: `defaultDuration`/`defaultEasing`/
-  `updateStage`/`maxActive` | events: none | onStart-only (no onStop) | depends: scheduler only
-  (registered after ui, before mcp).
-- **camera** — a 2D game camera. `follow(target?)` continuously eases the centre toward a LIVE `{ x, y }`
-  (a Container / entity Transform value / bare point — no `ecs` edge); instant `setPosition`/`setZoom`/
-  `setRotation` and animated `moveTo`/`zoomTo`/`rotateTo` (delegate to `app.tween`, return a `TweenHandle`);
-  decaying `shake(intensity, duration)` (drives magnitude→0 via `app.tween.value`); parallax via
-  `world`/`addLayer(name, factor)`/`layer(name)`; and `screenToWorld`/`worldToScreen` mapping. Transforms
-  world-space LAYER containers it OWNS (world at stage index 0, below the ui overlay), NEVER the root stage
-  — so the HUD stays screen-fixed and parallax works. One `"sync"`-stage system eases centre→target (via
-  `app.tween.lerp`) and writes each layer's pivot/position/scale/rotation + shake offset. Pause-safe (rides
-  `scheduler.tick`) and headless-safe (numeric state + screen↔world still track). | Standard |
-  `follow`/`setPosition`/`moveTo`/`getPosition`/`setZoom`/`zoomTo`/`getZoom`/`setRotation`/`rotateTo`/
-  `getRotation`/`shake`/`world`/`addLayer`/`layer`/`screenToWorld`/`worldToScreen` | new types: `Layer`,
-  `FollowTarget`, `Point`, `MoveOptions`, `ShakeOptions` | config: `zoom`/`minZoom`/`maxZoom`/`followLerp`/
-  `width`/`height`/`updateStage` | events: none | onStart-only (no onStop) | depends: renderer + scheduler
-  + tween (registered after tween, before mcp). EDITOR DELTA: gains `reset()` (recentre/zoom/rotation/follow/shake).
-
-**Editor subsystem (Layer-2, additive — #17–#24, registered after `mcp`).** In-browser Unity-style editor over the live ECS; single write-authority, poll-on-epoch reactivity, pay-for-what-you-use (a non-editor game pays nothing). Supported by extension deltas: `ecs` gains `changeEpoch()` + `setActiveStages`/`activeStages`; `scheduler` forwards `setActiveStages`/`activeStages`; `assets` gains `entries`/`manifest`/`metadata`; `tween`/`vfx` gain `reset()`.
-- **commands** — the SINGLE validated write-authority; owns the branded save-durable `EditorId`. | Standard | `apply`/`applyRaw`/`restore`/`resolve`/`editorIdOf`/`setValidator`/`count` | events: `commands:restored` | depends: ecs.
-- **reflection** — field-schema registry for named components (infer or typed `field.*` schema; `validate`). | Standard | `describe`/`register`/`validate`/`field` | events: none | depends: ecs.
-- **serialization** — scene (de)serializer keyed by `EditorId`; migrates via `storage`, validates via `reflection`, routes loads through `commands.restore`. | Complex | `serialize`/`deserialize`/`save`/`load`/`list`/`export`/`import` | events: `serialization:loaded` | depends: ecs, storage, commands, reflection.
-- **editor-selection** — viewport picking + selection (`enable`/`disable` flip Pixi eventMode on one camera layer; `pickAt` via a stamped handle). | Standard | `enable`/`disable`/`select`/`toggle`/`clear`/`selected`/`isSelected`/`pickAt` | events: `editor-selection:changed` | depends: ecs, renderer, camera, input.
-- **editor-history** — undo/redo authority (`applyTracked` wraps `commands.applyRaw`; gesture coalescing; ring buffer; clears on `commands:restored`). | Standard | `applyTracked`/`undo`/`redo`/`canUndo`/`canRedo`/`beginGesture`/`endGesture`/`clear` | events: none | depends: commands.
-- **editor-gizmos** — direct-manipulation translate gizmo (overlay outside the ECS; anti-drift via `camera.screenToWorld` per event; commits via `commands`, coalesced via an injected sink). | Complex | `enable`/`disable`/`setMode`/`setSnap`/`mode`/`setGestureSink` | events: none | depends: renderer, camera, editor-selection, commands.
-- **editor-runtime** — edit/play FSM via scheduler stage-gating; `stop()` restores the snapshot then `reset()`s tween/vfx/camera. Does NOT gate at boot (pay-for-what-you-use). | Complex | `enterEdit`/`enterPlay`/`stop`/`step`/`mode`/`isPlaying` | events: `editor-runtime:modeChanged` | depends: loop, scheduler, serialization, commands, tween, vfx, camera.
-- **editor-bridge** — the terminal facade (Layer-3 web editor's single seam); `snapshot()` poll-on-epoch; forwards writes through the authority; wires `commands.setValidator(reflection.validate)` at onStart. Registered LAST. | Complex | `snapshot`/`apply`/`setField`/`select`/`clearSelection`/`undo`/`redo`/`play`/`stop`/`step`/`save`/`load`/`describe` | events: none | depends: ecs, reflection, commands, editor-selection, editor-gizmos, editor-history, editor-runtime, serialization, mcp.
-
 ## Requirements
 
-- Node >= 24, Bun >= 1.3.14 (use bun exclusively). TypeScript strict +
+- Node `>= 24`, Bun `>= 1.3.14` (use bun exclusively). TypeScript strict +
   `exactOptionalPropertyTypes` + `noUncheckedIndexedAccess`.
-- Dependencies: `@moku-labs/core`, `@moku-labs/common`, `pixi.js@^8`. Composable with
+- Dependencies: `@moku-labs/core` (1.5.0), `@moku-labs/common` (0.3.0), `pixi.js@^8`. Composable with
   `@moku-labs/web`. mcp adds `@modelcontextprotocol/sdk`, `hono`, `zod`.
 
 ## Scripts
 
-`bun run build` (tsdown) · `bun run lint` (biome + eslint) · `bun run lint:fix` ·
-`bun run format` · `bun run test` (vitest run) · `bun run test:unit` ·
+`bun run build` (tsdown) · `bun run typecheck` (tsc --noEmit) · `bun run lint` (biome + eslint) ·
+`bun run lint:fix` · `bun run format` · `bun run test` (vitest run) · `bun run test:unit` ·
 `bun run test:integration` · `bun run test:coverage`.

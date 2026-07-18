@@ -91,7 +91,13 @@ export async function startEditor(mountElement: HTMLElement): Promise<EditorHand
       "editor-selection": { multiSelect: true, marquee: true },
       "editor-gizmos": { translateOnly: false },
       camera: { editorControls: true },
-      input: { wheel: true, preventDefault: true }
+      // `preventDefault` is a single flag shared by the input plugin's keyboard AND wheel listeners
+      // (there is no per-key scope) — leaving it `true` silently calls `event.preventDefault()` on
+      // EVERY keydown site-wide, including Tab/Shift+Tab, which breaks native keyboard focus
+      // navigation across the whole editor chrome (menus, toolbar, panels). The editor's fixed
+      // 100dvh chrome (design-context §5) never scrolls the document, so there is nothing for a
+      // wheel-hijack guard to protect either. Leave it at the plugin's own conservative default.
+      input: { wheel: true, preventDefault: false }
     }
   });
   await gameApp.start();
