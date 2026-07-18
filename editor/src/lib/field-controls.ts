@@ -89,6 +89,20 @@ const vector2Control = (descriptor: Reflection.Vector2Field, value: unknown): HT
   return container;
 };
 
+// A reference control (entity-ref/asset-ref) — a read-only name chip showing the current target. The
+// interactive "⋯" target picker (D9) lands in A4; until then the reference is displayed, not edited.
+const referenceInput = (
+  descriptor: Reflection.EntityRefField | Reflection.AssetRefField,
+  value: unknown
+): HTMLInputElement => {
+  const input = document.createElement("input");
+  input.type = "text";
+  input.value = value === undefined || value === null ? "" : String(value);
+  input.readOnly = true;
+  input.disabled = descriptor.readonly === true;
+  return input;
+};
+
 // Dispatch to the control builder for the descriptor's kind.
 const buildControl = (descriptor: Reflection.FieldDescriptor, value: unknown): HTMLElement => {
   switch (descriptor.kind) {
@@ -109,6 +123,10 @@ const buildControl = (descriptor: Reflection.FieldDescriptor, value: unknown): H
     }
     case "vector2": {
       return vector2Control(descriptor, value);
+    }
+    case "entity-ref":
+    case "asset-ref": {
+      return referenceInput(descriptor, value);
     }
   }
 };
@@ -166,7 +184,7 @@ export function renderControl(descriptor: Reflection.FieldDescriptor, value: unk
  * validation is the bridge's job via `reflection.validate`, not the control's.
  *
  * The concrete union return type (never `unknown`) keeps the `switch` exhaustive at compile time:
- * add a 7th `FieldDescriptor` kind without a case here and TS2366 fails the build — matching the
+ * add another `FieldDescriptor` kind without a case here and TS2366 fails the build — matching the
  * guarantee `renderControl` already gets from its `HTMLElement` return.
  *
  * @param el - The control element built by {@link renderControl}.
@@ -197,6 +215,10 @@ export function readControl(
     }
     case "vector2": {
       return { x: axisValue(el, "x"), y: axisValue(el, "y") };
+    }
+    case "entity-ref":
+    case "asset-ref": {
+      return asInput(el).value;
     }
   }
 }

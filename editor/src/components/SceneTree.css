@@ -36,17 +36,28 @@
   }
 
   li {
-    padding: 0.3rem 0.5rem;
-    border-radius: 0.25rem;
+    position: relative;
+    padding: 0.3rem 0.5rem 0.3rem 0.6rem;
+    border-radius: var(--radius);
     cursor: pointer;
 
     &:hover {
       background: var(--surface-control);
     }
 
+    /* Selection is never colour-only: an indigo-tinted fill plus a solid 3px indigo left-bar. */
     &[data-selected] {
-      background: var(--accent);
-      color: var(--accent-contrast);
+      background: var(--sel-fill);
+      color: var(--text-bright);
+    }
+
+    &[data-selected]::before {
+      content: "";
+      position: absolute;
+      inset-block: 0;
+      inset-inline-start: 0;
+      inline-size: var(--sel-bar-w);
+      background: var(--sel-bar);
     }
   }
 }

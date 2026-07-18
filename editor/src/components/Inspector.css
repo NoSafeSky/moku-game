@@ -46,7 +46,7 @@
     background: var(--surface-control);
     color: var(--text-primary);
     border: 1px solid var(--border-default);
-    border-radius: 0.25rem;
+    border-radius: var(--radius);
   }
 
   [data-field-kind="vector2"] {
@@ -55,7 +55,7 @@
   }
 
   [data-invalid] {
-    border-color: var(--accent);
+    border-color: var(--error);
   }
 
   /* Component group heading the inspector island injects — spans both label/control columns. */

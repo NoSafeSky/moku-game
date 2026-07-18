@@ -1,0 +1,41 @@
+@scope ([data-island="status-bar"]) {
+  :scope {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding-inline: 0.6rem;
+    background: var(--surface-raised);
+    border-block-start: 1px solid var(--border-seam);
+    font-size: var(--fs-xs);
+    color: var(--text-muted);
+  }
+
+  [data-hints] {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    overflow: hidden;
+  }
+
+  [data-chip] {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    white-space: nowrap;
+  }
+
+  kbd {
+    padding: 0.05rem 0.3rem;
+    font-size: var(--fs-xs);
+    color: var(--text-primary);
+    background: var(--surface-toolbar);
+    border: 1px solid var(--divider);
+    border-radius: var(--radius);
+  }
+
+  [data-readout] {
+    margin-inline-start: auto;
+    white-space: nowrap;
+    color: var(--text-primary);
+  }
+}

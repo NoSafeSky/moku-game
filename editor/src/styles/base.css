@@ -1,7 +1,33 @@
 @layer base {
   body {
-    font-family: system-ui, sans-serif;
-    background: var(--surface-page);
+    font-family: var(--font-ui);
+    font-size: var(--fs-ui);
+    line-height: 1.4;
+    background: var(--surface-ground);
     color: var(--text-primary);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* The mono voice carries every number — tabular + right-aligned is the "instrument" cue. */
+  kbd,
+  [data-mono] {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /*
+   * Motion is deliberately minimal (only splitter drags, an import shimmer, a focus pulse). Honour a
+   * reduced-motion preference globally — near-instant, so state still swaps but nothing animates.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 }

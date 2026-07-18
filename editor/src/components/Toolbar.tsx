@@ -1,4 +1,4 @@
-/** @file Toolbar panel — static action buttons; the toolbar island wires clicks + reflects state. */
+/** @file Toolbar panel — transport + history action buttons; the toolbar island wires clicks + reflects state. */
 
 /** One toolbar action button; the island wires its click and reflects `data-disabled`/`data-mode`. */
 function Action({ action, label }: { action: string; label: string }) {
@@ -9,10 +9,19 @@ function Action({ action, label }: { action: string; label: string }) {
   );
 }
 
+/**
+ * The second band: history + transport action buttons the toolbar island wires to `bridge.*`. The brand
+ * now lives in the menu bar; the transform-tool / pivot-space groups are added when the toolbar extends (A3).
+ *
+ * @returns The toolbar chrome.
+ * @example
+ * ```tsx
+ * <Toolbar />
+ * ```
+ */
 export function Toolbar() {
   return (
-    <section data-island="toolbar" data-panel="toolbar" aria-label="Toolbar">
-      <strong data-brand>Moku Editor</strong>
+    <section data-island="toolbar" data-band="toolbar" aria-label="Toolbar">
       <div data-group="history">
         <Action action="undo" label="Undo" />
         <Action action="redo" label="Redo" />

@@ -1,15 +1,80 @@
 @scope ([data-editor-shell]) {
   :scope {
     display: grid;
-    grid-template-rows: auto 1fr auto;
+    grid-template-rows: var(--band-menu) var(--band-toolbar) minmax(0, 1fr) var(--band-status);
     block-size: 100dvh;
-    background: var(--surface-page);
+    background: var(--surface-ground);
     color: var(--text-primary);
   }
+}
 
-  [data-editor-body] {
+/* The workspace dock — a splitter-divided grid the `workspace` island resizes via inline custom props. */
+@scope ([data-island="workspace"]) {
+  :scope {
     display: grid;
-    grid-template-columns: 16rem 1fr 20rem;
+    grid-template-columns:
+      var(--w-hierarchy, 240px)
+      var(--splitter)
+      minmax(0, 1fr)
+      var(--splitter)
+      var(--w-inspector, 300px);
+    grid-template-rows: minmax(0, 1fr);
     min-block-size: 0;
+    background: var(--surface-ground);
+  }
+
+  /* Center column: Scene View over the Project region, split by a horizontal splitter. */
+  [data-region="center"] {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) var(--splitter) var(--h-project, 160px);
+    grid-template-columns: minmax(0, 1fr);
+    min-inline-size: 0;
+  }
+
+  /* Splitter / resize handle — a thin hairline strip with a short accent grip mark. */
+  [data-splitter] {
+    position: relative;
+    background: var(--border-seam);
+    z-index: 1;
+  }
+
+  [data-splitter="hierarchy"],
+  [data-splitter="inspector"] {
+    cursor: col-resize;
+  }
+
+  [data-splitter="project"] {
+    cursor: row-resize;
+  }
+
+  [data-splitter]::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    margin: auto;
+    background: var(--divider);
+  }
+
+  [data-splitter="hierarchy"]::after,
+  [data-splitter="inspector"]::after {
+    inline-size: 100%;
+    block-size: 22px;
+  }
+
+  [data-splitter="project"]::after {
+    inline-size: 22px;
+    block-size: 100%;
+  }
+
+  [data-splitter]:hover,
+  [data-splitter]:hover::after {
+    background: var(--accent);
+  }
+
+  /* The band actively being dragged reads full accent (the island stamps [data-resizing="<key>"]). */
+  :scope[data-resizing="hierarchy"] [data-splitter="hierarchy"],
+  :scope[data-resizing="inspector"] [data-splitter="inspector"],
+  :scope[data-resizing="project"] [data-splitter="project"] {
+    background: var(--accent);
   }
 }

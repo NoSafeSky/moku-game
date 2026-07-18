@@ -1,0 +1,59 @@
+@scope ([data-island="menu-bar"]) {
+  :scope {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding-inline: 0.6rem;
+    background: var(--surface-raised);
+    border-block-end: 1px solid var(--border-seam);
+  }
+
+  [data-brand] {
+    margin-inline-end: 0.75rem;
+    font-size: var(--fs-lg);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--text-bright);
+  }
+
+  [data-menus] {
+    display: flex;
+    gap: 1px;
+  }
+
+  [data-menu] {
+    padding: 0.2rem 0.55rem;
+    font-size: var(--fs-ui);
+    color: var(--text-primary);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    cursor: pointer;
+
+    &:hover {
+      background: var(--sel-fill);
+      color: var(--text-bright);
+    }
+
+    /* The A4 island stamps [data-open] on the active menu. */
+    &[data-open] {
+      background: var(--sel-fill);
+      color: var(--accent-bright);
+      border-color: var(--accent);
+    }
+  }
+
+  [data-scene] {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-inline-start: auto;
+    font-size: var(--fs-sm);
+    color: var(--text-muted);
+  }
+
+  [data-dirty] {
+    color: var(--warn);
+    font-size: 0.7rem;
+  }
+}
