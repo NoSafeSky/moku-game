@@ -321,7 +321,7 @@ export const createApi = (ctx: AssetStoreApiContext): Api => {
      * @returns The read-only projection of `state.meta` ∪ `state.urls`.
      * @example
      * ```ts
-     * for (const asset of api.entries()) console.info(asset.alias);
+     * const tiles = api.entries().map((asset) => ({ alias: asset.alias, src: asset.url }));
      * ```
      */
     entries(): readonly StoredAsset[] {

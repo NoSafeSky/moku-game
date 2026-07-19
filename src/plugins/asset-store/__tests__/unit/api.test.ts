@@ -19,7 +19,9 @@ const makeBackend = (overrides?: Partial<AssetBackend>): AssetBackend => ({
   open: vi.fn(async () => true),
   put: vi.fn(async () => true),
   get: vi.fn(async () => undefined),
-  delete: vi.fn(async () => {}),
+  delete: vi.fn(async () => {
+    /* no-op mock */
+  }),
   list: vi.fn(async () => []),
   close: vi.fn(),
   ...overrides

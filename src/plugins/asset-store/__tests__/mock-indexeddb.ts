@@ -106,7 +106,9 @@ const placeholderDatabase: IdbDatabaseLike = {
   objectStoreNames: { contains: () => false },
   createObjectStore: () => makeObjectStore(new Map()),
   transaction: () => ({ objectStore: () => makeObjectStore(new Map()) }),
-  close() {}
+  close() {
+    /* no-op — mock IDBDatabase.close() */
+  }
 };
 
 /** Settle `request` on a microtask, either failing (when `fail`) or succeeding with `onSettle`. */
@@ -161,7 +163,9 @@ function makeDatabase(records: FakeRecordStore, failPut: boolean | undefined): I
     objectStoreNames: { contains: () => true },
     createObjectStore: () => makeObjectStore(records, { failPut }),
     transaction: () => ({ objectStore: () => makeObjectStore(records, { failPut }) }),
-    close() {}
+    close() {
+      /* no-op — mock IDBDatabase.close() */
+    }
   };
 }
 
