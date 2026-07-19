@@ -32,17 +32,44 @@ export type RenderSurface = {
 };
 
 /**
- * The minimal assets surface the injected texture resolver reads: alias → the loaded texture, or
- * `undefined` when it is not loaded.
+ * The minimal assets surface the injected texture resolver reads: `get` returns the already-loaded
+ * texture for an alias (or `undefined`), and `loadUrl` JIT-loads one from an explicit url, caching
+ * it under the stable alias.
  *
- * The return type is deliberately the opaque `object` — naming the concrete texture type would
- * mean naming a Pixi type, which is exactly the isolation invariant this plugin exists to uphold
- * (Pixi is confined to `renderer`). graphics-2d never dereferences the value; it only forwards it
- * to the renderer as an opaque `TextureHandle`. The real `assets` API satisfies this structurally.
+ * Both texture-typed values are the opaque `object` — naming the concrete texture type would mean
+ * naming a Pixi type, which is exactly the isolation invariant this plugin exists to uphold (Pixi
+ * is confined to `renderer`). graphics-2d never dereferences either value; it forwards `get`'s
+ * result to the renderer as an opaque `TextureHandle` and `void`s `loadUrl`'s promise (the load
+ * lands out of band; the pending-texture retry re-attaches). The real `assets` API satisfies this
+ * structurally — its `Texture` is assignable to `object`.
  */
 export type TextureLookup = {
   /** The loaded texture for an alias as an opaque value, or `undefined` when it is not loaded. */
   get(alias: string): object | undefined;
+  /**
+   * (Phase 2) JIT-load a texture from an explicit url, caching it under the stable `alias` — the
+   * seam that turns an `asset-store` `blob:` url into a Pixi-cached, alias-addressable texture. The
+   * resolver fires this and ignores the returned promise; the resolved value is the opaque `object`
+   * for the same Pixi-isolation reason as `get`.
+   */
+  loadUrl(alias: string, url: string): Promise<object>;
+};
+
+/**
+ * The minimal asset-store surface the store-aware resolver + the pending-texture retry read: a
+ * synchronous alias → live `blob:` url (for the JIT load) and a synchronous membership test (to
+ * decide whether an unloaded alias is a store asset worth marking pending, versus an unknown alias
+ * that stays a placeholder forever).
+ *
+ * Declared structurally so this plugin depends on exactly the two synchronous getters it calls; the
+ * real `asset-store` API satisfies it. The store contributes only a url STRING — no blob, no Pixi
+ * type — so `graphics-2d` stays `pixi.js`-free.
+ */
+export type StoreLookup = {
+  /** The live `blob:` url minted for an alias this session, or `undefined`. Synchronous. */
+  url(alias: string): string | undefined;
+  /** Whether the store holds an asset under this alias. Synchronous. */
+  has(alias: string): boolean;
 };
 
 /** SpriteRenderer component value — a textured sprite built from `assets.get(sprite)`. */
@@ -100,6 +127,14 @@ export type State = {
   readonly tracked: Map<Entity, TrackedView>;
   /** The world change-epoch observed at the last render-sync run; the system early-outs when unchanged. */
   lastEpoch: number;
+  /**
+   * (Phase 2) Sprite entities whose texture resolved to a placeholder — the alias is not yet loaded
+   * (a store-backed blob loading JIT). Checked BEFORE the epoch early-out; once `assets.get(alias)`
+   * lands, the sprite is re-attached and dropped. Empty on the steady state ⇒ the system returns to
+   * a pure epoch-gated early-out. Populated at sprite reconcile when `assets.get` misses but
+   * `store.has` hits.
+   */
+  readonly pending: Set<Entity>;
 };
 
 /** graphics-2d public API surface (`app["graphics-2d"]`). */

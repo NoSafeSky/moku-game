@@ -1,6 +1,6 @@
 # graphics-2d
 
-> Standard plugin — the Phase-1 render-component library. Defines the `SpriteRenderer` + `Shape` components, registers their reflection schemas + component-registry catalog entries, runs a `changeEpoch`-gated `sync`-stage system that reconciles those components into Pixi views via the renderer's public API, and injects an assets→renderer texture resolver. "The component IS the renderable." No `pixi.js` import.
+> Standard plugin — the render-component library. Defines the `SpriteRenderer` + `Shape` components, registers their reflection schemas + component-registry catalog entries, runs a `changeEpoch`-gated `sync`-stage system that reconciles those components into Pixi views via the renderer's public API, and injects a store-aware `assets` + `asset-store` → renderer texture resolver (an imported store alias renders via a just-in-time `blob:`-url load, re-attached by a pending-texture retry once the load lands). "The component IS the renderable." No `pixi.js` import.
 
 Adding a `Shape` or `SpriteRenderer` to an entity is what makes that entity render. Nothing else is required — no island reaches into the renderer, no view is built by hand. `graphics-2d` owns the two authorable render components and one system that keeps their values and the renderer's views in agreement.
 
@@ -10,14 +10,22 @@ The plugin owns **no external resource**: its views are renderer-owned scene dat
 
 `graphics-2d` never imports `pixi.js`. It touches the render backend **only** through the renderer's plain-data surface — `attachPrimitive` / `attachSprite` / `detach` / `markDirty` / `setTextureResolver`. Specs go in as plain data (`{ shape: "rect", width, height, fill: 0xff0000 }`); `boolean`/`void` come back.
 
-The one render-backend value that flows *through* this plugin is the result of `assets.get(alias)`. It is passed **straight into** the renderer's texture resolver as an opaque `TextureHandle` — never dereferenced, never named as a Pixi type. The seam is typed narrowly for exactly this reason:
+The one render-backend value that flows *through* this plugin is the result of `assets.get(alias)` / `assets.loadUrl(alias, url)`. It is passed **straight into** the renderer's texture resolver as an opaque `TextureHandle` — never dereferenced, never named as a Pixi type. The seams are typed narrowly for exactly this reason:
 
 ```ts
 // types.ts — naming the concrete texture type would mean naming a Pixi type.
-export type TextureLookup = { get(alias: string): object | undefined };
+export type TextureLookup = {
+  get(alias: string): object | undefined;
+  loadUrl(alias: string, url: string): Promise<object>;
+};
+// the asset-store contributes only a URL string — no blob, no Pixi type.
+export type StoreLookup = {
+  url(alias: string): string | undefined;
+  has(alias: string): boolean;
+};
 ```
 
-The real `assets` API satisfies that structurally, so the resolver needs no `pixi.js` import to bridge `assets` → `renderer`.
+The real `assets` and `asset-store` APIs satisfy those structurally, so the resolver needs no `pixi.js` import to bridge `assets` + `asset-store` → `renderer`.
 
 ## API
 
@@ -74,6 +82,16 @@ A **rebuild** is `detach` + attach + `markDirty`, not an in-place edit: a `kind`
 
 **One renderable per entity (P1).** `renderer.views` is keyed by entity, so an entity carrying both `Shape` and `SpriteRenderer` collides to a single view. Sprites are processed after shapes, so the **sprite wins**; an entity is expected to carry at most one renderable.
 
+## Texture resolution (assets + asset-store)
+
+The injected resolver widens what a `SpriteRenderer.sprite` alias can reach without any island touching the renderer. It resolves an alias in three steps:
+
+1. `assets.get(alias)` present → return it (a manifest asset, or a store asset already loaded — the fast path; unchanged from before).
+2. else the `asset-store` holds a live `blob:` url for the alias → fire-and-forget `assets.loadUrl(alias, url)` (caches the texture under the **stable alias**) and return `undefined`, so the renderer draws its placeholder until the load lands.
+3. else → `undefined` (unknown alias → placeholder).
+
+The resolver stays a pure `alias → handle` function. Because a just-in-time load completes **out of band** — bumping no change epoch — the render-sync system runs a **pending-texture retry** *before* its epoch gate: when a sprite reconciles with an alias that `assets.get` misses but `store.has` hits, the entity is recorded in `state.pending`; each subsequent tick re-checks it, and once `assets.get(alias)` resolves the sprite is re-attached (`detach` + `attachSprite` + `markDirty`) and dropped from pending. Once `pending` drains, the system returns to the pure epoch-gated early-out — so an imported store alias renders as soon as its texture is ready, at zero steady-state cost, with the app never pre-loading. `SpriteRenderer.sprite` stays a plain alias string; the store's blob and `blob:` url are never serialized.
+
 ## Reflection + catalog registration
 
 At `onStart` the plugin registers a typed schema per component, so `reflection.describe` returns typed descriptors (registered always wins over inference) and `reflection.validate` — wired into `commands.setValidator` by `editor-bridge` — rejects a bad write *before* it reaches SoA storage:
@@ -89,7 +107,7 @@ It also registers three **Add-Component catalog entries** into `component-regist
 
 ## Dependencies
 
-`[ecs, renderer, reflection, component-registry, assets]` — exactly five, all live edges:
+`[ecs, renderer, reflection, component-registry, assets, asset-store]` — exactly six, all live edges:
 
 | Plugin | Used for |
 | --- | --- |
@@ -97,11 +115,12 @@ It also registers three **Add-Component catalog entries** into `component-regist
 | `renderer` | `attachPrimitive`/`attachSprite`/`detach`/`markDirty` + `setTextureResolver` |
 | `reflection` | `register("SpriteRenderer"/"Shape", …)` and the `field.*` builders |
 | `component-registry` | `register(entry)` for the three catalog entries |
-| `assets` | `get(alias)` inside the injected texture resolver |
+| `assets` | `get(alias)` (fast path) + `loadUrl(alias, url)` (JIT store load) inside the injected resolver |
+| `asset-store` | `url(alias)` / `has(alias)` (synchronous) inside the resolver + the pending-texture retry |
 
 There is **no edge to `hierarchy`**, though this plugin's `sync` system is meant to run after hierarchy's world-transform system. That ordering comes from **registration order** (`graphics-2d` is assembled after `hierarchy`), not a dependency edge — graphics-2d calls nothing on hierarchy, so an edge would be dead. Correctness does not depend on it either: both systems only *mark entities dirty*, and the renderer composes world-space position by **pulling** the current transforms at position time.
 
-> The framework plugin array must keep `graphics2dPlugin` **after** `hierarchyPlugin`, with an inline breadcrumb comment at that call site, so a future reorder is a conscious choice rather than a silent regression.
+> The framework plugin array must keep `graphics2dPlugin` **after** `hierarchyPlugin` **and after** `assetStorePlugin` (its texture resolver reads `store.url(alias)`), each with an inline breadcrumb comment at that call site, so a future reorder is a conscious choice rather than a silent regression.
 
 ## Usage Example
 

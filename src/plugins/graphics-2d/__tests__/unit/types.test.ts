@@ -10,7 +10,7 @@
  * and no Pixi type reaches the public surface — the render seam is the plain-data `RenderSurface`.
  */
 import { describe, expect, expectTypeOf, it } from "vitest";
-import type { Component } from "../../../ecs/types";
+import type { Component, Entity } from "../../../ecs/types";
 import type { PrimitiveSpec, SpriteSpec } from "../../../renderer/types";
 import type {
   Api,
@@ -20,6 +20,8 @@ import type {
   ShapeValue,
   SpriteRendererValue,
   State,
+  StoreLookup,
+  TextureLookup,
   TrackedView
 } from "../../types";
 
@@ -137,6 +139,23 @@ describe("graphics-2d State", () => {
     expectTypeOf<TrackedView["kind"]>().toEqualTypeOf<RenderableKind>();
     expectTypeOf<TrackedView["sig"]>().toEqualTypeOf<string>();
     expectTypeOf<State["lastEpoch"]>().toEqualTypeOf<number>();
+  });
+
+  it("(Phase 2) tracks pending sprites as a set of entities", () => {
+    expectTypeOf<State["pending"]>().toEqualTypeOf<Set<Entity>>();
+  });
+});
+
+describe("graphics-2d texture + store lookups (Phase 2)", () => {
+  it("keeps the assets seam Pixi-free — texture values are the opaque object, never a Pixi type", () => {
+    expectTypeOf<TextureLookup["get"]>().returns.toEqualTypeOf<object | undefined>();
+    expectTypeOf<TextureLookup["loadUrl"]>().returns.toEqualTypeOf<Promise<object>>();
+    expectTypeOf<TextureLookup["loadUrl"]>().parameters.toEqualTypeOf<[string, string]>();
+  });
+
+  it("keeps the store seam to the two synchronous string/boolean getters", () => {
+    expectTypeOf<StoreLookup["url"]>().returns.toEqualTypeOf<string | undefined>();
+    expectTypeOf<StoreLookup["has"]>().returns.toEqualTypeOf<boolean>();
   });
 });
 

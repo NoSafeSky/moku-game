@@ -14,6 +14,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { coreConfig } from "../../../../config";
+import { assetStorePlugin } from "../../../asset-store";
 import { assetsPlugin } from "../../../assets";
 import { cameraPlugin } from "../../../camera";
 import { commandsPlugin } from "../../../commands";
@@ -47,6 +48,7 @@ const PLUGINS = [
   rendererPlugin,
   inputPlugin,
   loopPlugin,
+  assetStorePlugin,
   assetsPlugin,
   scenePlugin,
   storagePlugin,

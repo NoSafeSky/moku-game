@@ -16,7 +16,9 @@ import type {
   RenderSurface,
   ShapeValue,
   SpriteRendererValue,
-  State
+  State,
+  StoreLookup,
+  TextureLookup
 } from "./types";
 
 /**
@@ -30,6 +32,16 @@ export type RenderSyncContext = {
   readonly renderer: RenderSurface;
   /** The ECS world (queried for renderables and liveness). */
   readonly world: World;
+  /**
+   * (Phase 2) The assets `get` seam — read to decide whether a sprite's alias has finished loading
+   * (fast path / pending resolution). Never dereferenced; only presence is checked.
+   */
+  readonly assets: TextureLookup;
+  /**
+   * (Phase 2) The asset-store `has` seam — read to tell a store-backed alias still loading (mark
+   * pending) from an unknown alias (leave it a placeholder).
+   */
+  readonly store: StoreLookup;
 };
 
 /**
@@ -143,6 +155,14 @@ export const createRenderSyncSystem = (ctx: RenderSyncContext): System => {
           flipX: sprite.flipX
         });
       });
+
+      // (Phase 2) Track a store-backed alias that has not finished loading, so the pending-texture
+      // retry re-attaches it once `assets.get` can resolve it. An already-loaded alias (manifest or
+      // store) needs no retry, and an unknown alias would retry forever — both leave `pending`.
+      const awaitingLoad =
+        ctx.assets.get(sprite.sprite) === undefined && ctx.store.has(sprite.sprite);
+      if (awaitingLoad) ctx.state.pending.add(entity);
+      else ctx.state.pending.delete(entity);
     }
   };
 
@@ -178,7 +198,57 @@ export const createRenderSyncSystem = (ctx: RenderSyncContext): System => {
     }
   };
 
+  /**
+   * (Phase 2) Re-attach every pending sprite whose JIT texture load has landed.
+   *
+   * A sprite goes pending (in {@link reconcileSprites}) when its alias is a store asset that
+   * `assets.get` cannot yet resolve — the injected resolver returned the renderer's placeholder and
+   * kicked `assets.loadUrl`. That load completes out of band, bumping NO change epoch, so this pass
+   * — deliberately run ahead of the epoch gate — is what turns the placeholder into the real
+   * texture: once `assets.get(alias)` resolves, `detach` + `attachSprite` + `markDirty` re-stages
+   * the sprite and the entity leaves `pending`. The re-attach carries the same value signature, so
+   * `tracked` is untouched; only the underlying texture changed. An entity that died or dropped its
+   * SpriteRenderer while pending is simply forgotten (its view is detached by
+   * {@link reconcileRemovals}). Returns immediately when `pending` is empty, so the steady state
+   * costs a single size check and the system falls back to the pure epoch-gated early-out.
+   *
+   * @example
+   * ```ts
+   * retryPending(); // no-op unless a store-backed sprite is mid-load
+   * ```
+   */
+  const retryPending = (): void => {
+    if (ctx.state.pending.size === 0) return;
+
+    const { spriteToken } = ctx.state;
+    if (!spriteToken) return;
+
+    for (const entity of ctx.state.pending) {
+      const sprite = ctx.world.isAlive(entity) ? ctx.world.get(entity, spriteToken) : undefined;
+      if (!sprite) {
+        ctx.state.pending.delete(entity); // died or lost its SpriteRenderer while loading
+        continue;
+      }
+      if (ctx.assets.get(sprite.sprite) === undefined) continue; // still loading — keep waiting
+
+      ctx.renderer.detach(entity);
+      ctx.renderer.attachSprite(entity, {
+        alias: sprite.sprite,
+        tint: sprite.tint,
+        flipX: sprite.flipX
+      });
+      ctx.renderer.markDirty(entity);
+      ctx.state.pending.delete(entity);
+    }
+  };
+
   return (): void => {
+    // (Phase 2) Retry pending textures BEFORE the epoch gate: a JIT load that landed produces no
+    // world write, so a pending sprite must re-attach on the load's own schedule, not wait for the
+    // next authored change. Once `pending` drains this is a single size check, so the steady state
+    // still pays only the epoch compare below.
+    retryPending();
+
     const epoch = ctx.world.changeEpoch();
     if (epoch === ctx.state.lastEpoch) return;
     ctx.state.lastEpoch = epoch;

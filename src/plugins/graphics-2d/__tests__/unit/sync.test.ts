@@ -11,7 +11,14 @@ import type { Component, Entity, World } from "../../../ecs/types";
 import type { PrimitiveSpec, SpriteSpec } from "../../../renderer/types";
 import { createState } from "../../state";
 import { createRenderSyncSystem } from "../../sync";
-import type { RenderSurface, ShapeValue, SpriteRendererValue, State } from "../../types";
+import type {
+  RenderSurface,
+  ShapeValue,
+  SpriteRendererValue,
+  State,
+  StoreLookup,
+  TextureLookup
+} from "../../types";
 
 /** A stub component token of the same shape `onStart` stores on state. */
 const makeToken = <T>(id: number): Component<T> =>
@@ -138,6 +145,43 @@ const startedState = (): State => {
 };
 
 /**
+ * A controllable assets + asset-store pair for the Phase-2 store-aware / pending paths.
+ *
+ * `loaded` holds the aliases `assets.get` resolves (an opaque stand-in texture); `stored` holds the
+ * aliases the store knows (`has` true, `url` a `blob:` stand-in). A test drives resolution by
+ * mutating the two sets between ticks.
+ *
+ * @returns The two structural lookups plus their backing sets.
+ * @example
+ * ```ts
+ * const { assets, store, loaded, stored } = createStubStore();
+ * stored.add("hero"); // store-backed, still loading
+ * ```
+ */
+const createStubStore = (): {
+  assets: TextureLookup;
+  store: StoreLookup;
+  loaded: Set<string>;
+  stored: Set<string>;
+} => {
+  const loaded = new Set<string>();
+  const stored = new Set<string>();
+
+  return {
+    loaded,
+    stored,
+    assets: {
+      get: alias => (loaded.has(alias) ? { alias } : undefined),
+      loadUrl: () => Promise.resolve({})
+    },
+    store: {
+      url: alias => (stored.has(alias) ? `blob:${alias}` : undefined),
+      has: alias => stored.has(alias)
+    }
+  };
+};
+
+/**
  * Wire the system under test over a fresh stub world + mock renderer.
  *
  * @param staged - Passed through to {@link createMockRenderer} (`false` = headless).
@@ -151,12 +195,15 @@ const setup = (staged = true) => {
   const stub = createStubWorld();
   const renderer = createMockRenderer(staged);
   const state = startedState();
-  const system = createRenderSyncSystem({ state, renderer, world: stub.world });
+  const { assets, store, loaded, stored } = createStubStore();
+  const system = createRenderSyncSystem({ state, renderer, world: stub.world, assets, store });
 
   return {
     stub,
     renderer,
     state,
+    loaded,
+    stored,
     tick: () => {
       system(stub.world, 1 / 60);
     }
@@ -182,6 +229,9 @@ const aSprite = (): SpriteRendererValue => ({
   sortingLayer: "Default",
   orderInLayer: 0
 });
+
+/** A "hero" SpriteRenderer value whose alias is store-backed (imported), not a manifest asset. */
+const aStoreSprite = (): SpriteRendererValue => ({ ...aSprite(), sprite: "hero" });
 
 describe("createRenderSyncSystem — epoch gate", () => {
   it("early-outs when the change epoch has not advanced since the last run", () => {
@@ -227,7 +277,8 @@ describe("createRenderSyncSystem — epoch gate", () => {
     const stub = createStubWorld();
     const renderer = createMockRenderer();
     const state = createState({ global: {}, config: {} });
-    const system = createRenderSyncSystem({ state, renderer, world: stub.world });
+    const { assets, store } = createStubStore();
+    const system = createRenderSyncSystem({ state, renderer, world: stub.world, assets, store });
     stub.set(entityOf(1), { shape: aShape() });
 
     expect(() => {
@@ -502,5 +553,120 @@ describe("createRenderSyncSystem — headless tolerance", () => {
     tick();
 
     expect(renderer.attachPrimitive).not.toHaveBeenCalled();
+  });
+});
+
+describe("createRenderSyncSystem — pending texture (Phase 2)", () => {
+  it("marks a sprite pending when its alias is a store asset assets.get cannot resolve yet", () => {
+    const { stub, renderer, state, stored, tick } = setup();
+    const entity = entityOf(1);
+    stored.add("hero"); // the store holds it, but it is not loaded into assets yet
+    stub.set(entity, { sprite: aStoreSprite() });
+
+    tick();
+
+    // Attached against the renderer's placeholder (the resolver yields undefined for a store alias),
+    // and recorded pending so the retry re-attaches once the JIT load lands.
+    expect(renderer.attachSprite).toHaveBeenCalledTimes(1);
+    expect(state.pending.has(entity)).toBe(true);
+  });
+
+  it("re-attaches a pending sprite once its texture lands, then drops it from pending", () => {
+    const { stub, renderer, state, loaded, stored, tick } = setup();
+    const entity = entityOf(1);
+    stored.add("hero");
+    stub.set(entity, { sprite: aStoreSprite() });
+    tick(); // pending
+    renderer.attachSprite.mockClear();
+
+    loaded.add("hero"); // the JIT load completed — no world write bumped the epoch
+    tick(); // the retry runs BEFORE the epoch gate
+
+    expect(renderer.detach).toHaveBeenCalledWith(entity);
+    expect(renderer.attachSprite).toHaveBeenCalledWith(entity, {
+      alias: "hero",
+      tint: "#ffffff",
+      flipX: false
+    });
+    expect(renderer.markDirty).toHaveBeenCalledWith(entity);
+    expect(state.pending.has(entity)).toBe(false);
+  });
+
+  it("returns to a pure epoch-gated early-out once pending drains", () => {
+    const { stub, renderer, state, loaded, stored, tick } = setup();
+    const entity = entityOf(1);
+    stored.add("hero");
+    stub.set(entity, { sprite: aStoreSprite() });
+    tick(); // pending
+    loaded.add("hero");
+    tick(); // re-attaches, drains pending
+    expect(state.pending.size).toBe(0);
+
+    renderer.detach.mockClear();
+    renderer.attachSprite.mockClear();
+    renderer.markDirty.mockClear();
+
+    tick(); // unchanged epoch + empty pending → nothing
+    tick();
+
+    expect(renderer.detach).not.toHaveBeenCalled();
+    expect(renderer.attachSprite).not.toHaveBeenCalled();
+    expect(renderer.markDirty).not.toHaveBeenCalled();
+  });
+
+  it("does not mark a sprite pending when assets.get already resolves the alias (fast path)", () => {
+    const { stub, state, loaded, tick } = setup();
+    const entity = entityOf(1);
+    loaded.add("ship"); // a manifest (or already-loaded) alias
+    stub.set(entity, { sprite: aSprite() });
+
+    tick();
+
+    expect(state.pending.has(entity)).toBe(false);
+  });
+
+  it("does not mark an unknown alias pending (nothing to retry — stays a placeholder)", () => {
+    const { stub, state, tick } = setup();
+    const entity = entityOf(1);
+    stub.set(entity, { sprite: { ...aSprite(), sprite: "ghost" } }); // not loaded, not in the store
+
+    tick();
+
+    expect(state.pending.has(entity)).toBe(false);
+  });
+
+  it("drops a pending sprite from pending, without re-attaching, if it despawns before loading", () => {
+    const { stub, renderer, state, stored, tick } = setup();
+    const entity = entityOf(1);
+    stored.add("hero");
+    stub.set(entity, { sprite: aStoreSprite() });
+    tick();
+    expect(state.pending.has(entity)).toBe(true);
+    renderer.attachSprite.mockClear();
+
+    stub.despawn(entity);
+    tick(); // retry sees it is dead → forget it; the removal pass detaches the view
+
+    expect(state.pending.has(entity)).toBe(false);
+    expect(renderer.attachSprite).not.toHaveBeenCalled();
+  });
+
+  it("drops a pending sprite that lost its SpriteRenderer before the texture landed", () => {
+    const { stub, renderer, state, stored, loaded, tick } = setup();
+    const entity = entityOf(1);
+    stored.add("hero");
+    stub.set(entity, { sprite: aStoreSprite() });
+    tick();
+    expect(state.pending.has(entity)).toBe(true);
+
+    // The component is removed AND the texture lands on the same tick — the retry must forget the
+    // entity (it no longer carries a sprite) rather than re-attach a removed component.
+    stub.set(entity, { sprite: undefined });
+    loaded.add("hero");
+    renderer.attachSprite.mockClear();
+    tick();
+
+    expect(state.pending.has(entity)).toBe(false);
+    expect(renderer.attachSprite).not.toHaveBeenCalled();
   });
 });

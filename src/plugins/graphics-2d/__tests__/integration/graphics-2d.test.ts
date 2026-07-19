@@ -14,6 +14,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import { coreConfig } from "../../../../config";
+import { assetStorePlugin } from "../../../asset-store";
 import { assetsPlugin } from "../../../assets";
 import { componentRegistryPlugin } from "../../../component-registry";
 import { ecsPlugin } from "../../../ecs";
@@ -24,8 +25,9 @@ import { createShape, createSpriteRenderer } from "../../components";
 import { graphics2dPlugin } from "../../index";
 
 /**
- * Dependency-ordered plugin array (`depends` is validation-only — order is explicit). graphics-2d
- * is registered LAST so its `sync` system runs after the renderer's own transform sync.
+ * Dependency-ordered plugin array (`depends` is validation-only — order is explicit). asset-store
+ * precedes graphics-2d (a Phase-2 dependency), and graphics-2d is registered LAST so its `sync`
+ * system runs after the renderer's own transform sync.
  */
 const PLUGINS = [
   ecsPlugin,
@@ -34,6 +36,7 @@ const PLUGINS = [
   reflectionPlugin,
   componentRegistryPlugin,
   assetsPlugin,
+  assetStorePlugin,
   graphics2dPlugin
 ];
 
@@ -364,6 +367,90 @@ describe("graphics-2d integration — render-sync system", () => {
       app.ecs.tick(1 / 60);
     }).not.toThrow();
     expect(app.renderer.getEntityView(entity)).toBeUndefined();
+
+    await app.stop();
+  });
+});
+
+describe("graphics-2d integration — store-backed sprites (Phase 2)", () => {
+  it("the injected resolver JIT-loads a store alias under its stable alias, yielding a placeholder", async () => {
+    const app = bootApp();
+    const setResolver = vi.spyOn(app.renderer, "setTextureResolver");
+
+    // The store holds "hero" (a blob: url), but assets has not loaded it yet.
+    vi.spyOn(app["asset-store"], "url").mockImplementation(alias =>
+      alias === "hero" ? "blob:hero" : undefined
+    );
+    vi.spyOn(app.assets, "get").mockReturnValue(undefined);
+    const texture = {} as unknown as NonNullable<ReturnType<typeof app.assets.get>>;
+    const loadUrl = vi.spyOn(app.assets, "loadUrl").mockResolvedValue(texture);
+
+    await app.start();
+
+    const resolve = setResolver.mock.calls[0]?.[0];
+
+    // A store alias resolves to undefined (placeholder) AND kicks a JIT load under the stable alias.
+    expect(resolve?.("hero")).toBeUndefined();
+    expect(loadUrl).toHaveBeenCalledWith("hero", "blob:hero");
+
+    // An unknown alias (not in the store) resolves undefined and kicks nothing.
+    expect(resolve?.("unknown")).toBeUndefined();
+    expect(loadUrl).toHaveBeenCalledTimes(1);
+
+    await app.stop();
+  });
+
+  it("marks a store-backed sprite pending, then re-attaches it once its texture lands", async () => {
+    const app = bootApp();
+
+    // "hero" is a store asset the resolver cannot load synchronously; it becomes get-able only after
+    // the (out-of-band) JIT load lands, which the test simulates by flipping `heroLoaded`.
+    vi.spyOn(app["asset-store"], "has").mockImplementation(alias => alias === "hero");
+    vi.spyOn(app["asset-store"], "url").mockImplementation(alias =>
+      alias === "hero" ? "blob:hero" : undefined
+    );
+
+    let heroLoaded = false;
+    const texture = {} as unknown as NonNullable<ReturnType<typeof app.assets.get>>;
+    vi.spyOn(app.assets, "get").mockImplementation(alias =>
+      alias === "hero" && heroLoaded ? texture : undefined
+    );
+    vi.spyOn(app.assets, "loadUrl").mockResolvedValue(texture);
+
+    const attachSprite = vi.spyOn(app.renderer, "attachSprite");
+    const detach = vi.spyOn(app.renderer, "detach");
+    const markDirty = vi.spyOn(app.renderer, "markDirty");
+
+    await app.start();
+
+    const entity = app.ecs.spawn(
+      app.renderer.Transform(transformValue),
+      app["graphics-2d"].SpriteRenderer({ ...createSpriteRenderer(), sprite: "hero" })
+    );
+    app.ecs.tick(1 / 60);
+
+    // First tick: attached with a placeholder, recorded pending (assets.get miss + store.has hit).
+    expect(attachSprite).toHaveBeenCalledWith(entity, {
+      alias: "hero",
+      tint: "#ffffff",
+      flipX: false
+    });
+    attachSprite.mockClear();
+    detach.mockClear();
+    markDirty.mockClear();
+
+    // The load lands (no world write) — the pending retry re-attaches on the next tick, ahead of
+    // the epoch gate.
+    heroLoaded = true;
+    app.ecs.tick(1 / 60);
+
+    expect(detach).toHaveBeenCalledWith(entity);
+    expect(attachSprite).toHaveBeenCalledWith(entity, {
+      alias: "hero",
+      tint: "#ffffff",
+      flipX: false
+    });
+    expect(markDirty).toHaveBeenCalledWith(entity);
 
     await app.stop();
   });
