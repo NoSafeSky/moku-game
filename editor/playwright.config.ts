@@ -10,12 +10,18 @@ const PREVIEW_URL = `http://localhost:${PORT}`;
 /**
  * Playwright config for the editor shell's real-browser e2e + visual-baseline suite.
  *
- * Engine matrix is **chromium-only, desktop-only** — deliberately, not by omission: this is a
+ * The MAIN suite is **chromium-only, desktop-only** — deliberately, not by omission: this is a
  * single-window, docked-panel professional IDE (a Unity-2D-class editor), not a responsive content
  * app. The design context (`.planning/design/game-editor-ui/design-context.md` §6) specifies one
  * desktop editor window with no mobile layout, so there is no mobile viewport to baseline and no
  * second render engine buys coverage the WebGL-toleranced shots don't. The goldens are win32-local
  * (`*-chromium-win32.png`).
+ *
+ * A separate, narrowly-scoped **`mobile-smoke`** project (`testMatch: mobile-smoke.spec.ts`) runs the
+ * SAME suite's one pragmatic mobile check on a real touch viewport — not a mobile redesign target (see
+ * that spec's header), just the floor that the app doesn't crash/error on a phone-width touch viewport.
+ * It is excluded from the `chromium` project via `testIgnore` so it never double-runs at desktop size
+ * (where `.tap()` would fail — the desktop project has no touch emulation).
  *
  * The `html` reporter runs with `open: "never"` — an auto-opened report blocks a non-CI run
  * indefinitely (the historical "the suite hangs" symptom); the `list` reporter gives live progress.
@@ -51,6 +57,7 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
+      testIgnore: /mobile-smoke\.spec\.ts$/,
       use: {
         ...devices["Desktop Chrome"],
         // A comfortable desktop-IDE viewport for the 4-band dock layout.
@@ -58,6 +65,18 @@ export default defineConfig({
         deviceScaleFactor: 1,
         // Deterministic font hinting + colour profile for stable visual baselines.
         launchOptions: { args: ["--font-render-hinting=none", "--force-color-profile=srgb"] }
+      }
+    },
+    {
+      // Pragmatic mobile floor only (see mobile-smoke.spec.ts) — not part of the desktop-IDE baseline set.
+      // A Chromium-based device (not an iOS/webkit one) so this project never needs a second browser binary
+      // installed — the main suite is already chromium-only by design (see the file header).
+      name: "mobile-smoke",
+      testMatch: /mobile-smoke\.spec\.ts$/,
+      use: {
+        ...devices["Pixel 7"],
+        colorScheme: "dark",
+        reducedMotion: "reduce"
       }
     }
   ],

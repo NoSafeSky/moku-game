@@ -4,7 +4,7 @@
  * panel-visibility toggle, the Assets ▸ Import New Asset… entry (P2, enabled), the scene readout + dirty dot,
  * and Escape-to-close.
  */
-import { boot, DEMO, expect, snapshot, test } from "./_helpers";
+import { boot, DEMO, expect, PNG_1x1_BASE64, snapshot, test } from "./_helpers";
 
 const menuBar = '[data-island="menu-bar"]';
 
@@ -26,6 +26,33 @@ test.describe("menu-bar", () => {
     await expect(dropdown.getByRole("button", { name: "Import New Asset…" })).toBeEnabled();
     // Create ▸ / Reimport All stay stubbed for a later phase.
     await expect(dropdown.getByRole("button", { name: "Reimport All" })).toBeDisabled();
+  });
+
+  test("Import New Asset… opens the real file chooser and completes an import (P2, design §D3)", async ({
+    page
+  }) => {
+    await boot(page);
+    const assetBrowser = '[data-island="asset-browser"]';
+
+    const chooser = page.waitForEvent("filechooser");
+    await page.locator(`${menuBar} [data-menu="assets"]`).click();
+    await page
+      .locator(`${menuBar} [data-dropdown]`)
+      .getByRole("button", { name: "Import New Asset…" })
+      .click();
+    // Proves the menu action drives the SAME hidden input the asset-browser owns (not a duplicate path).
+    const fileChooser = await chooser;
+    await fileChooser.setFiles({
+      name: "menu-import.png",
+      mimeType: "image/png",
+      buffer: Buffer.from(PNG_1x1_BASE64, "base64")
+    });
+
+    const tile = page.locator(`${assetBrowser} li[data-kind="imported"]`, {
+      has: page.locator("[data-name]", { hasText: "menu-import.png" })
+    });
+    await expect(tile).toHaveAttribute("data-state", "loaded");
+    await expect(tile.locator("img")).toHaveAttribute("src", /^blob:/);
   });
 
   test("opening GameObject shows its items with Create Sprite disabled", async ({ page }) => {

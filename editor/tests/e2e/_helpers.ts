@@ -73,7 +73,9 @@ export const test = base.extend<{ errors: string[] }>({
   ]
 });
 
-export { expect };
+/** A 1×1 red PNG (valid image bytes) — small enough to inline, decodes into a real `<img>` thumbnail. */
+export const PNG_1x1_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
 /** Boot the shell and wait until the game app has booted and the demo scene is seeded. */
 export async function boot(page: Page): Promise<void> {
@@ -212,3 +214,5 @@ export const DEMO = {
 export function row(page: Page, id: number) {
   return page.locator(`[data-island="hierarchy"] [data-tree] [data-row][data-id="${id}"]`);
 }
+
+export { expect } from "@playwright/test";

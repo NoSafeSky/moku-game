@@ -6,13 +6,20 @@
  */
 
 import type { Page } from "@playwright/test";
-import { boot, expect, settle, snapshot, test } from "./_helpers";
-
-// A 1×1 red PNG — a valid image the store can persist + the <img> can decode into a real thumbnail.
-const PNG_1x1 =
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+import {
+  boot,
+  DEMO,
+  expect,
+  expectField,
+  PNG_1x1_BASE64,
+  row,
+  settle,
+  snapshot,
+  test
+} from "./_helpers";
 
 const IMPORT_INPUT = '[data-island="asset-browser"] [data-action="import-input"]';
+const INSPECTOR = '[data-island="inspector"]';
 const ASSET_DND_TYPE = "application/x-moku-asset";
 
 /** The bridge + store surface these specs drive directly (via the dev handle), typed for `page.evaluate`. */
@@ -32,37 +39,65 @@ type DebugGlobal = {
  * settles. The alias is read from the store handle (not the DOM), so it is exact regardless of how the
  * name-sorted tile grid orders it — then the matching tile is asserted loaded with a blob thumbnail.
  */
-async function importImage(page: Page, name: string): Promise<string> {
-  const known = await page.evaluate(() =>
+const knownAliases = (page: Page): Promise<string[]> =>
+  page.evaluate(() =>
     (globalThis as unknown as DebugGlobal).__MOKU_EDITOR__
       .getEditor()
       .assetStore.entries()
       .map(asset => asset.alias)
   );
 
-  await page.setInputFiles(IMPORT_INPUT, {
-    name,
-    mimeType: "image/png",
-    buffer: Buffer.from(PNG_1x1, "base64")
-  });
-
-  // Wait for the import to resolve, then capture exactly the alias it added.
-  const alias = await page.evaluate(async seen => {
+/** Poll the store until an alias appears that was not in `seen`, and return it. */
+const waitForNewAlias = (page: Page, seen: readonly string[]): Promise<string> =>
+  page.evaluate(async knownAliasList => {
     const store = (globalThis as unknown as DebugGlobal).__MOKU_EDITOR__.getEditor().assetStore;
     for (let frame = 0; frame < 180; frame++) {
       const fresh = store
         .entries()
         .map(asset => asset.alias)
-        .find(candidate => !seen.includes(candidate));
+        .find(candidate => !knownAliasList.includes(candidate));
       if (fresh) return fresh;
       await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
     }
     throw new Error("import did not resolve");
-  }, known);
+  }, seen);
 
+async function importImage(page: Page, name: string): Promise<string> {
+  const known = await knownAliases(page);
+
+  await page.setInputFiles(IMPORT_INPUT, {
+    name,
+    mimeType: "image/png",
+    buffer: Buffer.from(PNG_1x1_BASE64, "base64")
+  });
+
+  const alias = await waitForNewAlias(page, known);
   const tile = page.locator(`[data-island="asset-browser"] li[data-alias="${alias}"]`);
   await expect(tile).toHaveAttribute("data-state", "loaded");
   await expect(tile.locator("img")).toHaveAttribute("src", /^blob:/);
+  return alias;
+}
+
+/**
+ * Import a file whose MIME is accepted (`image/png`) but whose bytes are NOT a valid image — the store
+ * still persists it and mints a `blob:` URL (minting never validates content), but the resulting `<img>`
+ * fails to decode and fires `error`, driving the tile to the broken state (design §F6). This is the only
+ * REAL-browser-reachable path to `data-state="broken"`: a rejected-mime import never reaches the store at
+ * all (never rendered), so the transient/broken-by-rejection paths stay unit/integration-tested instead.
+ */
+async function importBrokenImage(page: Page, name: string): Promise<string> {
+  const known = await knownAliases(page);
+
+  await page.setInputFiles(IMPORT_INPUT, {
+    name,
+    mimeType: "image/png",
+    buffer: Buffer.from("not a real png — undecodable bytes")
+  });
+
+  const alias = await waitForNewAlias(page, known);
+  const tile = page.locator(`[data-island="asset-browser"] li[data-alias="${alias}"]`);
+  await expect(tile).toHaveAttribute("data-state", "broken");
+  await expect(tile.locator("[data-badge]")).toHaveText("MISSING");
   return alias;
 }
 
@@ -178,6 +213,40 @@ test.describe("asset pipeline — import + drag-to-scene", () => {
 
     // The alias round-trips through serialization; the store (still holding the blob) re-resolves the texture.
     await expect.poll(() => spriteAliases(page)).toContain(alias);
+  });
+
+  test("an undecodable import degrades to the broken tile state (design §F6)", async ({ page }) => {
+    await boot(page);
+    await importBrokenImage(page, "corrupt.png");
+  });
+
+  test("an imported alias is selectable in the inspector's Sprite picker and round-trips via setField", async ({
+    page
+  }) => {
+    await boot(page);
+    const alias = await importImage(page, "pickup.png");
+
+    // Give a Transform-only object a SpriteRenderer so its "sprite" asset-ref field is on screen.
+    await row(page, DEMO.environment.id).click();
+    await page.locator(`${INSPECTOR} [data-add-component]`).click();
+    await page
+      .locator(`${INSPECTOR} [data-add-picker] [data-add-option][data-component="SpriteRenderer"]`)
+      .click();
+
+    const sprite = page.locator(`${INSPECTOR} [data-field-key="sprite"]`);
+    await expect(sprite).toHaveAttribute("data-ref-value", "");
+
+    await sprite.locator("[data-ref-pick]").click();
+    const picker = page.locator(`${INSPECTOR} [data-ref-picker]`);
+    await expect(picker).toBeVisible();
+    // The imported alias is offered alongside "None" (no manifest assets are loaded in the demo).
+    await expect(picker.locator(`[data-ref-option][data-value="${alias}"]`)).toHaveText(alias);
+
+    await picker.locator(`[data-ref-option][data-value="${alias}"]`).click();
+
+    await expect(sprite).toHaveAttribute("data-ref-value", alias);
+    await expect(sprite.locator("[data-ref-name]")).toHaveText(alias);
+    await expectField(page, DEMO.environment.id, "SpriteRenderer", "sprite", alias);
   });
 });
 
