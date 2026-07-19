@@ -4,6 +4,7 @@
  */
 import { coreConfig, createCore } from "./config";
 import {
+  assetStorePlugin,
   assetsPlugin,
   audioPlugin,
   cameraPlugin,
@@ -40,6 +41,8 @@ const framework = createCore(coreConfig, {
     rendererPlugin,
     inputPlugin,
     loopPlugin,
+    // asset-store: foundational (no deps) — MUST precede graphics-2d, which depends on it
+    assetStorePlugin,
     assetsPlugin,
     contextPlugin,
     scenePlugin,
@@ -84,7 +87,9 @@ const framework = createCore(coreConfig, {
   // Framework default plugin configuration. Consumers override via createApp({ pluginConfigs }).
   pluginConfigs: {
     /** context plugin: bind the curated GameContext resource at start (Assets always bound). */
-    context: { bindGameContext: true }
+    context: { bindGameContext: true },
+    /** asset-store plugin: IndexedDB database/store names + accepted MIME-type prefixes for import. */
+    "asset-store": { dbName: "moku-assets", storeName: "assets", accept: ["image/"] }
   }
 });
 

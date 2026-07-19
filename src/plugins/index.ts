@@ -5,6 +5,7 @@
  */
 
 // ─── Plugin Instances ────────────────────────────────────────
+export { assetStorePlugin } from "./asset-store";
 export { assetsPlugin } from "./assets";
 export { audioPlugin } from "./audio";
 export { cameraPlugin } from "./camera";
@@ -34,6 +35,7 @@ export { uiPlugin } from "./ui";
 export { vfxPlugin } from "./vfx";
 
 // ─── Plugin Types (namespace re-exports) ─────────────────────
+export * as AssetStore from "./asset-store/types";
 export * as Assets from "./assets/types";
 export * as Audio from "./audio/types";
 export * as Camera from "./camera/types";
