@@ -214,6 +214,26 @@ export const createApi = (ctx: RendererContext): Api => {
     return ctx.state.transformToken;
   };
 
+  /**
+   * Parent a freshly-built entity view under the current content parent — the injected content
+   * root (the camera's `world` layer, editor mode) when one is set, else the raw stage (the
+   * flat-app default). Only when a content root is set is the view flipped to `eventMode: "static"`
+   * so the Pixi event boundary hit-tests it for picking; a non-editor game leaves views inert and
+   * pays nothing. Assumes `ctx.state.app` exists (both callers guard on it first).
+   *
+   * @param view - The freshly-built primitive / sprite view to stage.
+   * @example
+   * ```ts
+   * parentView(buildPrimitive(spec)); // → world layer + static in the editor, else the raw stage
+   * ```
+   */
+  const parentView = (view: Container): void => {
+    const root = ctx.state.contentRoot;
+    const parent = root ?? (ctx.state.app as NonNullable<typeof ctx.state.app>).stage;
+    parent.addChild(view);
+    if (root) view.eventMode = "static";
+  };
+
   return {
     /**
      * The Transform component token defined on the ECS world. Use it to spawn
@@ -387,7 +407,7 @@ export const createApi = (ctx: RendererContext): Api => {
       if (!app) return false;
 
       const view = buildPrimitive(spec);
-      app.stage.addChild(view);
+      parentView(view);
       ctx.state.views.set(entity, view);
       ctx.state.dirty.add(entity);
       return true;
@@ -413,7 +433,7 @@ export const createApi = (ctx: RendererContext): Api => {
       if (!app) return false;
 
       const wrapper = buildSpriteView(spec, ctx.state.textureResolver);
-      app.stage.addChild(wrapper);
+      parentView(wrapper);
       ctx.state.views.set(entity, wrapper);
       ctx.state.dirty.add(entity);
       return true;
@@ -488,8 +508,36 @@ export const createApi = (ctx: RendererContext): Api => {
       ctx.state.grid ??= new Graphics();
       const grid = ctx.state.grid as Graphics;
       app.stage.addChildAt(grid, 0);
+      // The full-canvas grid must never be hit-tested: once the editor makes the stage
+      // interactive, a default-eventMode grid would absorb every canvas click and shadow
+      // the entity pick layer. "none" keeps it purely decorative chrome.
+      grid.eventMode = "none";
       drawGrid(grid, ctx.config.width, ctx.config.height, spec);
       grid.visible = true;
+    },
+
+    /**
+     * Point the entity-view parent at `root` (the camera's `world` layer) so attached views ride
+     * the camera transform and become the editor pick layer — or clear it with `undefined` to
+     * parent views on the raw stage again (the flat-app default). Re-parents every EXISTING view
+     * into `root` and flips it to `eventMode: "static"` (so a view attached before this call is
+     * still picked); newly-attached views are parented + flipped by `attachPrimitive`/`attachSprite`.
+     * A non-editor game never calls this, so its views stay on the stage and inert. State-only —
+     * safe before start / headless.
+     *
+     * @param root - The Container to parent entity views under, or `undefined` for the raw stage.
+     * @example
+     * ```ts
+     * api.setContentRoot(camera.world); // camera.onStart wires this to its world layer
+     * ```
+     */
+    setContentRoot(root: Container | undefined): void {
+      ctx.state.contentRoot = root;
+      if (!root) return;
+      for (const view of ctx.state.views.values()) {
+        root.addChild(view);
+        view.eventMode = "static";
+      }
     }
   };
 };

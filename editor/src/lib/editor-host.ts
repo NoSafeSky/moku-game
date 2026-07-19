@@ -54,10 +54,26 @@ const syncViewsOnWrite = (snapshot: EditorBridge.EditorSnapshot): void => {
   }
 };
 
-// The one poll: read the epoch-memoized snapshot, re-sync views on a write, fan out to island subscribers.
+let lastGizmoKey = "";
+
+// Re-place the gizmo handle whenever the selection changes OR a world write moves the selected object.
+// The framework gizmo is host-driven — `enable()` is its idempotent "refresh on selection" path (it
+// re-runs `syncHandle`), but nothing calls it after boot, so without this the handle never leaves its
+// boot-time (empty) state: it stays hidden on select and never follows an inspector/undo edit. Keyed on
+// `epoch:selection` so it fires only on an actual change (rare, user-driven), never mid-drag (a drag
+// previews chrome-only — no epoch/selection change — so the active gesture is never interrupted).
+const syncGizmoOnChange = (snapshot: EditorBridge.EditorSnapshot): void => {
+  const key = `${snapshot.epoch}:${snapshot.selection.join(",")}`;
+  if (key === lastGizmoKey) return;
+  lastGizmoKey = key;
+  getEditor().gizmos.enable();
+};
+
+// The one poll: read the epoch-memoized snapshot, re-sync views + the gizmo on a write, fan out to islands.
 const poll = (): void => {
   const snapshot = getEditor().bridge.snapshot();
   syncViewsOnWrite(snapshot);
+  syncGizmoOnChange(snapshot);
   latest = snapshot;
   for (const notify of listeners) notify(snapshot);
 };
@@ -118,6 +134,15 @@ export async function startEditor(mountElement: HTMLElement): Promise<EditorHand
   gameApp["editor-runtime"].enterEdit();
   gameApp["editor-selection"].enable();
   gameApp["editor-gizmos"].enable();
+
+  // Frame the scene at its designed origin. The renderer now parents entity views under the camera's
+  // world layer (so pan/zoom actually move the scene), which puts world (0,0) at the viewport CENTRE.
+  // The demo scene — like a Unity scene — is authored in a top-left-origin space, so without this every
+  // object would render shoved into the lower-right quadrant. Centre the camera on the viewport middle
+  // (`worldToScreen(0,0)` is exactly (width/2, height/2) at the fresh camera) so world == screen at
+  // zoom 1 — the scene's intended framing — while pan/zoom/focus stay fully live from here.
+  const viewportCentre = gameApp.camera.worldToScreen({ x: 0, y: 0 });
+  gameApp.camera.setPosition(viewportCentre.x, viewportCentre.y);
 
   handles = {
     gameApp,
@@ -194,6 +219,7 @@ export async function stopEditor(): Promise<void> {
   cancelAnimationFrame(rafId);
   rafId = 0;
   lastSyncedEpoch = -1;
+  lastGizmoKey = "";
   listeners.clear();
 
   // Clear handles BEFORE awaiting stop so any late getEditor() fails loud rather than racing teardown.

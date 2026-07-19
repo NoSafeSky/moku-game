@@ -8,14 +8,13 @@ import type { Config } from "../../types";
 const defaultConfig: Config = { pickLayer: "world", multiSelect: false, marquee: true };
 
 describe("editor-selection — state", () => {
-  it("starts not-started, disabled, with an empty selection and zeroed pointer edge", () => {
+  it("starts not-started, disabled, with an empty selection", () => {
     const state = createState({ global: {}, config: defaultConfig });
 
     expect(state.started).toBe(false);
     expect(state.enabled).toBe(false);
     expect(state.selected).toBeInstanceOf(Set);
     expect(state.selected.size).toBe(0);
-    expect(state.prevButtons).toBe(0);
   });
 
   it("leaves every captured dep handle undefined until onStart / enable()", () => {

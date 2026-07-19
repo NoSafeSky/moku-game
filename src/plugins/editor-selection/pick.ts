@@ -11,7 +11,8 @@
  * behind both the public `select`/`toggle`/`clear` API and the live pick listener, and
  * `attachPickListener` wires the native Pixi `pointerdown` listener that drives them
  * from real pointer input (routing an entity hit to toggle vs replace by the toggle
- * modifier read off the ONE shared input snapshot).
+ * modifier read off the federated event itself — `event.ctrlKey`/`event.metaKey` — not the
+ * input snapshot, which is a tick stale at the synchronous pointerdown dispatch).
  *
  * The marquee block — `rectIntersectsView` / `selectManyInRect` / `attachMarqueeListener`
  * / `drawMarquee` / `cancelMarquee` — drives the empty-space drag selection off
@@ -270,12 +271,15 @@ export const applyClear = (ctx: EditorSelectionApiContext): void => {
 
 /**
  * Attach the native Pixi `pointerdown` pick listener to `ctx.state.pickLayer`. On each
- * event it reads ONE shared `input.snapshot()`, derives the primary-button press edge
- * from its `pointer.buttons` (`0 → 1` against `state.prevButtons`), and — only on a real
- * press — resolves the entity Pixi already hit-tested (`entityOf(event.target)`) and
- * routes it to `applySelect`, **modifier-aware**: `"toggle"` when the toggle modifier
- * (Ctrl/Cmd) is held on that same snapshot, else `"select"` (which replaces in
- * single-select and adds under `config.multiSelect`). An empty click still `applyClear`s
+ * event it gates on the event's OWN primary-button mask (`event.buttons` — a `pointerdown`
+ * fires once per real press, so no press-edge bookkeeping is needed) and — only on a primary
+ * press — re-stamps every live view (so a view spawned after `enable()` still carries its entity
+ * handle), resolves the entity Pixi already hit-tested (`entityOf(event.target)`), and routes it
+ * to `applySelect`, **modifier-aware**: `"toggle"` when the toggle modifier (Ctrl/Cmd) is held
+ * on that same event (`event.ctrlKey`/`event.metaKey`), else `"select"` (which replaces in
+ * single-select and adds under `config.multiSelect`). Reading the modifier + button off the
+ * event — not `input.snapshot()`, which is refreshed a tick later and is stale at this
+ * synchronous dispatch — is the fix for a press never registering. An empty click still `applyClear`s
  * — a modifier does not preserve the selection there, since the marquee owns additive
  * empty-space behaviour. Shift-range is deliberately NOT handled: it presupposes a linear
  * order the 2D viewport does not have (it is a hierarchy-panel affordance). A held button
@@ -300,9 +304,15 @@ export const attachPickListener = (ctx: EditorSelectionApiContext): (() => void)
   }
 
   /**
-   * Handle one native `pointerdown`: derive the primary-button press edge and route a fresh
-   * press to `applySelect` (over an alive stamped entity — `"toggle"` under Ctrl/Cmd, else
-   * `"select"`) or `applyClear` (empty space).
+   * Handle one native `pointerdown`: gate on the event's OWN live button mask (a `pointerdown`
+   * already fires once per real press, so no press-edge bookkeeping is needed) and route a
+   * primary press to `applySelect` (over an alive stamped entity — `"toggle"` under Ctrl/Cmd,
+   * else `"select"`) or `applyClear` (empty space).
+   *
+   * Reads `event.buttons` / `event.ctrlKey` / `event.metaKey` off the federated event itself —
+   * NOT `input.snapshot()`, whose pointer/modifier state is refreshed on the `input` scheduler
+   * tick and is therefore STALE (buttons `0`) at this synchronous Pixi dispatch. This mirrors the
+   * marquee's own `handleDown`, so both empty-space and entity presses read one consistent source.
    *
    * @param event - The Pixi federated pointer event (its `target` is the topmost hit view).
    * @example
@@ -311,17 +321,19 @@ export const attachPickListener = (ctx: EditorSelectionApiContext): (() => void)
    * ```
    */
   const handleDown = (event: FederatedPointerEvent): void => {
-    const snapshot = ctx.state.input?.snapshot(); // ONE snapshot per event: button gate + modifier
-    if (!snapshot) return;
+    if ((event.buttons & PRIMARY_BUTTON) === 0) return; // the event's own live mask: a primary press
 
-    const isDown = (snapshot.pointer.buttons & PRIMARY_BUTTON) !== 0;
-    const wasDown = (ctx.state.prevButtons & PRIMARY_BUTTON) !== 0;
-    ctx.state.prevButtons = snapshot.pointer.buttons;
-    if (!isDown || wasDown) return; // only a fresh primary-button press selects
+    // Lazy re-stamp before resolving — exactly as `pickAt` does — so a view spawned AFTER
+    // `enable()` (e.g. the scene loads after the editor turns selection on) still carries its
+    // entity handle when Pixi hands us `event.target`. Without this the click resolves to no
+    // entity and silently falls through to `applyClear`, which is why canvas-native selection
+    // never worked. Idempotent and only runs on a real press.
+    stampAll(ctx.state);
 
     const entity = entityOf(event.target);
     if (entity !== undefined && (ctx.state.world?.isAlive(entity) ?? false)) {
-      applySelect(ctx, entity, isToggleModifier(snapshot) ? "toggle" : "select");
+      const toggle = event.ctrlKey || event.metaKey;
+      applySelect(ctx, entity, toggle ? "toggle" : "select");
     } else {
       applyClear(ctx);
     }

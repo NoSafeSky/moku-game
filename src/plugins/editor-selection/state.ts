@@ -5,9 +5,9 @@ import type { Config, State } from "./types";
 
 /**
  * Creates initial editor-selection plugin state: not-started, disabled, an empty selection
- * `Set`, a zeroed pointer-edge mask, no in-flight marquee, and every captured dependency
- * handle `undefined` until `onStart` captures them (and builds the marquee overlay chrome)
- * and `enable()` captures the pick layer / canvas.
+ * `Set`, no in-flight marquee, and every captured dependency handle `undefined` until `onStart`
+ * captures them (and builds the marquee overlay chrome) and `enable()` captures the pick layer /
+ * canvas.
  *
  * @param _ctx - Minimal context with global registry + resolved config (unused — state has no config-derived seed).
  * @param _ctx.global - Global plugin registry.
@@ -32,7 +32,6 @@ export const createState = (_ctx: {
   input: undefined,
   pickLayer: undefined,
   canvas: undefined,
-  prevButtons: 0,
   detach: undefined,
   stage: undefined,
   marqueeOverlay: undefined,

@@ -209,6 +209,14 @@ export type State = {
    * the first setGridVisible(true) / when headless. Torn down with the stage on app.destroy.
    */
   grid: Container | undefined;
+  /**
+   * Phase-1 (editor) — the camera-transformed content layer entity views parent into, so the
+   * camera transform actually moves the scene and `editor-selection`'s world pick layer is
+   * populated. undefined (every non-editor / flat app) → views parent on the raw stage, unchanged.
+   * `camera.onStart` injects its `world` layer via {@link Api.setContentRoot}; a set root also flips
+   * existing + future views to `eventMode: "static"` so the Pixi event boundary hit-tests them.
+   */
+  contentRoot: Container | undefined;
 };
 
 /** renderer plugin public API (exposed as app.renderer). */
@@ -374,6 +382,20 @@ export type Api = {
    * ```
    */
   setGridVisible(visible: boolean, spec?: GridSpec): void;
+  /**
+   * Point the entity-view parent at `root` (the camera's `world` layer) so attached views ride the
+   * camera transform and become the editor pick layer — or clear it with `undefined` to parent views
+   * on the raw stage again (the flat-app default). Re-parents every existing view into `root` and
+   * marks it `eventMode: "static"` so the Pixi event boundary hit-tests it; a non-editor game never
+   * calls this and pays nothing. Headless-tolerant (state-only; safe before start).
+   *
+   * @param root - The Container to parent entity views under, or `undefined` for the raw stage.
+   * @example
+   * ```ts
+   * api.setContentRoot(camera.world); // camera.onStart wires this to its world layer
+   * ```
+   */
+  setContentRoot(root: Container | undefined): void;
 };
 
 /**

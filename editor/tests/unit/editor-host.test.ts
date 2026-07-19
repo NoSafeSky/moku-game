@@ -24,7 +24,13 @@ const mocks = vi.hoisted(() => {
     },
     commands: { resolve: vi.fn<() => unknown>(() => entity) },
     assets: { entries: vi.fn(() => []) },
-    camera: { focus: vi.fn(), zoomAt: vi.fn(), panBy: vi.fn() },
+    camera: {
+      focus: vi.fn(),
+      zoomAt: vi.fn(),
+      panBy: vi.fn(),
+      worldToScreen: vi.fn(() => ({ x: 400, y: 300 })),
+      setPosition: vi.fn()
+    },
     "editor-runtime": { enterEdit: vi.fn() },
     "editor-selection": { enable: vi.fn() },
     "editor-gizmos": { enable: vi.fn() },
@@ -68,6 +74,7 @@ describe("editor-host", () => {
     // Restore the shared mock snapshot so a test that mutated it does not leak into the next.
     mocks.snapshot.entities = [];
     mocks.snapshot.epoch = 0;
+    mocks.snapshot.selection = [];
   });
 
   it("boots the game app and mounts the canvas into the viewport (W1)", async () => {
@@ -84,7 +91,7 @@ describe("editor-host", () => {
         "editor-selection": { multiSelect: true, marquee: true },
         "editor-gizmos": { translateOnly: false },
         camera: { editorControls: true },
-        input: { wheel: true, preventDefault: true }
+        input: { wheel: true, preventDefault: false }
       }
     });
     expect(mocks.app.start).toHaveBeenCalledTimes(1);
@@ -164,6 +171,29 @@ describe("editor-host", () => {
     mocks.snapshot.epoch = 6;
     rafCallbacks[2]?.();
     expect(mocks.app.renderer.markDirty).toHaveBeenCalledTimes(4);
+  });
+
+  it("re-syncs the gizmo (re-enable) when the selection or epoch changes, else leaves it (W4)", async () => {
+    await startEditor(fakeMount().element);
+    mocks.app["editor-gizmos"].enable.mockClear(); // ignore the one-time boot enable()
+
+    // First poll: key "0:" (epoch 0, empty selection) differs from the initial "" → one re-sync.
+    rafCallbacks[0]?.();
+    expect(mocks.app["editor-gizmos"].enable).toHaveBeenCalledTimes(1);
+
+    // Same epoch + selection → no extra re-sync (off the per-frame path).
+    rafCallbacks[1]?.();
+    expect(mocks.app["editor-gizmos"].enable).toHaveBeenCalledTimes(1);
+
+    // A selection change re-syncs the handle to the new selection.
+    mocks.snapshot.selection = [7];
+    rafCallbacks[2]?.();
+    expect(mocks.app["editor-gizmos"].enable).toHaveBeenCalledTimes(2);
+
+    // A world write that moves the selected object (epoch bump) re-syncs so the handle follows it.
+    mocks.snapshot.epoch = 1;
+    rafCallbacks[3]?.();
+    expect(mocks.app["editor-gizmos"].enable).toHaveBeenCalledTimes(3);
   });
 
   it("skips a view whose id no longer resolves to a live entity (W4)", async () => {

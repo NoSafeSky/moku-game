@@ -86,6 +86,24 @@ const makeFakeContainer = (
 
 const asContainer = (fake: FakeContainer): Container => fake as unknown as Container;
 
+/**
+ * Fire one pick-layer `pointerdown` over `view` (or empty space when `undefined`), carrying the
+ * button mask + modifier flags on the EVENT — the source the live pick listener now reads (not the
+ * input snapshot). Defaults to a primary press with no modifier held.
+ */
+const pickDown = (
+  layer: FakeContainer,
+  view: FakeContainer | undefined,
+  over: { buttons?: number; ctrlKey?: boolean; metaKey?: boolean } = {}
+): void => {
+  layer.emit("pointerdown", {
+    target: view ? asContainer(view) : undefined,
+    buttons: over.buttons ?? 1,
+    ctrlKey: over.ctrlKey ?? false,
+    metaKey: over.metaKey ?? false
+  } as unknown as FederatedPointerEvent);
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // stampEntity / entityOf
 // ─────────────────────────────────────────────────────────────────────────────
@@ -247,13 +265,12 @@ describe("editor-selection — pick — enable()/disable()", () => {
   it("is idempotent — a second enable() re-stamps without double-attaching the listener", () => {
     const view = makeFakeContainer({ position: { x: 0, y: 0 } });
     const entity = asEntity(1);
-    const { api, layer, emit, setPointer } = startedCtxWithLayer({}, new Map([[entity, view]]));
+    const { api, layer, emit } = startedCtxWithLayer({}, new Map([[entity, view]]));
 
     api.enable();
     api.enable(); // idempotent re-enable
 
-    setPointer({ buttons: 1 });
-    layer.emit("pointerdown", { target: asContainer(view) } as unknown as FederatedPointerEvent);
+    pickDown(layer, view);
     expect(emit).toHaveBeenCalledTimes(1); // exactly one selection, not one per attached listener
   });
 
@@ -303,46 +320,58 @@ describe("editor-selection — pick — pickAt", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Live pick listener — press-edge derivation
+// Live pick listener — event-driven gating + lazy re-stamp
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("editor-selection — pick — attachPickListener press-edge", () => {
-  it("selects on the primary down transition (0 → 1) and not on a held button (1 → 1)", () => {
+describe("editor-selection — pick — attachPickListener", () => {
+  it("selects on a primary-button pointerdown; a redundant re-press of the same entity emits nothing more", () => {
     const view = makeFakeContainer({ position: { x: 0, y: 0 } });
     const entity = asEntity(1);
-    const { emit, layer, setPointer, api } = startedCtxWithLayer({}, new Map([[entity, view]]));
+    const { emit, layer, api } = startedCtxWithLayer({}, new Map([[entity, view]]));
     api.enable();
 
-    setPointer({ buttons: 1 }); // 0 → 1: fresh primary press
-    layer.emit("pointerdown", { target: asContainer(view) } as unknown as FederatedPointerEvent);
+    pickDown(layer, view, { buttons: 1 }); // the event's OWN primary-button mask drives the gate
     expect(emit).toHaveBeenCalledTimes(1);
 
-    layer.emit("pointerdown", { target: asContainer(view) } as unknown as FederatedPointerEvent); // still 1 → 1
-    expect(emit).toHaveBeenCalledTimes(1); // no re-select on a held button
+    pickDown(layer, view, { buttons: 1 }); // same already-selected entity → no set change → no emit
+    expect(emit).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-stamps on press so a view unstamped at enable() (spawned later) is still resolved", () => {
+    const view = makeFakeContainer({ position: { x: 0, y: 0 } });
+    const entity = asEntity(1);
+    const { api, layer, emit } = startedCtxWithLayer({}, new Map([[entity, view]]));
+    api.enable();
+
+    // Simulate a view that did NOT exist at enable()-time (the scene loads after the editor turns
+    // selection on): drop the stamp enable() applied. The live press must re-stamp and still select.
+    delete (view as unknown as { entity?: unknown }).entity;
+
+    pickDown(layer, view, { buttons: 1 });
+    expect(api.selected()).toEqual([entity]);
+    expect(emit).toHaveBeenCalledTimes(1);
   });
 
   it("does not select on a secondary (non-primary) button press", () => {
     const view = makeFakeContainer({ position: { x: 0, y: 0 } });
     const entity = asEntity(1);
-    const { emit, layer, setPointer, api } = startedCtxWithLayer({}, new Map([[entity, view]]));
+    const { emit, layer, api } = startedCtxWithLayer({}, new Map([[entity, view]]));
     api.enable();
 
-    setPointer({ buttons: 0b10 }); // secondary button only — primary bit unset
-    layer.emit("pointerdown", { target: asContainer(view) } as unknown as FederatedPointerEvent);
+    pickDown(layer, view, { buttons: 0b10 }); // secondary button only — primary bit unset
     expect(emit).not.toHaveBeenCalled();
   });
 
   it("clicking empty space clears the selection", () => {
     const view = makeFakeContainer({ position: { x: 0, y: 0 } });
     const entity = asEntity(1);
-    const { api, emit, layer, setPointer } = startedCtxWithLayer({}, new Map([[entity, view]]));
+    const { api, emit, layer } = startedCtxWithLayer({}, new Map([[entity, view]]));
     api.enable();
     api.select(entity);
     emit.mockClear();
 
     const empty = makeFakeContainer({ position: { x: 999, y: 999 } }); // unstamped — nothing resolves
-    setPointer({ buttons: 1 });
-    layer.emit("pointerdown", { target: asContainer(empty) } as unknown as FederatedPointerEvent);
+    pickDown(layer, empty, { buttons: 1 });
 
     expect(api.selected()).toEqual([]);
     expect(emit).toHaveBeenCalledWith("editor-selection:changed", { selected: [] });
@@ -362,22 +391,17 @@ describe("editor-selection — pick — attachPickListener press-edge", () => {
 // Live pick listener — modifier-aware routing (Ctrl/Cmd = toggle, plain = replace)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Fire one fresh primary press over `view` with the given modifier keys held. */
+/** Fire one primary press over `view` with the given modifier keys held on the EVENT. */
 const clickEntity = (
   harness: ReturnType<typeof startedCtxWithLayer>,
   view: FakeContainer,
-  modifiers: readonly string[] = []
+  modifiers: readonly ("Control" | "Meta")[] = []
 ): void => {
-  harness.held.clear();
-  for (const key of modifiers) harness.held.add(key);
-  harness.setPointer({ buttons: 0 }); // reset the press edge so each click is a fresh 0 → 1
-  harness.layer.emit("pointerdown", {
-    target: asContainer(view)
-  } as unknown as FederatedPointerEvent);
-  harness.setPointer({ buttons: 1 });
-  harness.layer.emit("pointerdown", {
-    target: asContainer(view)
-  } as unknown as FederatedPointerEvent);
+  pickDown(harness.layer, view, {
+    buttons: 1,
+    ctrlKey: modifiers.includes("Control"),
+    metaKey: modifiers.includes("Meta")
+  });
 };
 
 describe("editor-selection — pick — modifier-aware routing", () => {
@@ -944,6 +968,19 @@ describe("editor-selection — pick — attachMarqueeListener", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("editor-selection — pick — marquee overlay lifecycle", () => {
+  it("enable() flips the stage to eventMode 'static' and installs a catch-all hitArea", () => {
+    const harness = startedMarqueeCtx();
+    expect(harness.stage.eventMode).not.toBe("static"); // inert before enable
+    expect((harness.stage as unknown as { hitArea?: unknown }).hitArea).toBeUndefined();
+
+    harness.api.enable();
+
+    // Without a static ROOT + a hitArea, Pixi v8's event boundary never hit-tests the pick layer
+    // (no entity is picked) and an empty click resolves to nothing (no marquee / empty-click-clear).
+    expect(harness.stage.eventMode).toBe("static");
+    expect((harness.stage as unknown as { hitArea?: unknown }).hitArea).toBeTruthy();
+  });
+
   it("enable() shows the marquee overlay and wires the drag; disable() hides it and unwires", () => {
     const harness = startedMarqueeCtx();
 

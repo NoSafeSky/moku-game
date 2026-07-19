@@ -71,12 +71,17 @@ export const start = (ctx: StartContext): void => {
 
   // (2) Capture the stage; when present, build the default `world` layer at the BOTTOM
   //     (index 0) so it renders beneath the ui overlay — the HUD stays screen-fixed.
-  const stage = ctx.require(rendererPlugin).getStage();
+  const renderer = ctx.require(rendererPlugin);
+  const stage = renderer.getStage();
   if (stage) {
     ctx.state.stage = stage;
     const world = new Container();
     stage.addChildAt(world, 0);
     ctx.state.layers.set("world", { container: world, factor: 1 });
+    // Point the renderer's entity-view parent at the world layer so attached views ride the
+    // camera transform (pan/zoom/rotate move the scene, not just the readout) AND populate
+    // editor-selection's `pickLayer: "world"`. A non-editor game with no camera stays unaffected.
+    renderer.setContentRoot(world);
   }
 
   // (3) Register the apply system.

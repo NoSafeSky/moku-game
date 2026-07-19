@@ -62,7 +62,7 @@ vi.mock("pixi.js", () => {
 // Imports after the mock is declared
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { Graphics, Sprite } from "pixi.js";
+import { Container, Graphics, Sprite } from "pixi.js";
 import type { Entity, World } from "../../../ecs/types";
 import type { RendererContext } from "../../api";
 import { createApi } from "../../api";
@@ -330,6 +330,9 @@ describe("createApi — setGridVisible", () => {
     expect(ctx.state.grid).toBeInstanceOf(Graphics);
     expect(stage.addChildAt).toHaveBeenCalledWith(ctx.state.grid, 0);
     expect((ctx.state.grid as unknown as { visible: boolean }).visible).toBe(true);
+    // Never hit-testable: an interactive stage must not let the full-canvas grid shadow the
+    // entity pick layer (it would absorb every canvas click).
+    expect((ctx.state.grid as unknown as { eventMode: string }).eventMode).toBe("none");
   });
 
   it("hides: sets visible=false without destroying the grid", () => {
@@ -381,6 +384,70 @@ describe("createApi — setGridVisible", () => {
 
     const grid = ctx.state.grid as unknown as { stroke: ReturnType<typeof vi.fn> };
     expect(grid.stroke).toHaveBeenCalledWith({ color: 0x11_22_33, width: 1 });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// setContentRoot — editor content layer (camera-transformed pick surface)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("createApi — setContentRoot", () => {
+  it("re-parents every existing view into the root and flips it eventMode 'static'", () => {
+    const ctx = createMockCtx();
+    const stage = makeMockStage();
+    ctx.state.app = { stage } as unknown as import("pixi.js").Application;
+    const api = createApi(ctx);
+    const entity = makeEntity(20);
+    const view = new Container() as unknown as { eventMode?: string };
+    ctx.state.views.set(entity, view as never);
+
+    const root = new Container();
+    api.setContentRoot(root as never);
+
+    expect(ctx.state.contentRoot).toBe(root);
+    expect((root as unknown as { children: unknown[] }).children).toContain(view);
+    expect(view.eventMode).toBe("static");
+  });
+
+  it("clearing with undefined resets the content root (views parent on the stage again)", () => {
+    const ctx = createMockCtx();
+    const api = createApi(ctx);
+    ctx.state.contentRoot = new Container() as never;
+
+    api.setContentRoot(undefined);
+
+    expect(ctx.state.contentRoot).toBeUndefined();
+  });
+
+  it("with a content root set, attachSprite parents new views into it and flips them static", () => {
+    const ctx = createMockCtx();
+    const stage = makeMockStage();
+    ctx.state.app = { stage } as unknown as import("pixi.js").Application;
+    const api = createApi(ctx);
+    const root = new Container();
+    api.setContentRoot(root as never);
+
+    const entity = makeEntity(21);
+    api.attachSprite(entity, { alias: "player" });
+
+    const view = ctx.state.views.get(entity) as unknown as { eventMode?: string };
+    expect((root as unknown as { children: unknown[] }).children).toContain(view);
+    expect(view.eventMode).toBe("static");
+    expect(stage.addChild).not.toHaveBeenCalled(); // parented into the root, not the raw stage
+  });
+
+  it("without a content root, attachSprite parents onto the raw stage and leaves views inert", () => {
+    const ctx = createMockCtx();
+    const stage = makeMockStage();
+    ctx.state.app = { stage } as unknown as import("pixi.js").Application;
+    const api = createApi(ctx);
+
+    const entity = makeEntity(22);
+    api.attachSprite(entity, { alias: "player" });
+
+    const view = ctx.state.views.get(entity) as unknown as { eventMode?: string };
+    expect(stage.addChild).toHaveBeenCalledWith(view); // the flat-app default: raw stage
+    expect(view.eventMode).toBeUndefined(); // a non-editor game pays nothing
   });
 });
 

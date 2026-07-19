@@ -32,5 +32,6 @@ export const createState = (_ctx: {
   dirty: new Set(),
   textureResolver: undefined,
   worldResolver: undefined,
-  grid: undefined
+  grid: undefined,
+  contentRoot: undefined
 });

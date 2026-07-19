@@ -105,8 +105,6 @@ export type State = {
   pickLayer: Container | undefined;
   /** The Pixi canvas (`renderer.getView()`) for `clientX/Y → canvas-relative`; `undefined` headless. */
   canvas: HTMLCanvasElement | undefined;
-  /** Previous-frame primary-button mask, for press-edge derivation (the `ui` `prevButtons` precedent). */
-  prevButtons: number;
   /** Detaches the native pick `pointerdown` listener; set by `enable()`, called by `disable()`; else `undefined`. */
   detach: (() => void) | undefined;
   /** The renderer stage captured in `onStart` (marquee overlay parent); `undefined` headless. */

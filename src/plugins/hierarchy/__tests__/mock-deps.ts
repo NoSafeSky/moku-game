@@ -179,7 +179,8 @@ export const makeRenderer = (): RendererApi => ({
   setTextureResolver: vi.fn(),
   setWorldTransformResolver: vi.fn(),
   setEntityVisible: vi.fn(),
-  setGridVisible: vi.fn()
+  setGridVisible: vi.fn(),
+  setContentRoot: vi.fn()
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

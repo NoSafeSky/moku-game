@@ -9,6 +9,7 @@
  * (the same helpers the live pointer listener uses), so the API and the listener agree on
  * one mutation + emit-gating semantics.
  */
+import { Rectangle } from "pixi.js";
 import type { Point } from "../camera/types";
 import type { Entity } from "../ecs/types";
 import {
@@ -22,6 +23,30 @@ import {
   stampAll
 } from "./pick";
 import type { Api, Config, Events, Log, Rect, State } from "./types";
+
+/** Lazily-built singleton backing {@link stageHitArea}; `undefined` until the first `enable()`. */
+let stageHitAreaSingleton: Rectangle | undefined;
+
+/**
+ * The hitArea `enable()` installs on the renderer stage so an empty-space click still resolves to a
+ * hit. Pixi only hit-tests a Container against its CHILDREN unless it carries an explicit hitArea, so
+ * without one an empty click targets nothing and the stage-level marquee / empty-click-clear listeners
+ * never fire. Intentionally unbounded (a huge finite rect — `Infinity` breaks `Rectangle.contains`):
+ * DOM pointer events are already clipped to the canvas, so this just says "any in-canvas click that
+ * misses every object still hits the stage", and needs no resize upkeep a viewport-sized rect would.
+ *
+ * Built LAZILY (first `enable()`) so importing this module never constructs a Pixi object at load —
+ * a headless/mocked test that assembles the framework but never enters edit mode needs no Pixi
+ * `Rectangle`. Shared + read-only afterwards (hit-testing never mutates it), so one instance is safe.
+ *
+ * @returns The shared catch-all stage hitArea.
+ * @example
+ * ```ts
+ * stage.hitArea = stageHitArea();
+ * ```
+ */
+const stageHitArea = (): Rectangle =>
+  (stageHitAreaSingleton ??= new Rectangle(-1e6, -1e6, 2e6, 2e6));
 
 /**
  * Structural context required by {@link createApi}, so unit tests can pass a minimal mock
@@ -102,6 +127,19 @@ export const createApi = (ctx: EditorSelectionApiContext): Api => {
       }
       layer.eventMode = "static";
       layer.interactiveChildren = true;
+      // Pixi v8's event boundary only hit-tests the scene when the ROOT (stage) is itself
+      // interactive, and it hit-tests a Container against its CHILDREN only unless the Container
+      // carries an explicit hitArea. Making just the pick layer static leaves two gaps: the stage's
+      // own pointerdown never fires (no entity is picked on a shape click that bubbles to it), and an
+      // empty-space click resolves to nothing (the stage-level marquee + empty-click-clear never
+      // start). Flip the stage static AND give it a catch-all hitArea. Both are left in place on
+      // disable() (like the pick layer's own eventMode): with every editor listener detached nothing
+      // reacts to a stage hit, so a game that toggles edit mode off pays nothing.
+      const stage = ctx.state.stage;
+      if (stage) {
+        stage.eventMode = "static";
+        stage.hitArea = stageHitArea();
+      }
       ctx.state.pickLayer = layer;
       ctx.state.canvas = ctx.state.renderer?.getView();
       stampAll(ctx.state);
