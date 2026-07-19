@@ -42,6 +42,14 @@ export type AssetEntry = {
 export type Api = {
   /** Load one asset by alias; emits assets:loaded on success. */
   load(alias: string): Promise<Texture>;
+  /**
+   * Load a texture from an explicit url and cache it under `alias` (Pixi v8 object form
+   * `Assets.load({ alias, src: url })`), so the cache key is the stable `alias`, not the url
+   * string. Records `alias` in `state.loaded` and emits `assets:loaded` on success. The seam
+   * that turns an `asset-store` `blob:` url into a Pixi-cached texture addressable by the
+   * store's stable alias. Same `throwOnError` path as `load`.
+   */
+  loadUrl(alias: string, url: string): Promise<Texture>;
   /** Load a named bundle; emits assets:loaded once resolved. */
   loadBundle(
     bundle: string,

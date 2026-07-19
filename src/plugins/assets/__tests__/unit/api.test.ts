@@ -204,6 +204,103 @@ describe("createApi", () => {
   });
 
   // ──────────────────────────────────────────────────────────────────────────
+  // loadUrl
+  // ──────────────────────────────────────────────────────────────────────────
+
+  describe("loadUrl", () => {
+    it("calls Assets.load with the object form { alias, src: url }", async () => {
+      pixiMocks.load.mockResolvedValueOnce(fakeTexture);
+      const ctx = createMockCtx();
+      const api = createApi(ctx);
+
+      await api.loadUrl("imported-1", "blob:http://localhost/abc-123");
+
+      expect(pixiMocks.load).toHaveBeenCalledWith({
+        alias: "imported-1",
+        src: "blob:http://localhost/abc-123"
+      });
+    });
+
+    it("resolves the texture returned by Assets.load", async () => {
+      pixiMocks.load.mockResolvedValueOnce(fakeTexture);
+      const ctx = createMockCtx();
+      const api = createApi(ctx);
+
+      const texture = await api.loadUrl("imported-1", "blob:http://localhost/abc-123");
+
+      expect(texture).toBe(fakeTexture);
+    });
+
+    it("records the alias (not the url) in state.loaded on success", async () => {
+      pixiMocks.load.mockResolvedValueOnce(fakeTexture);
+      const ctx = createMockCtx();
+      const api = createApi(ctx);
+
+      await api.loadUrl("imported-1", "blob:http://localhost/abc-123");
+
+      expect(ctx.state.loaded.has("imported-1")).toBe(true);
+      expect(ctx.state.loaded.has("blob:http://localhost/abc-123")).toBe(false);
+    });
+
+    it("emits assets:loaded with { alias, kind: 'asset' } on success", async () => {
+      pixiMocks.load.mockResolvedValueOnce(fakeTexture);
+      const emit = vi.fn();
+      const ctx = createMockCtx({ emit });
+      const api = createApi(ctx);
+
+      await api.loadUrl("imported-1", "blob:http://localhost/abc-123");
+
+      expect(emit).toHaveBeenCalledWith("assets:loaded", { alias: "imported-1", kind: "asset" });
+    });
+
+    it("rethrows when throwOnError is true and Assets.load rejects", async () => {
+      pixiMocks.load.mockRejectedValueOnce(new Error("Network error"));
+      const ctx = createMockCtx({ config: { throwOnError: true } });
+      const api = createApi(ctx);
+
+      await expect(api.loadUrl("imported-1", "blob:bad")).rejects.toThrow("Network error");
+    });
+
+    it("does NOT record alias in state.loaded on failure", async () => {
+      pixiMocks.load.mockRejectedValueOnce(new Error("Network error"));
+      const ctx = createMockCtx({ config: { throwOnError: true } });
+      const api = createApi(ctx);
+
+      await expect(api.loadUrl("imported-1", "blob:bad")).rejects.toThrow();
+      expect(ctx.state.loaded.has("imported-1")).toBe(false);
+    });
+
+    it("logs the error and resolves undefined when throwOnError is false", async () => {
+      pixiMocks.load.mockRejectedValueOnce(new Error("Network error"));
+      const ctx = createMockCtx({ config: { throwOnError: false } });
+      const api = createApi(ctx);
+
+      const result = await (api.loadUrl("imported-1", "blob:bad") as Promise<Texture | undefined>);
+
+      expect(result).toBeUndefined();
+      expect(ctx.log.error).toHaveBeenCalled();
+    });
+
+    it("does NOT emit assets:loaded when load fails and throwOnError is false", async () => {
+      pixiMocks.load.mockRejectedValueOnce(new Error("Network error"));
+      const emit = vi.fn();
+      const ctx = createMockCtx({ config: { throwOnError: false }, emit });
+      const api = createApi(ctx);
+
+      await (api.loadUrl("imported-1", "blob:bad") as Promise<Texture | undefined>);
+
+      expect(emit).not.toHaveBeenCalled();
+    });
+
+    it("loadUrl return type is Promise<Texture>", () => {
+      const ctx = createMockCtx();
+      const api = createApi(ctx);
+
+      expectTypeOf(api.loadUrl).toEqualTypeOf<(alias: string, url: string) => Promise<Texture>>();
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
   // loadBundle
   // ──────────────────────────────────────────────────────────────────────────
 

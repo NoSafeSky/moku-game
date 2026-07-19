@@ -166,6 +166,48 @@ export const createApi = (ctx: AssetsContext): Api => {
     },
 
     /**
+     * Load a texture from an explicit URL and cache it under `alias` via Pixi v8's
+     * **object form** `Assets.load({ alias, src: url })` — the cache key is the stable
+     * `alias`, NOT the url string (contrast `load`, which uses positional
+     * `Assets.load(url)` and resolves alias-as-url via the manifest). Records `alias`
+     * in `state.loaded` and emits `assets:loaded` with `kind: "asset"` on success.
+     *
+     * This is the seam that turns an `asset-store` `blob:` URL into a Pixi-cached
+     * texture addressable by the store's stable alias, so a store-aware texture
+     * resolver can JIT-load an imported asset and `get(alias)` resolves it.
+     *
+     * On failure: same `throwOnError` path as `load` — rethrow when `true`; log via
+     * `ctx.log.error` and resolve `undefined` (escape hatch) when `false`.
+     *
+     * @param alias - The stable alias to cache the texture under.
+     * @param url - The explicit URL to load (e.g. a `blob:` URL from an asset store).
+     * @returns The loaded `Texture`.
+     * @throws {Error} If `config.throwOnError` is `true` and the load fails.
+     * @example
+     * ```ts
+     * const texture = await app.assets.loadUrl("imported-1", blobUrl);
+     * ```
+     */
+    async loadUrl(alias: string, url: string): Promise<Texture> {
+      ensureRenderer();
+
+      try {
+        const texture = (await Assets.load({ alias, src: url })) as Texture;
+        ctx.state.loaded.add(alias);
+        ctx.emit("assets:loaded", { alias, kind: "asset" });
+        return texture;
+      } catch (error) {
+        if (ctx.config.throwOnError) {
+          throw error;
+        }
+        ctx.log.error(
+          `[game] assets.loadUrl("${alias}") failed.\n  Set throwOnError:false silences this; check the url or network.`
+        );
+        return undefined as unknown as Texture;
+      }
+    },
+
+    /**
      * Register and load a named bundle. Calls `Assets.addBundle` to register the
      * alias-to-URL map, then `Assets.loadBundle` to resolve them all. Records
      * each alias key in `state.loaded` and emits `assets:loaded` ONCE with

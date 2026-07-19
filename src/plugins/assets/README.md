@@ -31,6 +31,7 @@ would be a no-op and is intentionally omitted.
 | Method | Signature | Description |
 |---|---|---|
 | `load` | `(alias: string) => Promise<Texture>` | Load one asset by alias; records the alias in `state.loaded` and emits `assets:loaded` with `kind: "asset"` on success. |
+| `loadUrl` | `(alias: string, url: string) => Promise<Texture>` | Load a texture from an explicit URL and cache it under `alias` via Pixi v8 object-form `Assets.load({ alias, src: url })` — the cache key is the stable `alias`, not the URL. Records `alias` in `state.loaded` and emits `assets:loaded` with `kind: "asset"`. Same `throwOnError` behavior as `load`. |
 | `loadBundle` | `(bundle: string, entries: Readonly<Record<string, string>>) => Promise<Record<string, Texture>>` | Register (`Assets.addBundle`) + load (`Assets.loadBundle`); records every entry alias and emits `assets:loaded` once with `kind: "bundle"`. |
 | `get` | `(alias: string) => Texture \| undefined` | Return an already-loaded texture from the Pixi cache, or `undefined`. Does NOT trigger a load. |
 | `sprite` | `(alias: string) => Promise<Sprite>` | Return a new Pixi `Sprite` from the texture — reuses the cached texture, loading only on a cache miss. |
@@ -51,6 +52,18 @@ app.assets.load("ship"); // → Assets.load("assets/sprites/ship.png")
 
 // basePath: "assets/", no manifest entry
 app.assets.load("tank.png"); // → Assets.load("assets/tank.png")
+```
+
+`loadUrl(alias, url)` bypasses this resolution entirely — it always loads the given
+`url` and caches it under the given `alias` (Pixi object form `Assets.load({ alias,
+src: url })`), never resolving `manifest`/`basePath`. This is the seam that lets an
+`asset-store` `blob:` URL be cached under the store's stable alias rather than the
+ephemeral blob URL string:
+
+```ts
+// Turns a store-owned blob: URL into a Pixi-cached texture keyed on the stable alias.
+await app.assets.loadUrl("imported-ship", "blob:http://localhost/9f2c...");
+app.assets.get("imported-ship"); // Texture (not "blob:http://localhost/9f2c...")
 ```
 
 ## Events
