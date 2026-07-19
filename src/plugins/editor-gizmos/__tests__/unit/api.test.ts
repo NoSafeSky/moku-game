@@ -13,6 +13,7 @@ import type { Entity } from "../../../ecs/types";
 import type { Api as EditorSelectionApi } from "../../../editor-selection/types";
 import type { Api as RendererApi } from "../../../renderer/types";
 import { createApi, type GizmosApiContext } from "../../api";
+import { type ModeGroups, registerModeGroups } from "../../interaction";
 import { createState } from "../../state";
 import type { ActiveDrag, Config, State } from "../../types";
 
@@ -61,8 +62,13 @@ const makeFakeContainer = (): FakeContainer => {
   };
 };
 
-/** A view standing in for `renderer.getEntityView(entity)` — carries a world-space x/y. */
-type FakeView = { x: number; y: number; position: FakePosition };
+/** A view standing in for `renderer.getEntityView(entity)` — a world-space x/y + origin-centred local bounds. */
+type FakeView = {
+  x: number;
+  y: number;
+  position: FakePosition;
+  getLocalBounds: () => { x: number; y: number; width: number; height: number };
+};
 
 const makeFakeView = (x: number, y: number): FakeView => {
   const self = { x, y };
@@ -73,7 +79,9 @@ const makeFakeView = (x: number, y: number): FakeView => {
     get y() {
       return self.y;
     },
-    position: makeFakePosition(self)
+    position: makeFakePosition(self),
+    // A 20×20 box centred on the origin, so bounds-centre = (x + 10, y + 10) for the "center" pivot.
+    getLocalBounds: () => ({ x: 0, y: 0, width: 20, height: 20 })
   };
 };
 
@@ -319,6 +327,70 @@ describe("editor-gizmos — api — setMode()/mode() MVP guard", () => {
     const api = createApi({ config, state, log: makeLog() });
     expect(() => api.setMode("scale")).not.toThrow();
     expect(api.mode()).toBe("scale");
+  });
+});
+
+/** Register four fake per-mode groups on the ctx so `showActiveModeGroup` has something to toggle. */
+const withGroups = (ctx: GizmosApiContext) => {
+  const groups = {
+    translate: makeFakeContainer(),
+    rotate: makeFakeContainer(),
+    scale: makeFakeContainer(),
+    rect: makeFakeContainer()
+  };
+  registerModeGroups(ctx.state, groups as unknown as ModeGroups);
+  return groups;
+};
+
+describe("editor-gizmos — api — setMode()/setPivot() re-sync the handle", () => {
+  it("setMode shows only the new mode's sub-composite at the current selection", () => {
+    const entity = asEntity(1);
+    const { api, ctx } = startedCtx(
+      { translateOnly: false },
+      [entity],
+      new Map([[entity, makeFakeView(10, 20)]])
+    );
+    const groups = withGroups(ctx);
+    api.enable(); // syncs at the seeded "translate" mode
+
+    api.setMode("rotate");
+    expect(groups.rotate.visible).toBe(true);
+    expect(groups.translate.visible).toBe(false);
+    expect(groups.scale.visible).toBe(false);
+
+    api.setMode("scale");
+    expect(groups.scale.visible).toBe(true);
+    expect(groups.rotate.visible).toBe(false);
+  });
+
+  it("setMode with nothing selected keeps the handle hidden (no throw)", () => {
+    const { api, ctx, handle } = startedCtx({ translateOnly: false }, []);
+    withGroups(ctx);
+    api.enable();
+
+    expect(() => api.setMode("scale")).not.toThrow();
+    expect(handle.visible).toBe(false);
+  });
+
+  it("setPivot re-anchors the handle (pivot → entity origin, center → its bounds centre)", () => {
+    const entity = asEntity(1);
+    const { api, ctx, handle } = startedCtx(
+      {},
+      [entity],
+      new Map([[entity, makeFakeView(10, 20)]])
+    );
+    withGroups(ctx);
+    api.enable(); // default pivot "pivot" → the entity origin (10, 20)
+    expect(handle.position.x).toBe(10);
+    expect(handle.position.y).toBe(20);
+
+    api.setPivot("center"); // → the 20×20 bounds centre (10+10, 20+10)
+    expect(handle.position.x).toBe(20);
+    expect(handle.position.y).toBe(30);
+
+    api.setPivot("pivot"); // back to the entity origin
+    expect(handle.position.x).toBe(10);
+    expect(handle.position.y).toBe(20);
   });
 });
 

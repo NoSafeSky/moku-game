@@ -120,6 +120,11 @@ export const createApi = (ctx: GizmosApiContext): Api => {
      * `config.translateOnly` is `false` (the editor app opts in); while it is `true` — the
      * framework default — they warn via `ctx.log` and no-op (`mode()` stays `"translate"`).
      *
+     * Re-syncs the handle so switching tools (toolbar / keyboard) immediately shows the new mode's
+     * sub-composite (arrows → ring → boxes → frame) at the current selection — otherwise the visible
+     * handle would stay on the prior mode until the next selection change or drag. Headless-safe: with
+     * no handle built the re-sync is a no-op, so this stays valid before start.
+     *
      * @param mode - The manipulation mode to switch to.
      * @example
      * ```ts
@@ -134,6 +139,7 @@ export const createApi = (ctx: GizmosApiContext): Api => {
         return;
       }
       ctx.state.mode = mode;
+      syncHandle(ctx);
     },
 
     /**
@@ -184,8 +190,9 @@ export const createApi = (ctx: GizmosApiContext): Api => {
     },
 
     /**
-     * Set the drag anchor. Pure interaction state (toolbar-driven, like `setMode`) — works
-     * before start and headless, and is NOT gated by `translateOnly`.
+     * Set the drag anchor, then re-sync the handle so it immediately re-anchors at the new pivot for
+     * the current selection (headless-safe — a no-op with no handle). Toolbar-driven, like `setMode`;
+     * NOT gated by `translateOnly`.
      *
      * **P1:** for a single target `"pivot"` and `"center"` coincide whenever the view's local
      * bounds are centred on its origin; they diverge only when the bounds are offset from it.
@@ -198,6 +205,7 @@ export const createApi = (ctx: GizmosApiContext): Api => {
      */
     setPivot(pivot: GizmoPivot): void {
       ctx.state.pivot = pivot;
+      syncHandle(ctx);
     },
 
     /**

@@ -93,14 +93,26 @@ async function transformXY(
   return value ? { x: value.x, y: value.y } : undefined;
 }
 
-/** The gizmo handle's on-screen position when visible, else `{ visible: false }`. */
-function gizmoHandle(page: Page): Promise<{ visible: boolean; screen?: ScreenPoint }> {
+/** The handle's screen-space geometry the drag helper needs, plus the currently-shown mode group. */
+type GizmoGeom = {
+  visible: boolean;
+  origin?: ScreenPoint;
+  scaleX?: number;
+  scaleY?: number;
+  group?: string | undefined;
+};
+
+/**
+ * The gizmo handle origin (the object's screen point), the logical→CSS scale on each axis (the handle
+ * lives in screen/stage space so its children sit at fixed LOGICAL px offsets from the origin), and the
+ * label of the one visible per-mode sub-composite (`translate`/`rotate`/`scale`/`rect`).
+ */
+function gizmoGeom(page: Page): Promise<GizmoGeom> {
   return page.evaluate(() => {
     const app = (
       globalThis as unknown as { __MOKU_EDITOR__: { getEditor(): { gameApp: EditorGameApp } } }
     ).__MOKU_EDITOR__.getEditor().gameApp;
     const stage = app.renderer.getStage();
-    // The handle Container is the one holding the four per-mode groups (translate/rotate/scale/rect).
     const find = (node: DisplayNode, depth: number): DisplayNode | undefined => {
       for (const child of node.children ?? []) {
         const labels = new Set((child.children ?? []).map(grandchild => grandchild.label));
@@ -112,18 +124,78 @@ function gizmoHandle(page: Page): Promise<{ visible: boolean; screen?: ScreenPoi
     };
     const handle = find(stage, 0);
     if (!handle?.visible) return { visible: false };
-    const global = handle.getGlobalPosition();
+    const g = handle.getGlobalPosition();
     const canvas = app.renderer.getView();
     const rect = canvas.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
+    const logicalW = canvas.width / dpr;
+    const logicalH = canvas.height / dpr;
+    const shown = (handle.children ?? []).find(grp => grp.visible);
     return {
       visible: true,
-      screen: {
-        x: rect.left + (global.x / (canvas.width / dpr)) * rect.width,
-        y: rect.top + (global.y / (canvas.height / dpr)) * rect.height
-      }
+      origin: {
+        x: rect.left + (g.x / logicalW) * rect.width,
+        y: rect.top + (g.y / logicalH) * rect.height
+      },
+      scaleX: rect.width / logicalW,
+      scaleY: rect.height / logicalH,
+      group: shown?.label
     };
   });
+}
+
+/** The label of the currently-shown gizmo mode group, or `undefined` when the handle is hidden. */
+async function gizmoGroup(page: Page): Promise<string | undefined> {
+  const geom = await gizmoGeom(page);
+  return geom.group;
+}
+
+/**
+ * Grab a gizmo handle child at LOGICAL offset (dx, dy) from the handle origin (e.g. the rotate ring is at
+ * radius 50, a scale box at 40) and drag it by a LOGICAL delta (ddx, ddy), converting both through the
+ * handle's screen scale. Requires a visible handle (`geom.origin` present).
+ */
+async function dragGizmo(
+  page: Page,
+  geom: GizmoGeom,
+  dx: number,
+  dy: number,
+  ddx: number,
+  ddy: number
+): Promise<void> {
+  const origin = geom.origin as ScreenPoint;
+  const sx = origin.x + dx * (geom.scaleX ?? 1);
+  const sy = origin.y + dy * (geom.scaleY ?? 1);
+  const tx = sx + ddx * (geom.scaleX ?? 1);
+  const ty = sy + ddy * (geom.scaleY ?? 1);
+  await page.mouse.move(sx, sy);
+  await page.mouse.down();
+  await page.mouse.move((sx + tx) / 2, (sy + ty) / 2, { steps: 5 });
+  await page.mouse.move(tx, ty, { steps: 5 });
+  await page.mouse.up();
+}
+
+/** Read one numeric field of an entity's live Transform (rotation / scaleX / scaleY / x / y). */
+async function transformField(
+  page: Page,
+  editorId: number,
+  field: string
+): Promise<number | undefined> {
+  const snap = await snapshot(page);
+  const value = snap.entities
+    .find(entity => entity.id === editorId)
+    ?.components.find(component => component.name === "Transform")?.value as
+    | Record<string, number>
+    | undefined;
+  return value?.[field];
+}
+
+/** Select a shape by a real canvas click and wait for the host poll to sync the gizmo to it. */
+async function selectShape(page: Page, editorId: number): Promise<void> {
+  const target = await entityScreenCenter(page, editorId);
+  await page.mouse.click(target.x, target.y);
+  await expectSelection(page, [editorId]);
+  await settle(page);
 }
 
 test.describe("viewport interaction — real mouse on the canvas", () => {
@@ -203,26 +275,18 @@ test.describe("viewport interaction — real mouse on the canvas", () => {
   }) => {
     await boot(page);
 
-    const target = await entityScreenCenter(page, SKYLINE_MID);
-    await page.mouse.click(target.x, target.y);
-    await expectSelection(page, [SKYLINE_MID]);
-
-    // The host re-syncs the gizmo on the next poll after the selection changes.
-    await settle(page);
-    const handle = await gizmoHandle(page);
-    expect(handle.visible, "gizmo handle should appear at the selected object").toBe(true);
+    // selectShape clicks the shape + waits for the host to sync the gizmo (Move mode by default).
+    await selectShape(page, SKYLINE_MID);
+    const geom = await gizmoGeom(page);
+    expect(geom.visible, "gizmo handle should appear at the selected object").toBe(true);
+    expect(geom.group).toBe("translate");
 
     const before = await transformXY(page, SKYLINE_MID);
     expect(before).toBeDefined();
 
-    // Grab the handle at its origin and drag it a generous distance; whichever axis-child it grabs, the
-    // object's Transform must change (the drag commits a setField Transform through commands).
-    const screen = handle.screen as ScreenPoint;
-    await page.mouse.move(screen.x, screen.y);
-    await page.mouse.down();
-    await page.mouse.move(screen.x + 25, screen.y + 20, { steps: 5 });
-    await page.mouse.move(screen.x + 55, screen.y + 40, { steps: 5 });
-    await page.mouse.up();
+    // Grab the free-move square at the handle origin and drag it a generous distance; the object's
+    // Transform must change (the drag commits a setField Transform through commands).
+    await dragGizmo(page, geom, 0, 0, 55, 40);
 
     await expect
       .poll(
@@ -232,6 +296,75 @@ test.describe("viewport interaction — real mouse on the canvas", () => {
           return (
             Math.round(now.x) !== Math.round(before.x) || Math.round(now.y) !== Math.round(before.y)
           );
+        },
+        { timeout: 3000 }
+      )
+      .toBe(true);
+  });
+
+  test("switching the active tool refreshes the visible gizmo handle group", async ({ page }) => {
+    await boot(page);
+    await selectShape(page, SKYLINE_MID);
+
+    // A real toolbar click must swap the shown handle sub-composite — not just highlight the button.
+    await page.locator('[data-tool="rotate"]').click();
+    await expect.poll(() => gizmoGroup(page), { timeout: 3000 }).toBe("rotate");
+
+    await page.locator('[data-tool="scale"]').click();
+    await expect.poll(() => gizmoGroup(page), { timeout: 3000 }).toBe("scale");
+
+    await page.locator('[data-tool="translate"]').click();
+    await expect.poll(() => gizmoGroup(page), { timeout: 3000 }).toBe("translate");
+  });
+
+  test("dragging the Rotate ring rotates the selected object", async ({ page }) => {
+    await boot(page);
+    await selectShape(page, SKYLINE_MID);
+    await page.locator('[data-tool="rotate"]').click();
+    await expect.poll(() => gizmoGroup(page), { timeout: 3000 }).toBe("rotate");
+
+    // Grab the top of the ring (radius 50) and swing it to the right → the object rotates.
+    const geom = await gizmoGeom(page);
+    await dragGizmo(page, geom, 0, -50, 45, 0);
+
+    await expect
+      .poll(async () => Math.abs((await transformField(page, SKYLINE_MID, "rotation")) ?? 0), {
+        timeout: 3000
+      })
+      .toBeGreaterThan(0.05);
+  });
+
+  test("dragging a Scale handle scales the selected object", async ({ page }) => {
+    await boot(page);
+    await selectShape(page, SKYLINE_MID);
+    await page.locator('[data-tool="scale"]').click();
+    await expect.poll(() => gizmoGroup(page), { timeout: 3000 }).toBe("scale");
+
+    // Grab the X-axis box (at +40) and drag it further out → scaleX grows (Y stays put — axis-locked).
+    const geom = await gizmoGeom(page);
+    await dragGizmo(page, geom, 40, 0, 45, 0);
+
+    await expect
+      .poll(async () => (await transformField(page, SKYLINE_MID, "scaleX")) ?? 1, { timeout: 3000 })
+      .toBeGreaterThan(1.2);
+  });
+
+  test("dragging the Rect frame uniformly scales the selected object", async ({ page }) => {
+    await boot(page);
+    await selectShape(page, SKYLINE_MID);
+    await page.locator('[data-tool="rect"]').click();
+    await expect.poll(() => gizmoGroup(page), { timeout: 3000 }).toBe("rect");
+
+    // Grab the frame's right edge (at +40) and drag out → the bounding box scales BOTH axes uniformly.
+    const geom = await gizmoGeom(page);
+    await dragGizmo(page, geom, 40, 0, 45, 0);
+
+    await expect
+      .poll(
+        async () => {
+          const sx = (await transformField(page, SKYLINE_MID, "scaleX")) ?? 1;
+          const sy = (await transformField(page, SKYLINE_MID, "scaleY")) ?? 1;
+          return sx > 1.2 && sy > 1.2;
         },
         { timeout: 3000 }
       )

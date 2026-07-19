@@ -25,6 +25,11 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,
+  // Cap concurrency at 2. Every test boots a full Pixi/WebGL editor, so N workers = N live WebGL
+  // contexts; past ~2 concurrent contexts this class of GPU intermittently fails shader compilation
+  // ("PixiJS Error: Could not initialize shader"), which the error-guard fixture then reports as a
+  // spurious failure. Two workers keeps the suite fast (~17s) AND deterministically green.
+  workers: 2,
   reporter: [["list"], ["html", { open: "never" }]],
   // Visual determinism: a fixed diff tolerance with animation/caret churn suppressed run-to-run.
   expect: {
