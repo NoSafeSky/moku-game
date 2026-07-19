@@ -14,6 +14,7 @@ import { createIsland } from "@moku-labs/web/browser";
 import type { Commands, EditorBridge, Reflection } from "@nosafesky/ludemic";
 import { getEditor, onSnapshot } from "../lib/editor-host";
 import {
+  mergeAssetCandidates,
   openReferencePicker,
   type ReferenceCandidate,
   readControl,
@@ -416,13 +417,17 @@ export const inspector = createIsland("inspector", {
       if (!binding) return;
 
       const isEntity = binding.descriptor.kind === "entity-ref";
+      // An asset-ref lists the manifest ∪ imported-store aliases (P2), deduped by alias so an
+      // imported sprite is selectable in a `SpriteRenderer.sprite` field (and then resolves + renders).
+      const editor = getEditor();
       const candidates: readonly ReferenceCandidate[] = isEntity
         ? snapshot.entities
             .filter(entity => !binding.ids.includes(entity.id))
             .map(entity => ({ value: String(entity.id), label: entity.name || `#${entity.id}` }))
-        : getEditor()
-            .assets.entries()
-            .map(entry => ({ value: entry.alias, label: entry.alias }));
+        : mergeAssetCandidates(
+            editor.assets.entries().map(entry => entry.alias),
+            editor.assetStore.entries().map(entry => entry.alias)
+          );
 
       closePopups();
       closePopup = openReferencePicker({

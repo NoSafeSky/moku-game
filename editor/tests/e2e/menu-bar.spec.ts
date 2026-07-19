@@ -1,7 +1,8 @@
 /**
- * @file Menu bar — the GameObject / Edit / Window dropdowns as a second surface onto the bridge verbs:
- * open/close, hover-switch between top-levels, a dispatched verb (Create Empty), the Window panel-visibility
- * toggle, the disabled Assets menu, the scene readout + dirty dot, and Escape-to-close.
+ * @file Menu bar — the GameObject / Edit / Assets / Window dropdowns as a second surface onto the bridge
+ * verbs: open/close, hover-switch between top-levels, a dispatched verb (Create Empty), the Window
+ * panel-visibility toggle, the Assets ▸ Import New Asset… entry (P2, enabled), the scene readout + dirty dot,
+ * and Escape-to-close.
  */
 import { boot, DEMO, expect, snapshot, test } from "./_helpers";
 
@@ -15,9 +16,16 @@ test.describe("menu-bar", () => {
     await expect(page.locator(`${menuBar} [data-dirty]`)).toBeHidden();
   });
 
-  test("the Assets menu is present but disabled (no assets loaded)", async ({ page }) => {
+  test("the Assets menu is enabled and offers Import New Asset… (P2)", async ({ page }) => {
     await boot(page);
-    await expect(page.locator(`${menuBar} [data-menu="assets"]`)).toBeDisabled();
+    await expect(page.locator(`${menuBar} [data-menu="assets"]`)).toBeEnabled();
+
+    await page.locator(`${menuBar} [data-menu="assets"]`).click();
+    const dropdown = page.locator(`${menuBar} [data-dropdown]`);
+    await expect(dropdown).toBeVisible();
+    await expect(dropdown.getByRole("button", { name: "Import New Asset…" })).toBeEnabled();
+    // Create ▸ / Reimport All stay stubbed for a later phase.
+    await expect(dropdown.getByRole("button", { name: "Reimport All" })).toBeDisabled();
   });
 
   test("opening GameObject shows its items with Create Sprite disabled", async ({ page }) => {
@@ -39,7 +47,8 @@ test.describe("menu-bar", () => {
       .getByRole("button", { name: "Create Empty" })
       .click();
 
-    expect((await snapshot(page)).entities).toHaveLength(DEMO.entityCount + 1);
+    const snap = await snapshot(page);
+    expect(snap.entities).toHaveLength(DEMO.entityCount + 1);
     await expect(page.locator(`${menuBar} [data-dirty]`)).toBeVisible();
   });
 

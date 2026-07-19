@@ -75,6 +75,12 @@
     outline: 1px solid var(--border-seam);
   }
 
+  /* Drag-to-scene drop target (P2 §F9): an accent ring while an asset tile hovers the canvas. */
+  [data-stage][data-drop-target] {
+    outline: 2px dashed var(--accent);
+    outline-offset: -2px;
+  }
+
   canvas {
     display: block;
     inline-size: 100%;

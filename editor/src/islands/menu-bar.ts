@@ -1,9 +1,10 @@
 /**
- * @file menu-bar island — the GameObject / Edit / Window dropdown menus (Assets is present-but-disabled).
+ * @file menu-bar island — the GameObject / Edit / Assets / Window dropdown menus.
  *
  * Each menu is a second surface onto existing bridge verbs (design-context §4): GameObject creates /
- * duplicates / deletes, Edit drives undo/redo/duplicate/delete/select-all, and Window toggles panel
- * visibility. Menus open on click, hover-switch between open top-levels, and close on outside-click /
+ * duplicates / deletes, Edit drives undo/redo/duplicate/delete/select-all, Assets ▸ Import New Asset…
+ * triggers the asset browser's file import (§D3), and Window toggles panel visibility. Menus open on
+ * click, hover-switch between open top-levels, and close on outside-click /
  * Escape — one at a time (design-context §4). The right-aligned scene readout reflects an amber dirty dot
  * once the world has been edited. Every WORLD write routes through `gameApp["editor-bridge"]` — never
  * `commands`/`ecs`; panel visibility is a pure view toggle on the shell DOM.
@@ -27,6 +28,13 @@ type MenuItem =
 
 // The first enumerable asset alias (Create Sprite target), or `undefined` when none are loaded.
 const firstAsset = (): string | undefined => getEditor().assets.entries()[0]?.alias;
+
+// Import New Asset… (design §D3) reuses the asset browser's file import — trigger its hidden file input.
+const triggerAssetImport = (): void => {
+  document
+    .querySelector<HTMLInputElement>('[data-island="asset-browser"] [data-action="import-input"]')
+    ?.click();
+};
 
 // A Window-menu row that toggles one panel's visibility (a pure view toggle on the shell DOM).
 const panelToggle = (label: string, selector: string): MenuItem => {
@@ -105,6 +113,15 @@ export const menuBar = createIsland("menu-bar", {
             label: "Select All",
             run: () => bridge().select(...(snapshot?.entities ?? []).map(entity => entity.id))
           }
+        ];
+      }
+      if (name === "assets") {
+        // Import New Asset… is live (P2); Create ▸ / Reimport All stay stubbed for a later phase.
+        return [
+          { label: "Import New Asset…", run: triggerAssetImport },
+          "separator",
+          { label: "Create ▸", run: () => {}, disabled: true },
+          { label: "Reimport All", run: () => {}, disabled: true }
         ];
       }
       if (name === "window") {

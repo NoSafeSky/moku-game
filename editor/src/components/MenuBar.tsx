@@ -17,9 +17,9 @@ function Menu({ label, disabled }: { label: string; disabled?: boolean }) {
 }
 
 /**
- * The top band: the brand mark, the GameObject / Edit / Window menus (opened by the menu-bar island) with
- * a present-but-disabled Assets menu (import is a later phase), and a right-aligned open-scene readout with
- * an amber dirty dot the island shows once the scene has unsaved edits.
+ * The top band: the brand mark, the GameObject / Edit / Assets / Window menus (opened by the menu-bar
+ * island — Assets ▸ Import New Asset… triggers the asset browser's file import), and a right-aligned
+ * open-scene readout with an amber dirty dot the island shows once the scene has unsaved edits.
  *
  * @returns The menu-bar chrome.
  * @example
@@ -34,7 +34,7 @@ export function MenuBar() {
       <nav data-menus aria-label="Application menus">
         <Menu label="GameObject" />
         <Menu label="Edit" />
-        <Menu label="Assets" disabled />
+        <Menu label="Assets" />
         <Menu label="Window" />
       </nav>
       <div data-scene aria-live="polite">

@@ -43,7 +43,7 @@ const MENUBAR_HTML = `
   <nav data-menus>
     <button data-menu="gameobject">GameObject</button>
     <button data-menu="edit">Edit</button>
-    <button data-menu="assets" disabled>Assets</button>
+    <button data-menu="assets">Assets</button>
     <button data-menu="window">Window</button>
   </nav>
   <div data-scene>
@@ -164,15 +164,30 @@ describe("menu-bar island", () => {
     panel.remove();
   });
 
-  it("does not open the disabled Assets menu", () => {
+  it("opens Assets and routes Import New Asset… to the asset browser's file input (P2)", () => {
     const handle = mount();
+    // The asset-browser panel (with its hidden import input) lives elsewhere in the document.
+    const panel = document.createElement("section");
+    panel.dataset.island = "asset-browser";
+    const input = document.createElement("input");
+    input.type = "file";
+    input.dataset.action = "import-input";
+    const click = vi.fn();
+    input.click = click;
+    panel.append(input);
+    document.body.append(panel);
     push(snap());
 
     query(handle.el, "[data-menu='assets']").dispatchEvent(
       new MouseEvent("click", { bubbles: true })
     );
+    expect(handle.el.querySelector("[data-dropdown]")).not.toBeNull();
+    // Create ▸ / Reimport All stay disabled stubs.
+    expect(itemByLabel(handle.el, "Reimport All")?.disabled).toBe(true);
 
-    expect(handle.el.querySelector("[data-dropdown]")).toBeNull();
+    itemByLabel(handle.el, "Import New Asset…")?.click();
+    expect(click).toHaveBeenCalledTimes(1);
+    panel.remove();
   });
 
   it("hover-switches to another top-level while a menu is open", () => {

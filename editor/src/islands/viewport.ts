@@ -9,6 +9,7 @@
  */
 import { createIsland } from "@moku-labs/web/browser";
 import type { Commands, EditorBridge } from "@nosafesky/ludemic";
+import { ASSET_DND_TYPE } from "../lib/asset-dnd";
 import { getEditor, onSnapshot } from "../lib/editor-host";
 
 // Editor grid overlay style — a slate hairline at a 32px world cell (design-context §5 CAD grid).
@@ -22,6 +23,21 @@ const ZOOM_STEP = 1.2;
 const stageCentre = (): { x: number; y: number } => {
   const view = getEditor().canvas;
   return { x: view.width / 2, y: view.height / 2 };
+};
+
+// Map a drop event's page coordinates to a WORLD point (P2 drag-to-scene). The canvas's backing store
+// (`width`/`height`, in device pixels) can differ from its CSS box, so scale the client offset by that
+// ratio — DPR-correct — before handing renderer-screen coordinates to `camera.screenToWorld`.
+const dropWorldPoint = (event: DragEvent): { x: number; y: number } => {
+  const canvas = getEditor().canvas;
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = rect.width > 0 ? canvas.width / rect.width : 1;
+  const scaleY = rect.height > 0 ? canvas.height / rect.height : 1;
+  const screen = {
+    x: (event.clientX - rect.left) * scaleX,
+    y: (event.clientY - rect.top) * scaleY
+  };
+  return getEditor().camera.screenToWorld(screen);
 };
 
 // The world point to frame on Focus: the primary selection's Transform position, if it has one.
@@ -46,7 +62,10 @@ const focusPointOf = (
  * the overlay routes each `data-vp` control to its direct handle: Grid → `renderer.setGridVisible`, Snap →
  * `gizmos.setSnap`, zoom in/out/reset → `camera.zoomAt`/`setZoom`, Focus → `camera.focus` (primary
  * selection's position). The stage is letterboxed to the mounted canvas's aspect ratio. Grid starts on (the
- * CAD default). All listeners + the subscription are released on destroy via `ctx.cleanup`.
+ * CAD default). The stage is also the **drag-to-scene** drop target (P2): dropping an asset tile maps the
+ * point to world coords (`camera.screenToWorld`, DPR-corrected) and `bridge.createSprite`s it, then selects
+ * the new object — a world write, so it stays on the bridge. All listeners + the subscription are released on
+ * destroy via `ctx.cleanup`.
  */
 export const viewport = createIsland("viewport", {
   onMount(ctx) {
@@ -137,5 +156,41 @@ export const viewport = createIsland("viewport", {
 
     host.addEventListener("click", onOverlayClick);
     ctx.cleanup(() => host.removeEventListener("click", onOverlayClick));
+
+    // ── Drag-to-scene drop target (design §F9) — the Scene View canvas instantiates a dragged asset. ──
+    // Only an asset drag is accepted: dragover preventDefault (required to allow a drop) + the copy cursor
+    // fire only when our custom type is present, so a stray text/file drop never spawns a sprite.
+    const onDragOver = (event: DragEvent): void => {
+      if (!event.dataTransfer?.types.includes(ASSET_DND_TYPE)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+      stage?.toggleAttribute("data-drop-target", true);
+    };
+    const onDragLeave = (): void => {
+      stage?.toggleAttribute("data-drop-target", false);
+    };
+    // Drop: map the point to world coords, create a sprite bound to the alias (undo-tracked, via the bridge),
+    // and select it. World writes stay on the bridge — the island never touches commands/ecs.
+    const onDrop = (event: DragEvent): void => {
+      stage?.toggleAttribute("data-drop-target", false);
+      const alias = event.dataTransfer?.getData(ASSET_DND_TYPE);
+      if (!alias) return;
+      event.preventDefault();
+      const point = dropWorldPoint(event);
+      const { bridge } = getEditor();
+      const id = bridge.createSprite(alias, { transform: { x: point.x, y: point.y } });
+      bridge.select(id);
+    };
+
+    if (stage) {
+      stage.addEventListener("dragover", onDragOver);
+      stage.addEventListener("dragleave", onDragLeave);
+      stage.addEventListener("drop", onDrop);
+      ctx.cleanup(() => {
+        stage.removeEventListener("dragover", onDragOver);
+        stage.removeEventListener("dragleave", onDragLeave);
+        stage.removeEventListener("drop", onDrop);
+      });
+    }
   }
 });

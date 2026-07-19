@@ -247,6 +247,36 @@ export type ReferenceCandidate = {
 };
 
 /**
+ * Merge the manifest asset aliases with the imported-store aliases into one deduped asset-ref
+ * candidate list (P2). Manifest entries come first, then imports; a later duplicate of an alias
+ * already seen is dropped, so an imported asset that shadows a manifest alias appears once. Each
+ * candidate's `value` and `label` are the alias itself — the alias is exactly what rides in
+ * `SpriteRenderer.sprite`, so the picker writes back a value the resolver can resolve.
+ *
+ * @param manifestAliases - Aliases from `assets.entries()` (framework manifest), in display order.
+ * @param storeAliases - Aliases from `assetStore.entries()` (imported), in display order.
+ * @returns The deduped candidate rows, manifest-first.
+ * @example
+ * ```ts
+ * mergeAssetCandidates(["hero"], ["coin-a1", "hero"]); // hero, coin-a1
+ * ```
+ */
+export function mergeAssetCandidates(
+  manifestAliases: readonly string[],
+  storeAliases: readonly string[]
+): readonly ReferenceCandidate[] {
+  const seen = new Set<string>();
+  const candidates: ReferenceCandidate[] = [];
+
+  for (const alias of [...manifestAliases, ...storeAliases]) {
+    if (seen.has(alias)) continue;
+    seen.add(alias);
+    candidates.push({ value: alias, label: alias });
+  }
+  return candidates;
+}
+
+/**
  * Options for {@link openReferencePicker}.
  */
 export type ReferencePickerOptions = {

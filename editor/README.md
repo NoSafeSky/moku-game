@@ -28,8 +28,8 @@ The editor renders a docked, four-band workspace around a running game and edits
 look and interaction language are the **"Slate Precision"** design system (a fixed dark-slate, zero-radius,
 CAD-grid IDE — see the [design context](../.planning/design/game-editor-ui/design-context.md)):
 
-- **Menu bar** — GameObject / Edit / Window dropdowns (Assets present-but-disabled), a scene readout with
-  an amber dirty dot, and open-on-click hover-switch menus.
+- **Menu bar** — GameObject / Edit / Assets / Window dropdowns (Assets ▸ Import New Asset… triggers the
+  asset browser's file import), a scene readout with an amber dirty dot, and open-on-click hover-switch menus.
 - **Transform toolbar** — Move / Rotate / Scale / Rect tools, Pivot⇄Center and Local⇄Global segments, the
   Play / Stop / Step transport + mode chip, Undo / Redo, and Save / Load.
 - **Hierarchy** — the nested scene tree: expand/collapse, click / ctrl / shift multi-select, drag-reparent
@@ -40,7 +40,10 @@ CAD-grid IDE — see the [design context](../.planning/design/game-editor-ui/des
   component sections with a kebab menu (Reset / Remove Component), eight typed field editors
   (number with drag-scrub / vector / boolean / string / colour / enum / entity-ref / asset-ref), an
   Add-Component picker, a reference-field picker, and a multi-object shared-only view with mixed "—" cells.
-- **Asset browser** — a read-only listing of the loaded asset manifest.
+- **Asset browser** — the loaded asset manifest plus **imported** assets: an **Import** button (and the
+  Assets menu entry) brings image files into the framework `asset-store` (IndexedDB), each shown as a
+  draggable thumbnail tile (loaded / importing / broken states); **drag a tile onto the Scene view** to spawn
+  a sprite bound to its alias.
 - **Status bar** — keyboard-shortcut hint chips + an object / selection / mode readout.
 
 Global **keyboard shortcuts** (W/E/R/T tools, F focus, Ctrl+Z/Y, Ctrl+D, Del, Ctrl+S, Ctrl+A) are a second
@@ -52,8 +55,9 @@ game (see [`lib/demo-scene.ts`](./src/lib/demo-scene.ts)).
 
 > [!NOTE]
 > **Status: 0.x.** The editor consumes the framework's Phase-1 `editor-bridge` surface (a hierarchical
-> snapshot + 12 authoring verbs). Saved-layout docking, the console panel, live asset import, and the MCP
-> editor mirror are framework follow-ups the shell will consume additively as they land.
+> snapshot + 12 authoring verbs) plus the Phase-2 `asset-store` (import + drag-to-scene). Saved-layout
+> docking, the console panel, and the MCP editor mirror are framework follow-ups the shell will consume
+> additively as they land.
 
 ## Quick start
 
@@ -109,12 +113,12 @@ flowchart LR
 
 | Island | Drives | Via |
 |---|---|---|
-| `menu-bar` | GameObject / Edit / Window dropdowns · dirty dot | `bridge.*` (create/duplicate/delete/undo/redo/select) |
+| `menu-bar` | GameObject / Edit / Assets / Window dropdowns · dirty dot | `bridge.*` (create/duplicate/delete/undo/redo/select) + Assets import |
 | `toolbar` | tools · pivot/space · play/stop/step · undo/redo · save/load | `gizmos.*` (direct) + `bridge.*` |
 | `hierarchy` | nested tree · select · reparent/reorder · rename · enable | `bridge.select/reparent/reorder/rename/setEnabled` |
-| `viewport` | selection ring · grid/snap · zoom · focus | `onSnapshot` + `camera`/`renderer`/`gizmos` (direct) |
-| `inspector` | edit fields · add/remove component · references · multi-object | `bridge.setField/addComponent/removeComponent` |
-| `asset-browser` | lists the asset manifest | `assets.entries`/`metadata` |
+| `viewport` | selection ring · grid/snap · zoom · focus · **asset drop → sprite** | `onSnapshot` + `camera`/`renderer`/`gizmos` (direct) + `bridge.createSprite` |
+| `inspector` | edit fields · add/remove component · references · multi-object | `bridge.setField/addComponent/removeComponent` (asset-ref merges `assetStore`) |
+| `asset-browser` | manifest + imported assets · import · draggable thumbnails | `assets.entries`/`metadata` + `assetStore.import/entries/url` |
 | `status-bar` | object / selection / mode readout | `onSnapshot` |
 | `workspace` | splitter-resizable dock layout (pure view) | — |
 | `shortcuts` | global keymap (a second surface onto the above) | `bridge.*` / `gizmos.*` / `camera.*` |
@@ -134,6 +138,7 @@ bridge intentionally does not forward). It imports no `commands`/`ecs` symbol, n
 | Picking · marquee · rotate/scale/rect gizmos | `editor-selection` / `editor-gizmos` (via editor-host) | `commands`/`ecs` |
 | Camera pan/zoom/focus · grid · snap | `camera` / `renderer` / `gizmos` (via editor-host) | `commands`/`ecs` |
 | Asset enumeration | `assets.entries/manifest/metadata` | `ecs`, loader internals |
+| Asset import / thumbnails (P2) | `assetStore.import/entries/url/remove` (via editor-host) | raw IndexedDB / `pixi` |
 
 `editor-host` is the one place that touches the game runtime's own APIs (to boot it, mount the canvas, and
 re-sync views after a write); `demo-scene` is the one place that authors game content. Both are clearly

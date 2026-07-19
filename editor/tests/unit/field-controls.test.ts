@@ -1,7 +1,12 @@
 // @vitest-environment happy-dom
 import type { Reflection } from "@nosafesky/ludemic";
 import { describe, expect, it, vi } from "vitest";
-import { openReferencePicker, readControl, renderControl } from "../../src/lib/field-controls";
+import {
+  mergeAssetCandidates,
+  openReferencePicker,
+  readControl,
+  renderControl
+} from "../../src/lib/field-controls";
 
 /** Grab one axis input from a vector2 control (guards instead of a non-null assertion). */
 function axis(el: HTMLElement, name: "x" | "y"): HTMLInputElement {
@@ -324,5 +329,27 @@ describe("field-controls", () => {
 
       expect(el.value).toBe("10");
     });
+  });
+});
+
+describe("mergeAssetCandidates (P2 — asset-ref picker)", () => {
+  it("concatenates manifest then store aliases as {value,label} candidates", () => {
+    const merged = mergeAssetCandidates(["hero", "enemy"], ["coin-a1"]);
+
+    expect(merged).toEqual([
+      { value: "hero", label: "hero" },
+      { value: "enemy", label: "enemy" },
+      { value: "coin-a1", label: "coin-a1" }
+    ]);
+  });
+
+  it("dedups by alias, keeping the first (manifest) occurrence", () => {
+    const merged = mergeAssetCandidates(["hero"], ["coin-a1", "hero"]);
+
+    expect(merged.map(candidate => candidate.value)).toEqual(["hero", "coin-a1"]);
+  });
+
+  it("returns an empty list when neither source has entries", () => {
+    expect(mergeAssetCandidates([], [])).toEqual([]);
   });
 });

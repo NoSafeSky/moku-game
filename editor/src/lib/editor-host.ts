@@ -6,6 +6,7 @@
  * (selection/mode/canUndo/canRedo) every frame, so changes surface next frame with no event.
  */
 import type {
+  AssetStore,
   Assets,
   Camera,
   EditorBridge,
@@ -28,6 +29,11 @@ export type EditorHandles = {
   /** Renderer — grid toggle + manual mount/re-sync (direct handle, off the poll+bridge path). */
   readonly renderer: Renderer.Api;
   readonly assets: Assets.Api;
+  /**
+   * Imported-asset store — import/entries/url/remove for the asset browser + the inspector asset-ref
+   * picker (P2). Its `blob:` URLs are plain strings; no Pixi crosses this seam.
+   */
+  readonly assetStore: AssetStore.Api;
   readonly canvas: HTMLCanvasElement;
 };
 
@@ -152,6 +158,7 @@ export async function startEditor(mountElement: HTMLElement): Promise<EditorHand
     camera: gameApp.camera,
     renderer: gameApp.renderer,
     assets: gameApp.assets,
+    assetStore: gameApp["asset-store"],
     canvas
   };
 

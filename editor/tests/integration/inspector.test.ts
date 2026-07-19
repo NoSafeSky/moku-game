@@ -42,11 +42,17 @@ const mocks = vi.hoisted(() => {
     listComponents: vi.fn(() => catalog)
   };
   const assets = { entries: vi.fn(() => [] as { alias: string; loaded: boolean }[]) };
+  const assetStore = {
+    entries: vi.fn(
+      () => [] as { alias: string; name: string; mime: string; byteLength: number; url?: string }[]
+    )
+  };
   return {
     subscribers,
     bridge,
     assets,
-    getEditor: vi.fn(() => ({ bridge, assets })),
+    assetStore,
+    getEditor: vi.fn(() => ({ bridge, assets, assetStore })),
     onSnapshot: vi.fn((fn: (snapshot: unknown) => void) => {
       subscribers.add(fn);
       return () => subscribers.delete(fn);
@@ -88,6 +94,11 @@ const shapeOf = () => ({
   name: "Shape",
   value: { fill: "#cccccc" },
   fields: [{ kind: "color", key: "fill", label: "Fill" }]
+});
+const spriteOf = (sprite: string | undefined) => ({
+  name: "SpriteRenderer",
+  value: { sprite },
+  fields: [{ kind: "asset-ref", key: "sprite", label: "Sprite" }]
 });
 
 const snap = (over: Record<string, unknown> = {}) => ({
@@ -294,6 +305,31 @@ describe("inspector island", () => {
     player?.click();
 
     expect(mocks.bridge.setField).toHaveBeenCalledWith(1, "Script", "target", 2);
+  });
+
+  it("merges manifest + imported-store aliases into the asset-ref picker (deduped, manifest-first)", () => {
+    mocks.assets.entries.mockReturnValue([{ alias: "hero", loaded: true }]);
+    mocks.assetStore.entries.mockReturnValue([
+      { alias: "coin-a1", name: "coin.png", mime: "image/png", byteLength: 10, url: "blob:coin" },
+      { alias: "hero", name: "hero.png", mime: "image/png", byteLength: 20, url: "blob:hero" }
+    ]);
+    const handle = mount();
+    push(
+      snap({ epoch: 1, entities: [entity({ components: [spriteOf(undefined)] })], selection: [1] })
+    );
+
+    query(handle.el, "[data-field-key='sprite'] [data-ref-pick]").dispatchEvent(
+      new MouseEvent("click", { bubbles: true })
+    );
+
+    const options = [
+      ...handle.el.querySelectorAll<HTMLButtonElement>("[data-ref-picker] [data-ref-option]")
+    ];
+    // "None" + hero (manifest, deduped away from the store's hero) + coin-a1 (imported).
+    expect(options.map(option => option.textContent)).toEqual(["None", "hero", "coin-a1"]);
+
+    options.find(option => option.textContent === "coin-a1")?.click();
+    expect(mocks.bridge.setField).toHaveBeenCalledWith(1, "SpriteRenderer", "sprite", "coin-a1");
   });
 
   it("shows the multi-object header + shared components, with divergent fields as '—'", () => {

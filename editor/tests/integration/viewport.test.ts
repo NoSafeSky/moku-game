@@ -16,16 +16,23 @@ const mocks = vi.hoisted(() => {
     getZoom: vi.fn(() => 1),
     zoomAt: vi.fn(),
     setZoom: vi.fn(),
-    focus: vi.fn()
+    focus: vi.fn(),
+    screenToWorld: vi.fn(() => ({ x: 100, y: 50 }))
   };
-  const canvas = { width: 800, height: 600 } as unknown as HTMLCanvasElement;
+  const bridge = { createSprite: vi.fn(() => 42), select: vi.fn() };
+  const canvas = {
+    width: 800,
+    height: 600,
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 })
+  } as unknown as HTMLCanvasElement;
   return {
     subscribers,
     renderer,
     gizmos,
     camera,
+    bridge,
     canvas,
-    getEditor: vi.fn(() => ({ renderer, gizmos, camera, canvas })),
+    getEditor: vi.fn(() => ({ renderer, gizmos, camera, bridge, canvas })),
     onSnapshot: vi.fn((fn: (snapshot: unknown) => void) => {
       subscribers.add(fn);
       return () => subscribers.delete(fn);
@@ -184,6 +191,66 @@ describe("viewport island", () => {
     expect(mocks.camera.focus).not.toHaveBeenCalled();
     expect(mocks.camera.setZoom).not.toHaveBeenCalled();
     expect(mocks.renderer.setGridVisible).not.toHaveBeenCalled();
+  });
+
+  it("accepts an asset dragover (preventDefault + copy cursor) and marks the stage a drop target", () => {
+    const handle = mountIsland(viewport, { html: VIEWPORT_HTML });
+    const stage = query(handle.el, "[data-stage]");
+
+    const dataTransfer = {
+      types: ["application/x-moku-asset"],
+      dropEffect: ""
+    } as unknown as DataTransfer;
+    const event = new Event("dragover", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
+    stage.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(dataTransfer.dropEffect).toBe("copy");
+    expect(stage.dataset.dropTarget).toBe("");
+  });
+
+  it("creates a sprite bound to the dropped alias at its world point, then selects it (drag-to-scene)", () => {
+    const handle = mountIsland(viewport, { html: VIEWPORT_HTML });
+    const stage = query(handle.el, "[data-stage]");
+
+    const dataTransfer = {
+      types: ["application/x-moku-asset"],
+      getData: vi.fn((type: string) => (type === "application/x-moku-asset" ? "coin-a1" : ""))
+    } as unknown as DataTransfer;
+    const event = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
+    Object.defineProperty(event, "clientX", { value: 120 });
+    Object.defineProperty(event, "clientY", { value: 60 });
+    stage.dispatchEvent(event);
+
+    // Canvas box == backing store (800×600, origin 0,0) → screen == client offset (scale 1).
+    expect(mocks.camera.screenToWorld).toHaveBeenCalledWith({ x: 120, y: 60 });
+    expect(mocks.bridge.createSprite).toHaveBeenCalledWith("coin-a1", {
+      transform: { x: 100, y: 50 }
+    });
+    expect(mocks.bridge.select).toHaveBeenCalledWith(42);
+    expect(stage.dataset.dropTarget).toBeUndefined();
+  });
+
+  it("ignores a non-asset drag — no preventDefault, and a stray drop spawns nothing", () => {
+    const handle = mountIsland(viewport, { html: VIEWPORT_HTML });
+    const stage = query(handle.el, "[data-stage]");
+
+    const overTransfer = { types: ["text/plain"], dropEffect: "" } as unknown as DataTransfer;
+    const over = new Event("dragover", { bubbles: true, cancelable: true });
+    Object.defineProperty(over, "dataTransfer", { value: overTransfer });
+    stage.dispatchEvent(over);
+    expect(over.defaultPrevented).toBe(false);
+
+    const dropTransfer = {
+      types: ["text/plain"],
+      getData: vi.fn(() => "")
+    } as unknown as DataTransfer;
+    const drop = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(drop, "dataTransfer", { value: dropTransfer });
+    stage.dispatchEvent(drop);
+    expect(mocks.bridge.createSprite).not.toHaveBeenCalled();
   });
 
   it("unsubscribes from the snapshot poll on unmount", () => {

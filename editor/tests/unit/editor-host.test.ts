@@ -24,6 +24,20 @@ const mocks = vi.hoisted(() => {
     },
     commands: { resolve: vi.fn<() => unknown>(() => entity) },
     assets: { entries: vi.fn(() => []) },
+    "asset-store": {
+      import: vi.fn(async () => ({
+        alias: "a",
+        name: "a",
+        mime: "image/png",
+        byteLength: 0,
+        url: ""
+      })),
+      url: vi.fn(() => undefined),
+      has: vi.fn(() => false),
+      get: vi.fn(async () => undefined),
+      entries: vi.fn(() => []),
+      remove: vi.fn(async () => {})
+    },
     camera: {
       focus: vi.fn(),
       zoomAt: vi.fn(),
@@ -102,6 +116,7 @@ describe("editor-host", () => {
     expect(handles.bridge).toBe(mocks.app["editor-bridge"]);
     expect(handles.camera).toBe(mocks.app.camera);
     expect(handles.renderer).toBe(mocks.app.renderer);
+    expect(handles.assetStore).toBe(mocks.app["asset-store"]);
     expect(handles.canvas).toBe(mocks.canvas);
     expect(getEditor()).toBe(handles);
   });
